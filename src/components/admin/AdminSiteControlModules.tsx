@@ -1,0 +1,740 @@
+import React, { useState } from 'react';
+import {
+  ArrowUp,
+  ArrowDown,
+  Plus,
+  Trash2,
+  Upload,
+  Palette,
+  LayoutTemplate,
+  Image as ImageIcon,
+  FileText,
+  Settings,
+} from 'lucide-react';
+import { useStore } from '../../store/StoreContext';
+import { BannerAd, HomeSectionConfig } from '../../types';
+import { IMG_HERO_BOUTIQUE } from '../../data/seedData';
+import { ResilientImage } from '../ResilientImage';
+
+export const AdminHomeBuilderModule: React.FC = () => {
+  const { locale, t, homeSections, updateHomeSections } = useStore();
+  const [draft, setDraft] = useState<HomeSectionConfig[]>(
+    homeSections.slice().sort((a, b) => a.order - b.order)
+  );
+
+  const move = (idx: number, dir: -1 | 1) => {
+    const target = idx + dir;
+    if (target < 0 || target >= draft.length) return;
+    const next = [...draft];
+    [next[idx], next[target]] = [next[target], next[idx]];
+    setDraft(next.map((s, i) => ({ ...s, order: i + 1 })));
+  };
+
+  return (
+    <div className="space-y-4 text-xs">
+      <div className="flex items-center justify-between">
+        <div className="flex items-center gap-2 font-bold text-sm">
+          <LayoutTemplate className="w-4 h-4 text-[#D9B24C]" />
+          {t('منشئ أقسام الصفحة الرئيسية (تشغيل/إيقاف وإعادة ترتيب)', 'Home Page Section Builder')}
+        </div>
+        <button
+          type="button"
+          onClick={() => updateHomeSections(draft)}
+          className="px-5 py-2 rounded-xl bg-[#D9B24C] text-[#11223E] font-extrabold"
+        >
+          {t('حفظ وتطبيق على المتجر', 'Save Home Layout')}
+        </button>
+      </div>
+
+      <div className="space-y-3">
+        {draft.map((sec, idx) => (
+          <div key={sec.id} className="bg-white dark:bg-[#181B1E] border border-stone-200 dark:border-zinc-800 rounded-xl p-4 space-y-3">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <div className="flex items-center gap-2">
+                <span className="font-mono-num px-2 py-0.5 rounded bg-slate-100 dark:bg-zinc-900 font-bold">
+                  0{idx + 1}
+                </span>
+                <span className="font-extrabold text-sm">{locale === 'ar' ? sec.titleAr : sec.titleEn}</span>
+              </div>
+
+              <div className="flex items-center gap-2">
+                <button type="button" onClick={() => move(idx, -1)} disabled={idx === 0} className="p-1.5 rounded border disabled:opacity-30">
+                  <ArrowUp className="w-3.5 h-3.5" />
+                </button>
+                <button type="button" onClick={() => move(idx, 1)} disabled={idx === draft.length - 1} className="p-1.5 rounded border disabled:opacity-30">
+                  <ArrowDown className="w-3.5 h-3.5" />
+                </button>
+                <select
+                  value={sec.styleVariant}
+                  onChange={(e) =>
+                    setDraft(draft.map((s, i) => (i === idx ? { ...s, styleVariant: e.target.value as HomeSectionConfig['styleVariant'] } : s)))
+                  }
+                  className="px-2 py-1 rounded border bg-stone-50 dark:bg-zinc-900"
+                >
+                  <option value="default">{t('نمط قياسي', 'Default Style')}</option>
+                  <option value="compact">{t('نمط مضغوط', 'Compact Style')}</option>
+                  <option value="highlight">{t('نمط مميز', 'Highlight Style')}</option>
+                </select>
+                <button
+                  type="button"
+                  onClick={() =>
+                    setDraft(draft.map((s, i) => (i === idx ? { ...s, enabled: !s.enabled } : s)))
+                  }
+                  className={`px-3 py-1 rounded-lg font-bold ${
+                    sec.enabled ? 'bg-emerald-600 text-white' : 'bg-slate-200 text-slate-600'
+                  }`}
+                >
+                  {sec.enabled ? t('مفعل', 'Enabled') : t('معطل', 'Off')}
+                </button>
+              </div>
+            </div>
+
+            <div className="grid sm:grid-cols-2 gap-2">
+              <input
+                value={sec.titleAr}
+                onChange={(e) => setDraft(draft.map((s, i) => (i === idx ? { ...s, titleAr: e.target.value } : s)))}
+                placeholder={t('عنوان القسم (عربي)', 'Title (AR)')}
+                className="px-3 py-1.5 rounded-lg border bg-stone-50 dark:bg-zinc-900"
+              />
+              <input
+                value={sec.titleEn}
+                onChange={(e) => setDraft(draft.map((s, i) => (i === idx ? { ...s, titleEn: e.target.value } : s)))}
+                placeholder={t('عنوان القسم (إنجليزي)', 'Title (EN)')}
+                className="px-3 py-1.5 rounded-lg border bg-stone-50 dark:bg-zinc-900"
+              />
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+};
+
+export const AdminBannersModule: React.FC = () => {
+  const { locale, t, banners, categories, products, upsertBanner, deleteBanner } = useStore();
+  const [titleAr, setTitleAr] = useState('');
+  const [titleEn, setTitleEn] = useState('');
+  const [subAr, setSubAr] = useState('');
+  const [ctaAr, setCtaAr] = useState('تسوق الآن');
+  const [placement, setPlacement] = useState<'home_top' | 'home_middle'>('home_top');
+  const [targetType, setTargetType] = useState<BannerAd['targetType']>('category');
+  const [targetValue, setTargetValue] = useState('frames');
+  const [image, setImage] = useState(IMG_HERO_BOUTIQUE);
+  const [startDate, setStartDate] = useState('2026-01-01');
+  const [endDate, setEndDate] = useState('2027-12-31');
+  const [order, setOrder] = useState('1');
+
+  const handleSave = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!titleAr.trim()) return;
+    upsertBanner({
+      id: `b_${Date.now()}`,
+      titleAr: titleAr.trim(),
+      titleEn: titleEn.trim() || titleAr.trim(),
+      subtitleAr: subAr.trim(),
+      subtitleEn: subAr.trim(),
+      ctaAr: ctaAr.trim() || 'تصفح',
+      ctaEn: ctaAr.trim() || 'Explore',
+      image,
+      placement,
+      targetType,
+      targetValue,
+      order: Number(order) || 1,
+      isActive: true,
+      startDate,
+      endDate,
+    });
+    setTitleAr('');
+    setTitleEn('');
+    setSubAr('');
+  };
+
+  return (
+    <div className="grid lg:grid-cols-12 gap-6 items-start text-xs">
+      <form onSubmit={handleSave} className="lg:col-span-6 bg-white dark:bg-[#181B1E] border border-stone-200 dark:border-zinc-800 rounded-xl p-5 space-y-3">
+        <h2 className="text-base font-bold flex items-center gap-2">
+          <ImageIcon className="w-4 h-4 text-[#D9B24C]" />
+          {t('إضافة بانر إعلاني + معاينة مباشرة', 'Add Banner + Live Preview')}
+        </h2>
+
+        {/* Live Banner Preview */}
+        <div className="relative h-36 rounded-2xl overflow-hidden bg-[#11223E]">
+          <ResilientImage src={image} alt="Banner Preview" className="w-full h-full object-cover opacity-75" />
+          <div className="absolute inset-0 p-4 flex flex-col justify-between bg-gradient-to-t from-black/75 to-transparent text-white">
+            <div>
+              <div className="font-extrabold text-sm">{titleAr || t('عنوان البانر يظهر هنا', 'Banner Headline Preview')}</div>
+              <div className="text-[11px] text-slate-200 line-clamp-1">{subAr || t('الوصف الفرعي للإعلان', 'Campaign subtitle')}</div>
+            </div>
+            <span className="self-start px-3 py-1 rounded-lg bg-[#D9B24C] text-[#11223E] font-extrabold text-[11px]">
+              {ctaAr}
+            </span>
+          </div>
+        </div>
+
+        <div className="grid sm:grid-cols-2 gap-2">
+          <input required value={titleAr} onChange={(e) => setTitleAr(e.target.value)} placeholder={t('العنوان (عربي)*', 'Title (AR)*')} className="px-3 py-2 rounded-lg border bg-stone-50 dark:bg-zinc-900" />
+          <input value={titleEn} onChange={(e) => setTitleEn(e.target.value)} placeholder={t('العنوان (إنجليزي)', 'Title (EN)')} className="px-3 py-2 rounded-lg border bg-stone-50 dark:bg-zinc-900" />
+          <input value={subAr} onChange={(e) => setSubAr(e.target.value)} placeholder={t('الوصف الفرعي', 'Subtitle')} className="px-3 py-2 rounded-lg border bg-stone-50 dark:bg-zinc-900" />
+          <input value={ctaAr} onChange={(e) => setCtaAr(e.target.value)} placeholder={t('نص الزر', 'CTA Button Label')} className="px-3 py-2 rounded-lg border bg-stone-50 dark:bg-zinc-900" />
+        </div>
+
+        <div className="grid sm:grid-cols-3 gap-2">
+          <select value={placement} onChange={(e) => setPlacement(e.target.value as typeof placement)} className="px-2.5 py-2 rounded-lg border bg-stone-50 dark:bg-zinc-900">
+            <option value="home_top">{t('بانر أعلى الرئيسية', 'Top Hero Carousel')}</option>
+            <option value="home_middle">{t('بانر منتصف الصفحة', 'Mid-Page Slot')}</option>
+          </select>
+          <select value={targetType} onChange={(e) => setTargetType(e.target.value as BannerAd['targetType'])} className="px-2.5 py-2 rounded-lg border bg-stone-50 dark:bg-zinc-900">
+            <option value="category">{t('يفتح تصنيف', 'Open Category')}</option>
+            <option value="product">{t('يفتح منتج', 'Open Product')}</option>
+            <option value="consult">{t('يفتح الاستشارات', 'Open Consult')}</option>
+            <option value="url">{t('رابط خارجي', 'External URL')}</option>
+          </select>
+          {targetType === 'category' ? (
+            <select value={targetValue} onChange={(e) => setTargetValue(e.target.value)} className="px-2.5 py-2 rounded-lg border bg-stone-50 dark:bg-zinc-900">
+              {categories.map((c) => <option key={c.id} value={c.id}>{locale === 'ar' ? c.nameAr : c.nameEn}</option>)}
+            </select>
+          ) : targetType === 'product' ? (
+            <select value={targetValue} onChange={(e) => setTargetValue(e.target.value)} className="px-2.5 py-2 rounded-lg border bg-stone-50 dark:bg-zinc-900">
+              {products.map((p) => <option key={p.id} value={p.id}>{locale === 'ar' ? p.titleAr : p.titleEn}</option>)}
+            </select>
+          ) : (
+            <input value={targetValue} onChange={(e) => setTargetValue(e.target.value)} placeholder="https://..." className="px-2.5 py-2 rounded-lg border bg-stone-50 dark:bg-zinc-900" />
+          )}
+        </div>
+
+        <div className="grid sm:grid-cols-3 gap-2">
+          <input type="date" value={startDate} onChange={(e) => setStartDate(e.target.value)} className="px-2.5 py-2 rounded-lg border bg-stone-50 dark:bg-zinc-900 font-mono-num" />
+          <input type="date" value={endDate} onChange={(e) => setEndDate(e.target.value)} className="px-2.5 py-2 rounded-lg border bg-stone-50 dark:bg-zinc-900 font-mono-num" />
+          <input type="number" value={order} onChange={(e) => setOrder(e.target.value)} placeholder={t('الترتيب', 'Order')} className="px-2.5 py-2 rounded-lg border bg-stone-50 dark:bg-zinc-900 font-mono-num" />
+        </div>
+
+        <div className="flex items-center justify-between pt-2">
+          <label className="px-3 py-2 rounded-lg border font-bold cursor-pointer inline-flex items-center gap-1.5">
+            <Upload className="w-3.5 h-3.5" />
+            {t('رفع صورة البانر', 'Upload Banner Image')}
+            <input
+              type="file"
+              accept="image/*"
+              className="hidden"
+              onChange={(e) => {
+                const f = e.target.files?.[0];
+                if (!f) return;
+                const r = new FileReader();
+                r.onload = () => typeof r.result === 'string' && setImage(r.result);
+                r.readAsDataURL(f);
+              }}
+            />
+          </label>
+          <button type="submit" className="px-5 py-2 rounded-xl bg-[#D9B24C] text-[#11223E] font-extrabold">
+            {t('حفظ البانر', 'Save Banner')}
+          </button>
+        </div>
+      </form>
+
+      <div className="lg:col-span-6 space-y-3">
+        {banners.map((b) => (
+          <div key={b.id} className="bg-white dark:bg-[#181B1E] border border-stone-200 dark:border-zinc-800 rounded-xl p-3 flex items-center justify-between gap-3">
+            <div className="flex items-center gap-3 min-w-0">
+              <img src={b.image} alt="" className="w-16 h-12 rounded-lg object-cover shrink-0" />
+              <div className="min-w-0">
+                <div className="font-bold truncate">{locale === 'ar' ? b.titleAr : b.titleEn}</div>
+                <div className="text-[11px] text-slate-500 font-mono-num">
+                  {b.placement} · #{b.order} · {b.startDate} → {b.endDate}
+                </div>
+              </div>
+            </div>
+            <div className="flex items-center gap-2 shrink-0">
+              <button
+                type="button"
+                onClick={() => upsertBanner({ ...b, isActive: !b.isActive })}
+                className={`px-2.5 py-1 rounded-lg font-bold ${b.isActive ? 'bg-emerald-600 text-white' : 'bg-slate-200 text-slate-600'}`}
+              >
+                {b.isActive ? t('نشط', 'Active') : t('متوقف', 'Paused')}
+              </button>
+              <button type="button" onClick={() => deleteBanner(b.id)} className="text-rose-600 p-1">
+                <Trash2 className="w-4 h-4" />
+              </button>
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+};
+
+export const AdminContentTextsModule: React.FC = () => {
+  const { locale, t, appTexts, lensOptions, updateAppTexts, updateLensOptions } = useStore();
+  const [draft, setDraft] = useState(appTexts);
+  const [lensDraft, setLensDraft] = useState(lensOptions);
+  const [newFaqQAr, setNewFaqQAr] = useState('');
+  const [newFaqAAr, setNewFaqAAr] = useState('');
+
+  const textFields: { key: keyof typeof draft; labelAr: string; labelEn: string; multiline?: boolean }[] = [
+    { key: 'welcomeLineAr', labelAr: 'سطر الترحيب (عربي)', labelEn: 'Welcome Line (AR)' },
+    { key: 'welcomeLineEn', labelAr: 'سطر الترحيب (إنجليزي)', labelEn: 'Welcome Line (EN)' },
+    { key: 'announcementTextAr', labelAr: 'شريط الإعلانات العلوي (عربي)', labelEn: 'Announcement Bar (AR)' },
+    { key: 'announcementTextEn', labelAr: 'شريط الإعلانات العلوي (إنجليزي)', labelEn: 'Announcement Bar (EN)' },
+    { key: 'splashTextAr', labelAr: 'نص شاشة البداية (عربي)', labelEn: 'Splash Text (AR)' },
+    { key: 'splashTextEn', labelAr: 'نص شاشة البداية (إنجليزي)', labelEn: 'Splash Text (EN)' },
+    { key: 'btnAddToCartAr', labelAr: 'زر الإضافة للسلة (عربي)', labelEn: 'Add to Cart Label (AR)' },
+    { key: 'btnAddToCartEn', labelAr: 'زر الإضافة للسلة (إنجليزي)', labelEn: 'Add to Cart Label (EN)' },
+    { key: 'btnCheckoutAr', labelAr: 'زر إتمام الطلب (عربي)', labelEn: 'Checkout Button (AR)' },
+    { key: 'emptyCartTitleAr', labelAr: 'عنوان السلة الفارغة (عربي)', labelEn: 'Empty Cart Text (AR)' },
+    { key: 'emptyOrdersAr', labelAr: 'نص لا توجد طلبات (عربي)', labelEn: 'Empty Orders Text (AR)' },
+    { key: 'aboutUsAr', labelAr: 'من نحن (عربي)', labelEn: 'About Us (AR)', multiline: true },
+    { key: 'privacyPolicyAr', labelAr: 'سياسة الخصوصية (عربي)', labelEn: 'Privacy Policy (AR)', multiline: true },
+    { key: 'termsConditionsAr', labelAr: 'الشروط والأحكام (عربي)', labelEn: 'Terms & Conditions (AR)', multiline: true },
+    { key: 'returnPolicyAr', labelAr: 'سياسة الإرجاع (عربي)', labelEn: 'Return Policy (AR)', multiline: true },
+  ];
+
+  return (
+    <div className="space-y-6 text-xs">
+      <div className="bg-white dark:bg-[#181B1E] border border-stone-200 dark:border-zinc-800 rounded-xl p-5 space-y-4">
+        <div className="flex items-center justify-between">
+          <h2 className="text-base font-bold flex items-center gap-2">
+            <FileText className="w-4 h-4 text-[#D9B24C]" />
+            {t('تعديل نصوص التطبيق والسياسات والأزرار', 'App Content, Buttons & Legal Policies')}
+          </h2>
+          <button
+            type="button"
+            onClick={() => updateAppTexts(draft)}
+            className="px-5 py-2 rounded-xl bg-[#D9B24C] text-[#11223E] font-extrabold"
+          >
+            {t('حفظ كافة النصوص', 'Save App Content')}
+          </button>
+        </div>
+
+        <div className="grid md:grid-cols-2 gap-3">
+          {textFields.map((f) => (
+            <div key={String(f.key)} className={f.multiline ? 'md:col-span-2' : ''}>
+              <label className="block font-semibold mb-1">{locale === 'ar' ? f.labelAr : f.labelEn}</label>
+              {f.multiline ? (
+                <textarea
+                  rows={2}
+                  value={String(draft[f.key] || '')}
+                  onChange={(e) => setDraft({ ...draft, [f.key]: e.target.value })}
+                  className="w-full px-3 py-2 rounded-lg border bg-stone-50 dark:bg-zinc-900"
+                />
+              ) : (
+                <input
+                  value={String(draft[f.key] || '')}
+                  onChange={(e) => setDraft({ ...draft, [f.key]: e.target.value })}
+                  className="w-full px-3 py-2 rounded-lg border bg-stone-50 dark:bg-zinc-900"
+                />
+              )}
+            </div>
+          ))}
+        </div>
+      </div>
+
+      {/* Lens Coating Options & Pricing */}
+      <div className="bg-white dark:bg-[#181B1E] border border-stone-200 dark:border-zinc-800 rounded-xl p-5 space-y-3">
+        <div className="flex items-center justify-between">
+          <h3 className="font-bold text-sm">{t('أسعار وخيارات العدسات الطبية (Rx)', 'Lens Options & Extra Prices (SDG)')}</h3>
+          <button type="button" onClick={() => updateLensOptions(lensDraft)} className="px-4 py-1.5 rounded-lg bg-[#11223E] text-white font-bold">
+            {t('حفظ أسعار العدسات', 'Save Lens Prices')}
+          </button>
+        </div>
+        <div className="grid md:grid-cols-2 gap-2.5">
+          {lensDraft.map((opt, idx) => (
+            <div key={opt.id} className="p-2.5 rounded-lg bg-stone-50 dark:bg-zinc-900 flex items-center gap-2">
+              <input value={opt.labelAr} onChange={(e) => setLensDraft(lensDraft.map((o, i) => (i === idx ? { ...o, labelAr: e.target.value } : o)))} className="flex-1 px-2 py-1 rounded border bg-white dark:bg-[#181B1E]" />
+              <input type="number" value={opt.extraSdg} onChange={(e) => setLensDraft(lensDraft.map((o, i) => (i === idx ? { ...o, extraSdg: Number(e.target.value) || 0 } : o)))} className="w-24 px-2 py-1 rounded border bg-white dark:bg-[#181B1E] font-mono-num" />
+              <button
+                type="button"
+                onClick={() => setLensDraft(lensDraft.map((o, i) => (i === idx ? { ...o, visible: !o.visible } : o)))}
+                className={`px-2 py-1 rounded font-bold ${opt.visible ? 'bg-emerald-600 text-white' : 'bg-slate-200 text-slate-600'}`}
+              >
+                {opt.visible ? t('مفعل', 'On') : t('معطل', 'Off')}
+              </button>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      {/* FAQ Editor */}
+      <div className="bg-white dark:bg-[#181B1E] border border-stone-200 dark:border-zinc-800 rounded-xl p-5 space-y-3">
+        <h3 className="font-bold text-sm">{t('إدارة الأسئلة الشائعة (FAQ)', 'FAQ Manager')}</h3>
+        <div className="space-y-2">
+          {draft.faq.map((f, idx) => (
+            <div key={f.id} className="p-3 rounded-lg bg-stone-50 dark:bg-zinc-900 flex items-start justify-between gap-2">
+              <div>
+                <div className="font-bold">{f.questionAr}</div>
+                <div className="text-slate-500">{f.answerAr}</div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setDraft({ ...draft, faq: draft.faq.filter((_, i) => i !== idx) })}
+                className="text-rose-600"
+              >
+                <Trash2 className="w-4 h-4" />
+              </button>
+            </div>
+          ))}
+        </div>
+        <div className="grid sm:grid-cols-3 gap-2">
+          <input value={newFaqQAr} onChange={(e) => setNewFaqQAr(e.target.value)} placeholder={t('السؤال...', 'Question...')} className="px-3 py-2 rounded-lg border bg-stone-50 dark:bg-zinc-900" />
+          <input value={newFaqAAr} onChange={(e) => setNewFaqAAr(e.target.value)} placeholder={t('الإجابة...', 'Answer...')} className="px-3 py-2 rounded-lg border bg-stone-50 dark:bg-zinc-900" />
+          <button
+            type="button"
+            onClick={() => {
+              if (!newFaqQAr.trim()) return;
+              const next = { ...draft, faq: [...draft.faq, { id: `faq_${Date.now()}`, questionAr: newFaqQAr, questionEn: newFaqQAr, answerAr: newFaqAAr, answerEn: newFaqAAr, visible: true }] };
+              setDraft(next);
+              updateAppTexts(next);
+              setNewFaqQAr('');
+              setNewFaqAAr('');
+            }}
+            className="px-4 py-2 rounded-lg bg-[#11223E] text-white font-bold inline-flex items-center justify-center gap-1"
+          >
+            <Plus className="w-4 h-4" />
+            {t('إضافة سؤال', 'Add FAQ')}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+};
+
+export const AdminAppearanceModule: React.FC = () => {
+  const { t, appearance, updateAppearance } = useStore();
+  const [draft, setDraft] = useState(appearance);
+
+  return (
+    <div className="bg-white dark:bg-[#181B1E] border border-stone-200 dark:border-zinc-800 rounded-xl p-5 space-y-5 text-xs">
+      <div className="flex items-center justify-between">
+        <h2 className="text-base font-bold flex items-center gap-2">
+          <Palette className="w-4 h-4 text-[#D9B24C]" />
+          {t('مظهر التطبيق والشعار والألوان', 'App Appearance, Logo & Colors')}
+        </h2>
+        <button
+          type="button"
+          onClick={() => updateAppearance(draft)}
+          className="px-5 py-2 rounded-xl bg-[#D9B24C] text-[#11223E] font-extrabold"
+        >
+          {t('تطبيق المظهر فوراً', 'Apply Appearance')}
+        </button>
+      </div>
+
+      <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-4">
+        <div>
+          <label className="block font-semibold mb-1">{t('اسم التطبيق (عربي)', 'App Name (AR)')}</label>
+          <input value={draft.appNameAr} onChange={(e) => setDraft({ ...draft, appNameAr: e.target.value })} className="w-full px-3 py-2 rounded-lg border bg-stone-50 dark:bg-zinc-900" />
+        </div>
+        <div>
+          <label className="block font-semibold mb-1">{t('اسم التطبيق (إنجليزي)', 'App Name (EN)')}</label>
+          <input value={draft.appNameEn} onChange={(e) => setDraft({ ...draft, appNameEn: e.target.value })} className="w-full px-3 py-2 rounded-lg border bg-stone-50 dark:bg-zinc-900" />
+        </div>
+        <div>
+          <label className="block font-semibold mb-1">{t('نص الشعار (Wordmark)', 'Wordmark Text')}</label>
+          <input value={draft.wordmarkText} onChange={(e) => setDraft({ ...draft, wordmarkText: e.target.value })} className="w-full px-3 py-2 rounded-lg border bg-stone-50 dark:bg-zinc-900 font-mono-num" />
+        </div>
+        <div>
+          <label className="block font-semibold mb-1">{t('اللون الأساسي (Primary)', 'Primary Color')}</label>
+          <div className="flex items-center gap-2">
+            <input type="color" value={draft.primaryColor} onChange={(e) => setDraft({ ...draft, primaryColor: e.target.value })} className="h-9 w-14 rounded cursor-pointer" />
+            <input value={draft.primaryColor} onChange={(e) => setDraft({ ...draft, primaryColor: e.target.value })} className="flex-1 px-2 py-2 rounded border font-mono-num" />
+          </div>
+        </div>
+        <div>
+          <label className="block font-semibold mb-1">{t('اللون الثانوي (Secondary)', 'Secondary Color')}</label>
+          <div className="flex items-center gap-2">
+            <input type="color" value={draft.secondaryColor} onChange={(e) => setDraft({ ...draft, secondaryColor: e.target.value })} className="h-9 w-14 rounded cursor-pointer" />
+            <input value={draft.secondaryColor} onChange={(e) => setDraft({ ...draft, secondaryColor: e.target.value })} className="flex-1 px-2 py-2 rounded border font-mono-num" />
+          </div>
+        </div>
+        <div>
+          <label className="block font-semibold mb-1">{t('الثيم الافتراضي', 'Default Theme')}</label>
+          <select value={draft.defaultTheme} onChange={(e) => setDraft({ ...draft, defaultTheme: e.target.value as 'light' | 'dark' })} className="w-full px-3 py-2 rounded-lg border bg-stone-50 dark:bg-zinc-900">
+            <option value="light">{t('نهاري فاتح', 'Light Mode')}</option>
+            <option value="dark">{t('ليلي داكن', 'Dark Mode')}</option>
+          </select>
+        </div>
+      </div>
+
+      <div className="flex flex-wrap gap-4 items-center">
+        <label className="px-3 py-2 rounded-lg border cursor-pointer font-semibold inline-flex items-center gap-1.5">
+          <Upload className="w-4 h-4" />
+          {t('رفع شعار المتجر (Logo)', 'Upload App Logo')}
+          <input
+            type="file"
+            accept="image/*"
+            className="hidden"
+            onChange={(e) => {
+              const f = e.target.files?.[0];
+              if (!f) return;
+              const r = new FileReader();
+              r.onload = () => typeof r.result === 'string' && setDraft({ ...draft, logoUrl: r.result });
+              r.readAsDataURL(f);
+            }}
+          />
+        </label>
+        {draft.logoUrl && (
+          <button type="button" onClick={() => setDraft({ ...draft, logoUrl: '' })} className="text-rose-600 font-bold">
+            {t('إزالة الشعار', 'Clear Logo')}
+          </button>
+        )}
+      </div>
+    </div>
+  );
+};
+
+export const AdminStoreSettingsModule: React.FC = () => {
+  const { locale, t, settings, updateSettings } = useStore();
+  const [draft, setDraft] = useState(settings);
+
+  const socialKeys = ['facebook', 'instagram', 'whatsapp', 'tiktok', 'telegram', 'snapchat', 'youtube', 'x'] as const;
+
+  const toggleContact = (field: keyof typeof draft.contactVisibility) => {
+    setDraft({
+      ...draft,
+      contactVisibility: {
+        ...draft.contactVisibility,
+        [field]: !draft.contactVisibility[field],
+      },
+    });
+  };
+
+  return (
+    <form
+      onSubmit={(e) => {
+        e.preventDefault();
+        updateSettings(draft);
+      }}
+      className="bg-white dark:bg-[#181B1E] border border-stone-200 dark:border-zinc-800 rounded-xl p-5 space-y-6 text-xs"
+    >
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <h2 className="text-base font-bold flex items-center gap-2">
+          <Settings className="w-4 h-4 text-[#D9B24C]" />
+          {t('إعدادات المتجر والتواصل بالفوتر وبنكك والصيانة', 'Store Settings, Footer Contacts, Bankak & Maintenance')}
+        </h2>
+        <button
+          type="button"
+          onClick={() => setDraft({ ...draft, maintenanceMode: !draft.maintenanceMode })}
+          className={`px-3.5 py-1.5 rounded-lg font-extrabold ${
+            draft.maintenanceMode ? 'bg-rose-600 text-white' : 'bg-slate-200 text-slate-700'
+          }`}
+        >
+          {draft.maintenanceMode ? t('وضع الصيانة: مفعل ✓', 'Maintenance Mode: ON') : t('وضع الصيانة: متوقف', 'Maintenance Mode: OFF')}
+        </button>
+      </div>
+
+      {draft.maintenanceMode && (
+        <div className="grid sm:grid-cols-2 gap-2">
+          <input
+            value={draft.maintenanceMessageAr}
+            onChange={(e) => setDraft({ ...draft, maintenanceMessageAr: e.target.value })}
+            placeholder={t('رسالة وضع الصيانة (عربي)...', 'Maintenance message (AR)...')}
+            className="w-full px-3 py-2 rounded-lg border border-rose-300 bg-rose-50/40"
+          />
+          <input
+            value={draft.maintenanceMessageEn}
+            onChange={(e) => setDraft({ ...draft, maintenanceMessageEn: e.target.value })}
+            placeholder={t('رسالة وضع الصيانة (إنجليزي)...', 'Maintenance message (EN)...')}
+            className="w-full px-3 py-2 rounded-lg border border-rose-300 bg-rose-50/40"
+          />
+        </div>
+      )}
+
+      {/* Footer Contact Visibility Toggles & Values */}
+      <div className="p-4 rounded-xl bg-stone-50 dark:bg-zinc-900 border border-stone-200 dark:border-zinc-800 space-y-3">
+        <h3 className="text-sm font-bold">
+          {t('بيانات التواصل في الفوتر (تعديل القيم + إظهار/إخفاء كل عنصر)', 'Footer Contact Details & Visibility Toggles')}
+        </h3>
+        <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-3">
+          {/* Phone */}
+          <div className="p-2.5 rounded-lg bg-white dark:bg-[#181B1E] border border-stone-200 dark:border-zinc-800 space-y-1.5">
+            <div className="flex items-center justify-between">
+              <span className="font-bold">{t('رقم الهاتف', 'Phone Call')}</span>
+              <button
+                type="button"
+                onClick={() => toggleContact('phone')}
+                className={`px-2 py-0.5 rounded text-[10px] font-bold ${
+                  draft.contactVisibility.phone ? 'bg-emerald-600 text-white' : 'bg-slate-200 text-slate-600'
+                }`}
+              >
+                {draft.contactVisibility.phone ? t('ظاهر', 'Visible') : t('مخفي', 'Hidden')}
+              </button>
+            </div>
+            <input dir="ltr" value={draft.phone} onChange={(e) => setDraft({ ...draft, phone: e.target.value })} className="w-full px-2.5 py-1.5 rounded border bg-stone-50 dark:bg-zinc-900 font-mono-num" />
+          </div>
+
+          {/* WhatsApp */}
+          <div className="p-2.5 rounded-lg bg-white dark:bg-[#181B1E] border border-stone-200 dark:border-zinc-800 space-y-1.5">
+            <div className="flex items-center justify-between">
+              <span className="font-bold">{t('رقم واتساب', 'WhatsApp Number')}</span>
+              <button
+                type="button"
+                onClick={() => toggleContact('whatsapp')}
+                className={`px-2 py-0.5 rounded text-[10px] font-bold ${
+                  draft.contactVisibility.whatsapp ? 'bg-emerald-600 text-white' : 'bg-slate-200 text-slate-600'
+                }`}
+              >
+                {draft.contactVisibility.whatsapp ? t('ظاهر', 'Visible') : t('مخفي', 'Hidden')}
+              </button>
+            </div>
+            <input dir="ltr" value={draft.whatsapp} onChange={(e) => setDraft({ ...draft, whatsapp: e.target.value })} className="w-full px-2.5 py-1.5 rounded border bg-stone-50 dark:bg-zinc-900 font-mono-num" />
+          </div>
+
+          {/* Email */}
+          <div className="p-2.5 rounded-lg bg-white dark:bg-[#181B1E] border border-stone-200 dark:border-zinc-800 space-y-1.5">
+            <div className="flex items-center justify-between">
+              <span className="font-bold">{t('البريد الإلكتروني', 'Email')}</span>
+              <button
+                type="button"
+                onClick={() => toggleContact('email')}
+                className={`px-2 py-0.5 rounded text-[10px] font-bold ${
+                  draft.contactVisibility.email ? 'bg-emerald-600 text-white' : 'bg-slate-200 text-slate-600'
+                }`}
+              >
+                {draft.contactVisibility.email ? t('ظاهر', 'Visible') : t('مخفي', 'Hidden')}
+              </button>
+            </div>
+            <input dir="ltr" type="email" value={draft.email} onChange={(e) => setDraft({ ...draft, email: e.target.value })} className="w-full px-2.5 py-1.5 rounded border bg-stone-50 dark:bg-zinc-900" />
+          </div>
+
+          {/* Address & Map */}
+          <div className="sm:col-span-2 p-2.5 rounded-lg bg-white dark:bg-[#181B1E] border border-stone-200 dark:border-zinc-800 space-y-1.5">
+            <div className="flex items-center justify-between">
+              <span className="font-bold">{t('العنوان ورابط الخريطة', 'Address & Map Link')}</span>
+              <button
+                type="button"
+                onClick={() => toggleContact('address')}
+                className={`px-2 py-0.5 rounded text-[10px] font-bold ${
+                  draft.contactVisibility.address ? 'bg-emerald-600 text-white' : 'bg-slate-200 text-slate-600'
+                }`}
+              >
+                {draft.contactVisibility.address ? t('ظاهر', 'Visible') : t('مخفي', 'Hidden')}
+              </button>
+            </div>
+            <div className="grid sm:grid-cols-3 gap-2">
+              <input value={draft.addressAr} onChange={(e) => setDraft({ ...draft, addressAr: e.target.value })} placeholder={t('العنوان (عربي)', 'Address (AR)')} className="px-2.5 py-1.5 rounded border bg-stone-50 dark:bg-zinc-900" />
+              <input value={draft.addressEn} onChange={(e) => setDraft({ ...draft, addressEn: e.target.value })} placeholder={t('العنوان (إنجليزي)', 'Address (EN)')} className="px-2.5 py-1.5 rounded border bg-stone-50 dark:bg-zinc-900" />
+              <input dir="ltr" value={draft.mapUrl} onChange={(e) => setDraft({ ...draft, mapUrl: e.target.value })} placeholder="https://maps.google.com/..." className="px-2.5 py-1.5 rounded border bg-stone-50 dark:bg-zinc-900" />
+            </div>
+          </div>
+
+          {/* Working Hours */}
+          <div className="p-2.5 rounded-lg bg-white dark:bg-[#181B1E] border border-stone-200 dark:border-zinc-800 space-y-1.5">
+            <div className="flex items-center justify-between">
+              <span className="font-bold">{t('ساعات العمل', 'Working Hours')}</span>
+              <button
+                type="button"
+                onClick={() => toggleContact('workingHours')}
+                className={`px-2 py-0.5 rounded text-[10px] font-bold ${
+                  draft.contactVisibility.workingHours ? 'bg-emerald-600 text-white' : 'bg-slate-200 text-slate-600'
+                }`}
+              >
+                {draft.contactVisibility.workingHours ? t('ظاهر', 'Visible') : t('مخفي', 'Hidden')}
+              </button>
+            </div>
+            <input value={draft.workingHoursAr} onChange={(e) => setDraft({ ...draft, workingHoursAr: e.target.value })} placeholder={t('ساعات العمل (عربي)', 'Hours (AR)')} className="w-full px-2.5 py-1.5 rounded border bg-stone-50 dark:bg-zinc-900 mb-1" />
+            <input value={draft.workingHoursEn} onChange={(e) => setDraft({ ...draft, workingHoursEn: e.target.value })} placeholder={t('ساعات العمل (إنجليزي)', 'Hours (EN)')} className="w-full px-2.5 py-1.5 rounded border bg-stone-50 dark:bg-zinc-900" />
+          </div>
+        </div>
+      </div>
+
+      {/* Store Name, Bankak & Minimum Order */}
+      <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-3">
+        <div>
+          <label className="block font-semibold mb-1">{t('اسم المتجر (عربي)', 'Store Name (AR)')}</label>
+          <input value={draft.storeNameAr} onChange={(e) => setDraft({ ...draft, storeNameAr: e.target.value })} className="w-full px-3 py-2 rounded-lg border bg-stone-50 dark:bg-zinc-900" />
+        </div>
+        <div>
+          <label className="block font-semibold mb-1">{t('اسم المتجر (إنجليزي)', 'Store Name (EN)')}</label>
+          <input value={draft.storeNameEn} onChange={(e) => setDraft({ ...draft, storeNameEn: e.target.value })} className="w-full px-3 py-2 rounded-lg border bg-stone-50 dark:bg-zinc-900" />
+        </div>
+        <div>
+          <label className="block font-semibold mb-1">{t('الحد الأدنى للطلب (ج.س)', 'Minimum Order (SDG)')}</label>
+          <input type="number" value={draft.minimumOrderSdg} onChange={(e) => setDraft({ ...draft, minimumOrderSdg: Number(e.target.value) || 0 })} className="w-full px-3 py-2 rounded-lg border bg-stone-50 dark:bg-zinc-900 font-mono-num" />
+        </div>
+        <div>
+          <label className="block font-semibold mb-1">{t('اسم صاحب حساب بنكك', 'Bankak Account Name')}</label>
+          <input value={draft.bankakAccountName} onChange={(e) => setDraft({ ...draft, bankakAccountName: e.target.value })} className="w-full px-3 py-2 rounded-lg border bg-stone-50 dark:bg-zinc-900" />
+        </div>
+        <div>
+          <label className="block font-semibold mb-1">{t('رقم حساب بنكك', 'Bankak Account Number')}</label>
+          <input value={draft.bankakAccountNumber} onChange={(e) => setDraft({ ...draft, bankakAccountNumber: e.target.value })} className="w-full px-3 py-2 rounded-lg border bg-stone-50 dark:bg-zinc-900 font-mono-num" />
+        </div>
+        <div>
+          <label className="block font-semibold mb-1">{t('بنك آخر / فوري', 'Other Bank Details')}</label>
+          <input value={draft.otherBankDetailsAr} onChange={(e) => setDraft({ ...draft, otherBankDetailsAr: e.target.value })} className="w-full px-3 py-2 rounded-lg border bg-stone-50 dark:bg-zinc-900" />
+        </div>
+      </div>
+
+      {/* Social Links with individual visibility switches */}
+      <div className="space-y-2">
+        <h3 className="text-sm font-bold">{t('أيقونات التواصل الاجتماعي في الفوتر (رابط + زر إظهار/إخفاء لكل منصة)', 'Footer Social Icons & Visibility')}</h3>
+        <div className="grid sm:grid-cols-2 lg:grid-cols-4 gap-2.5">
+          {socialKeys.map((key) => {
+            const item = draft.socialLinks[key];
+            return (
+              <div key={key} className="p-2.5 rounded-lg bg-stone-50 dark:bg-zinc-900 space-y-1.5">
+                <div className="flex items-center justify-between">
+                  <span className="font-bold uppercase text-[11px]">{key}</span>
+                  <button
+                    type="button"
+                    onClick={() =>
+                      setDraft({
+                        ...draft,
+                        socialLinks: { ...draft.socialLinks, [key]: { ...item, visible: !item.visible } },
+                      })
+                    }
+                    className={`px-2 py-0.5 rounded text-[10px] font-bold ${
+                      item.visible ? 'bg-emerald-600 text-white' : 'bg-slate-200 text-slate-600'
+                    }`}
+                  >
+                    {item.visible ? t('ظاهر', 'Visible') : t('مخفي', 'Hidden')}
+                  </button>
+                </div>
+                <input
+                  dir="ltr"
+                  value={item.url}
+                  onChange={(e) =>
+                    setDraft({
+                      ...draft,
+                      socialLinks: { ...draft.socialLinks, [key]: { ...item, url: e.target.value } },
+                    })
+                  }
+                  placeholder="https://..."
+                  className="w-full px-2 py-1 rounded border bg-white dark:bg-[#181B1E] text-[11px]"
+                />
+              </div>
+            );
+          })}
+        </div>
+      </div>
+
+      {/* 18 Sudan States */}
+      <div>
+        <h3 className="text-sm font-bold mb-3">
+          {t('رسوم التوصيل حسب ولايات السودان الـ 18 (ج.س)', 'Delivery Fees for 18 Sudan States (SDG)')}
+        </h3>
+        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
+          {draft.deliveryFees.map((st, idx) => (
+            <div key={st.id}>
+              <label className="block text-[11px] font-medium mb-1 truncate">
+                {locale === 'ar' ? st.nameAr : st.nameEn}
+              </label>
+              <input
+                type="number"
+                value={st.feeSdg}
+                onChange={(e) => {
+                  const nextFees = draft.deliveryFees.map((item, i) =>
+                    i === idx ? { ...item, feeSdg: Number(e.target.value) || 0 } : item
+                  );
+                  setDraft({ ...draft, deliveryFees: nextFees });
+                }}
+                className="w-full px-2.5 py-1.5 rounded-lg border bg-stone-50 dark:bg-zinc-900 font-mono-num"
+              />
+            </div>
+          ))}
+        </div>
+      </div>
+
+      <button type="submit" className="px-6 py-2.5 rounded-xl bg-[#D9B24C] text-[#11223E] font-extrabold">
+        {t('حفظ جميع إعدادات المتجر', 'Save Store Settings')}
+      </button>
+    </form>
+  );
+};

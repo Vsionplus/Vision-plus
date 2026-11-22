@@ -1,0 +1,6 @@
+{
+  "name": "النور للبصريات | Optical Store Sudan",
+  "description": "متجر متكامل للنظارات الطبية والشمسية والعدسات اللاصقة ومحاليلها في السودان بالـ ج.س مع استشارة أخصائي البصريات والدفع عبر بنكك.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
