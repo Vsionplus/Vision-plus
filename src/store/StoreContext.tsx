@@ -1,4 +1,30 @@
-import React, { createContext, useContext, useEffect, useMemo, useState } from 'react';
+import React, { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
+import {
+  EmailAuthProvider,
+  User,
+  createUserWithEmailAndPassword,
+  linkWithCredential,
+  onAuthStateChanged,
+  reauthenticateWithCredential,
+  sendEmailVerification,
+  signInAnonymously,
+  signInWithEmailAndPassword,
+  signOut,
+  updateProfile as firebaseUpdateProfile,
+  verifyBeforeUpdateEmail,
+} from 'firebase/auth';
+import {
+  collection,
+  deleteDoc,
+  doc,
+  getDoc,
+  onSnapshot,
+  query,
+  serverTimestamp,
+  setDoc,
+  updateDoc,
+  where,
+} from 'firebase/firestore';
 import {
   AppAppearanceConfig,
   AppNotification,
@@ -25,7 +51,6 @@ import {
   StaffPermission,
   StoreSettings,
   ThemeMode,
-  UserRole,
 } from '../types';
 import {
   APP_APPEARANCE_SEED,
@@ -37,14 +62,20 @@ import {
   COUPONS_SEED,
   CUSTOMERS_AND_STAFF_SEED,
   HOME_SECTIONS_SEED,
-  INITIAL_CONSULTS_SEED,
   INITIAL_NOTIFICATIONS_SEED,
-  INITIAL_ORDERS_SEED,
-  INITIAL_USER_SEED,
   LENS_OPTIONS_SEED,
   PRODUCTS_SEED,
   STORE_SETTINGS_SEED,
 } from '../data/seedData';
+import {
+  OperationType,
+  auth,
+  db,
+  getFirebaseAuthErrorCode,
+  handleFirestoreError,
+  mapFirebaseAuthError,
+  stripUndefined,
+} from '../lib/firebase';
 
 export type AppTab =
   | 'home'
@@ -57,6 +88,48 @@ export type AppTab =
   | 'contact'
   | 'admin';
 
+export type AuthScreenMode = 'none' | 'entry' | 'verify_email';
+
+export interface AuthModalState {
+  open: boolean;
+  view: 'choice' | 'login' | 'register';
+  checkoutNotice: boolean;
+}
+
+const BOOTSTRAPPED_ADMIN_EMAIL = 'visionplusvisionstore@gmail.com';
+const ALL_ADMIN_PERMS: StaffPermission[] = [
+  'dashboard',
+  'products',
+  'categories',
+  'home_builder',
+  'banners',
+  'content',
+  'appearance',
+  'settings',
+  'orders',
+  'coupons',
+  'notifications',
+  'consults',
+  'customers',
+  'roles',
+];
+
+function createEmptyUser(uid = 'guest_pending'): AppUser {
+  return {
+    uid,
+    name: 'ضيف فيجن بلس',
+    email: '',
+    phone: '',
+    role: 'customer',
+    isBlocked: false,
+    isAnonymous: true,
+    emailVerified: false,
+    favoriteProductIds: [],
+    addresses: [],
+    prescriptions: [],
+  };
+}
+
 interface StoreState {
   locale: Locale;
   theme: ThemeMode;
@@ -64,6 +137,11 @@ interface StoreState {
   catalogCategory: CategoryId | 'all';
   catalogSearch: string;
   selectedProductId: string | null;
+  authReady: boolean;
+  firebaseUser: User | null;
+  authScreenMode: AuthScreenMode;
+  authModal: AuthModalState;
+  pendingCheckoutReturn: boolean;
   user: AppUser;
   directoryUsers: AppUser[];
   products: Product[];
@@ -110,8 +188,17 @@ interface BroadcastPayload {
   deepLinkId?: string;
 }
 
+interface RegisterPayload {
+  name: string;
+  email: string;
+  password: string;
+  phone?: string;
+}
+
 interface StoreContextValue extends StoreState {
   t: (ar: string, en: string) => string;
+  isGuest: boolean;
+  isEmailVerified: boolean;
   unreadNotificationsCount: number;
   cartCount: number;
   visibleProducts: Product[];
@@ -124,7 +211,20 @@ interface StoreContextValue extends StoreState {
   openCatalog: (category?: CategoryId | 'all', search?: string) => void;
   setCatalogSearch: (q: string) => void;
   openProduct: (productId: string | null) => void;
-  switchRole: (role: UserRole) => void;
+  openAuthEntry: () => void;
+  openVerifyEmailScreen: () => void;
+  openAuthModal: (view?: 'choice' | 'login' | 'register', checkoutNotice?: boolean) => void;
+  closeAuthModal: () => void;
+  continueAsGuest: () => Promise<void>;
+  loginWithEmail: (email: string, password: string) => Promise<void>;
+  registerWithEmail: (payload: RegisterPayload) => Promise<void>;
+  refreshEmailVerification: (silent?: boolean) => Promise<boolean>;
+  resendVerificationEmail: () => Promise<void>;
+  changeVerificationEmail: (
+    newEmail: string,
+    currentPassword?: string
+  ) => Promise<{ requiresPassword?: boolean }>;
+  logout: () => Promise<void>;
   updateProfile: (name: string, phone: string, email: string) => void;
   toggleFavorite: (productId: string) => void;
   addReview: (productId: string, rating: number, comment: string) => void;
@@ -132,7 +232,7 @@ interface StoreContextValue extends StoreState {
   addToCart: (item: Omit<CartItem, 'id'>) => void;
   updateCartQty: (cartItemId: string, delta: number) => void;
   removeFromCart: (cartItemId: string) => void;
-  placeOrder: (payload: PlaceOrderPayload) => Order | null;
+  placeOrder: (payload: PlaceOrderPayload) => Promise<Order | null>;
   cancelOrder: (orderId: string) => void;
   reorder: (orderId: string) => void;
   updateOrderStatus: (orderId: string, status: OrderStatus) => void;
@@ -215,8 +315,52 @@ function normalizeHomeSections(raw?: HomeSectionConfig[]): HomeSectionConfig[] {
   return filtered.length > 0 ? filtered : HOME_SECTIONS_SEED;
 }
 
+function resolveTabFromHash(): AppTab {
+  if (typeof window === 'undefined') return 'home';
+  const raw = window.location.hash.replace(/^#\/?/, '').split('?')[0].toLowerCase();
+  if (raw === 'categories' || raw === 'catalog') return 'catalog';
+  if (raw === 'cart') return 'cart';
+  if (raw === 'orders') return 'orders';
+  if (raw === 'consult') return 'consult';
+  if (raw === 'profile') return 'profile';
+  if (raw === 'favorites') return 'favorites';
+  if (raw === 'contact') return 'contact';
+  if (raw === 'admin') return 'admin';
+  return 'home';
+}
+
+function hashForTab(tab: AppTab): string {
+  return tab === 'catalog' ? '#/categories' : `#/${tab}`;
+}
+
+function mergeCartItems(existingCart: CartItem[], incomingCart: CartItem[]): CartItem[] {
+  const merged = [...existingCart];
+  for (const item of incomingCart) {
+    const hasCustomSpecs = Boolean(item.prescription || item.contactLensSelection);
+    const matchIdx = !hasCustomSpecs
+      ? merged.findIndex(
+          (c) =>
+            c.productId === item.productId &&
+            c.variantId === item.variantId &&
+            !c.prescription &&
+            !c.contactLensSelection
+        )
+      : -1;
+    if (matchIdx >= 0) {
+      merged[matchIdx] = {
+        ...merged[matchIdx],
+        quantity: merged[matchIdx].quantity + item.quantity,
+      };
+    } else {
+      merged.push(item);
+    }
+  }
+  return merged;
+}
+
 function getInitialState(): StoreState {
   const baseAppearance = APP_APPEARANCE_SEED;
+  const initialTab = resolveTabFromHash();
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
     if (raw) {
@@ -224,21 +368,26 @@ function getInitialState(): StoreState {
       return {
         locale: parsed.locale || 'ar',
         theme: parsed.theme || parsed.appearance?.defaultTheme || baseAppearance.defaultTheme,
-        activeTab: 'home',
+        activeTab: initialTab,
         catalogCategory: 'all',
         catalogSearch: '',
         selectedProductId: null,
-        user: parsed.user || INITIAL_USER_SEED,
+        authReady: false,
+        firebaseUser: null,
+        authScreenMode: 'none',
+        authModal: { open: false, view: 'choice', checkoutNotice: false },
+        pendingCheckoutReturn: false,
+        user: createEmptyUser(),
         directoryUsers: parsed.directoryUsers || CUSTOMERS_AND_STAFF_SEED,
         products: parsed.products || PRODUCTS_SEED,
         categories: parsed.categories || CATEGORIES_SEED,
         brands: parsed.brands || BRANDS_SEED,
         banners: parsed.banners || BANNERS_SEED,
         coupons: parsed.coupons || COUPONS_SEED,
-        cart: parsed.cart || [],
-        orders: parsed.orders || INITIAL_ORDERS_SEED,
+        cart: Array.isArray(parsed.cart) ? parsed.cart : [],
+        orders: [],
         notifications: parsed.notifications || INITIAL_NOTIFICATIONS_SEED,
-        consults: parsed.consults || INITIAL_CONSULTS_SEED,
+        consults: [],
         consultTopics: parsed.consultTopics || CONSULT_TOPICS_SEED,
         lensOptions: parsed.lensOptions || LENS_OPTIONS_SEED,
         homeSections: normalizeHomeSections(parsed.homeSections),
@@ -247,6 +396,7 @@ function getInitialState(): StoreState {
         settings: {
           ...STORE_SETTINGS_SEED,
           ...(parsed.settings || {}),
+          requireEmailVerification: parsed.settings?.requireEmailVerification ?? true,
           email: parsed.settings?.email ?? STORE_SETTINGS_SEED.email,
           contactVisibility: {
             ...STORE_SETTINGS_SEED.contactVisibility,
@@ -263,11 +413,16 @@ function getInitialState(): StoreState {
   return {
     locale: 'ar',
     theme: baseAppearance.defaultTheme,
-    activeTab: 'home',
+    activeTab: initialTab,
     catalogCategory: 'all',
     catalogSearch: '',
     selectedProductId: null,
-    user: INITIAL_USER_SEED,
+    authReady: false,
+    firebaseUser: null,
+    authScreenMode: 'none',
+    authModal: { open: false, view: 'choice', checkoutNotice: false },
+    pendingCheckoutReturn: false,
+    user: createEmptyUser(),
     directoryUsers: CUSTOMERS_AND_STAFF_SEED,
     products: PRODUCTS_SEED,
     categories: CATEGORIES_SEED,
@@ -275,9 +430,9 @@ function getInitialState(): StoreState {
     banners: BANNERS_SEED,
     coupons: COUPONS_SEED,
     cart: [],
-    orders: INITIAL_ORDERS_SEED,
+    orders: [],
     notifications: INITIAL_NOTIFICATIONS_SEED,
-    consults: INITIAL_CONSULTS_SEED,
+    consults: [],
     consultTopics: CONSULT_TOPICS_SEED,
     lensOptions: LENS_OPTIONS_SEED,
     homeSections: HOME_SECTIONS_SEED,
@@ -290,7 +445,22 @@ function getInitialState(): StoreState {
 
 export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const [state, setState] = useState<StoreState>(getInitialState);
+  const stateRef = useRef(state);
+  stateRef.current = state;
 
+  const showToast = useCallback((msg: string) => {
+    setState((prev) => ({ ...prev, toastMessage: msg }));
+    window.setTimeout(() => {
+      setState((prev) => (prev.toastMessage === msg ? { ...prev, toastMessage: null } : prev));
+    }, 3400);
+  }, []);
+
+  const t = useCallback(
+    (ar: string, en: string) => (state.locale === 'ar' ? ar : en),
+    [state.locale]
+  );
+
+  // Persist lightweight storefront cache in localStorage
   useEffect(() => {
     document.documentElement.lang = state.locale;
     document.documentElement.dir = state.locale === 'ar' ? 'rtl' : 'ltr';
@@ -303,6 +473,24 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       document.documentElement.classList.remove('dark');
     }
   }, [state.theme]);
+
+  useEffect(() => {
+    const onHashChange = () => {
+      const nextTab = resolveTabFromHash();
+      setState((prev) =>
+        prev.activeTab === nextTab ? prev : { ...prev, activeTab: nextTab, selectedProductId: null }
+      );
+    };
+    window.addEventListener('hashchange', onHashChange);
+    return () => window.removeEventListener('hashchange', onHashChange);
+  }, []);
+
+  useEffect(() => {
+    const targetHash = hashForTab(state.activeTab);
+    if (window.location.hash !== targetHash && !(state.activeTab === 'home' && !window.location.hash)) {
+      window.history.replaceState(null, '', targetHash);
+    }
+  }, [state.activeTab]);
 
   useEffect(() => {
     const root = document.documentElement;
@@ -319,17 +507,12 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       const persist = {
         locale: state.locale,
         theme: state.theme,
-        user: state.user,
-        directoryUsers: state.directoryUsers,
+        cart: state.cart,
         products: state.products,
         categories: state.categories,
         brands: state.brands,
         banners: state.banners,
         coupons: state.coupons,
-        cart: state.cart,
-        orders: state.orders,
-        notifications: state.notifications,
-        consults: state.consults,
         consultTopics: state.consultTopics,
         lensOptions: state.lensOptions,
         homeSections: state.homeSections,
@@ -344,17 +527,12 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   }, [
     state.locale,
     state.theme,
-    state.user,
-    state.directoryUsers,
+    state.cart,
     state.products,
     state.categories,
     state.brands,
     state.banners,
     state.coupons,
-    state.cart,
-    state.orders,
-    state.notifications,
-    state.consults,
     state.consultTopics,
     state.lensOptions,
     state.homeSections,
@@ -363,14 +541,650 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     state.settings,
   ]);
 
-  const showToast = (msg: string) => {
-    setState((prev) => ({ ...prev, toastMessage: msg }));
-    window.setTimeout(() => {
-      setState((prev) => (prev.toastMessage === msg ? { ...prev, toastMessage: null } : prev));
-    }, 3200);
-  };
+  const syncUserDocFields = useCallback(async (uid: string, patch: Record<string, unknown>) => {
+    if (!uid || uid === 'guest_pending') return;
+    const path = `users/${uid}`;
+    try {
+      await updateDoc(
+        doc(db, 'users', uid),
+        stripUndefined({
+          ...patch,
+          updatedAt: new Date().toISOString(),
+          updatedAtServer: serverTimestamp(),
+        })
+      );
+    } catch (error) {
+      handleFirestoreError(error, OperationType.WRITE, path);
+    }
+  }, []);
 
-  const t = (ar: string, en: string) => (state.locale === 'ar' ? ar : en);
+  // Helper to resolve Firebase User -> AppUser document in Firestore
+  const ensureUserDocument = useCallback(async (fbUser: User): Promise<AppUser> => {
+    const path = `users/${fbUser.uid}`;
+    const isBootstrappedOwner =
+      fbUser.email?.toLowerCase() === BOOTSTRAPPED_ADMIN_EMAIL && fbUser.emailVerified;
+
+    try {
+      const snap = await getDoc(doc(db, 'users', fbUser.uid));
+      if (snap.exists()) {
+        const data = snap.data() as Partial<AppUser>;
+        const resolvedRole = isBootstrappedOwner ? 'admin' : data.role || 'customer';
+        const appUser: AppUser = {
+          uid: fbUser.uid,
+          name:
+            data.name ||
+            fbUser.displayName ||
+            (fbUser.isAnonymous ? 'ضيف فيجن بلس' : 'عميل فيجن بلس'),
+          email: fbUser.email || data.email || '',
+          phone: data.phone || '',
+          role: resolvedRole,
+          permissions: isBootstrappedOwner ? ALL_ADMIN_PERMS : data.permissions,
+          isBlocked: Boolean(data.isBlocked),
+          isAnonymous: fbUser.isAnonymous,
+          emailVerified: fbUser.emailVerified,
+          createdAt: data.createdAt || new Date().toISOString(),
+          updatedAt: new Date().toISOString(),
+          favoriteProductIds: Array.isArray(data.favoriteProductIds) ? data.favoriteProductIds : [],
+          addresses: Array.isArray(data.addresses) ? data.addresses : [],
+          prescriptions: Array.isArray(data.prescriptions) ? data.prescriptions : [],
+        };
+        return appUser;
+      }
+
+      const nowIso = new Date().toISOString();
+      const initialDoc = {
+        uid: fbUser.uid,
+        name: fbUser.displayName || (fbUser.isAnonymous ? 'ضيف فيجن بلس' : 'عميل فيجن بلس'),
+        email: fbUser.email || '',
+        phone: '',
+        role: 'customer' as const,
+        isBlocked: false,
+        isAnonymous: fbUser.isAnonymous,
+        emailVerified: fbUser.emailVerified,
+        favoriteProductIds: stateRef.current.user.favoriteProductIds || [],
+        cart: stateRef.current.cart || [],
+        addresses: [],
+        prescriptions: [],
+        createdAt: nowIso,
+        updatedAt: nowIso,
+      };
+      await setDoc(
+        doc(db, 'users', fbUser.uid),
+        stripUndefined({
+          ...initialDoc,
+          createdAtServer: serverTimestamp(),
+          updatedAtServer: serverTimestamp(),
+        })
+      );
+
+      return {
+        ...initialDoc,
+        role: isBootstrappedOwner ? 'admin' : 'customer',
+        permissions: isBootstrappedOwner ? ALL_ADMIN_PERMS : undefined,
+      };
+    } catch (error) {
+      handleFirestoreError(error, OperationType.GET, path);
+    }
+  }, []);
+
+  // Primary Firebase Auth listener
+  useEffect(() => {
+    const unsub = onAuthStateChanged(auth, async (fbUser) => {
+      if (!fbUser) {
+        setState((prev) => ({
+          ...prev,
+          authReady: true,
+          firebaseUser: null,
+          authScreenMode: 'entry',
+          user: createEmptyUser(),
+          orders: [],
+          consults: [],
+        }));
+        return;
+      }
+
+      try {
+        const appUser = await ensureUserDocument(fbUser);
+        setState((prev) => ({
+          ...prev,
+          authReady: true,
+          firebaseUser: fbUser,
+          user: appUser,
+          authScreenMode: prev.authScreenMode === 'verify_email' && !fbUser.emailVerified
+            ? 'verify_email'
+            : 'none',
+        }));
+      } catch {
+        setState((prev) => ({
+          ...prev,
+          authReady: true,
+          firebaseUser: fbUser,
+          authScreenMode: 'none',
+        }));
+      }
+    });
+
+    return () => unsub();
+  }, [ensureUserDocument]);
+
+  // Firestore real-time listeners (only when authenticated—including anonymous guests!)
+  useEffect(() => {
+    if (!state.authReady || !state.firebaseUser) return;
+    const fbUser = state.firebaseUser;
+    const isBootstrappedOwner =
+      fbUser.email?.toLowerCase() === BOOTSTRAPPED_ADMIN_EMAIL && fbUser.emailVerified;
+    const unsubs: (() => void)[] = [];
+
+    // 1. User document (cart, favorites, profile, role, block status)
+    unsubs.push(
+      onSnapshot(
+        doc(db, 'users', fbUser.uid),
+        (snap) => {
+          if (!snap.exists()) return;
+          const data = snap.data() as Partial<AppUser> & { cart?: CartItem[] };
+          setState((prev) => ({
+            ...prev,
+            cart: Array.isArray(data.cart) ? data.cart : prev.cart,
+            user: {
+              ...prev.user,
+              uid: fbUser.uid,
+              name: data.name || fbUser.displayName || prev.user.name,
+              email: fbUser.email || data.email || prev.user.email,
+              phone: data.phone ?? prev.user.phone,
+              role: isBootstrappedOwner ? 'admin' : data.role || prev.user.role,
+              permissions: isBootstrappedOwner ? ALL_ADMIN_PERMS : data.permissions,
+              isBlocked: Boolean(data.isBlocked),
+              isAnonymous: fbUser.isAnonymous,
+              emailVerified: fbUser.emailVerified,
+              favoriteProductIds: Array.isArray(data.favoriteProductIds)
+                ? data.favoriteProductIds
+                : prev.user.favoriteProductIds,
+              addresses: Array.isArray(data.addresses) ? data.addresses : prev.user.addresses,
+              prescriptions: Array.isArray(data.prescriptions)
+                ? data.prescriptions
+                : prev.user.prescriptions,
+            },
+          }));
+        },
+        (err) => {
+          handleFirestoreError(err, OperationType.GET, `users/${fbUser.uid}`);
+        }
+      )
+    );
+
+    // 2. Store public config documents (individual gets, zero blanket list)
+    const configIds = [
+      'settings',
+      'appearance',
+      'texts',
+      'homeSections',
+      'lensOptions',
+      'consultTopics',
+    ] as const;
+
+    configIds.forEach((configId) => {
+      unsubs.push(
+        onSnapshot(
+          doc(db, 'store_config', configId),
+          (snap) => {
+            if (!snap.exists()) return;
+            const val = snap.data();
+            setState((prev) => {
+              const next = { ...prev };
+              if (configId === 'settings') {
+                next.settings = {
+                  ...prev.settings,
+                  ...val,
+                  requireEmailVerification: val.requireEmailVerification ?? true,
+                  socialLinks: normalizeSocialLinks(val.socialLinks),
+                } as StoreSettings;
+              } else if (configId === 'appearance') {
+                next.appearance = { ...prev.appearance, ...val } as AppAppearanceConfig;
+              } else if (configId === 'texts') {
+                next.appTexts = { ...prev.appTexts, ...val } as AppTextsConfig;
+              } else if (configId === 'homeSections' && Array.isArray(val.items)) {
+                next.homeSections = normalizeHomeSections(val.items as HomeSectionConfig[]);
+              } else if (configId === 'lensOptions' && Array.isArray(val.items)) {
+                next.lensOptions = val.items as LensOptionConfig[];
+              } else if (configId === 'consultTopics' && Array.isArray(val.items)) {
+                next.consultTopics = val.items as ConsultTopicConfig[];
+              }
+              return next;
+            });
+          },
+          (err) => handleFirestoreError(err, OperationType.GET, `store_config/${configId}`)
+        )
+      );
+    });
+
+    const productsQ = isBootstrappedOwner
+      ? collection(db, 'products')
+      : query(collection(db, 'products'), where('visible', '==', true));
+    unsubs.push(
+      onSnapshot(
+        productsQ,
+        (snap) => {
+          if (snap.empty) return;
+          const items = snap.docs.map((d) => d.data() as Product);
+          setState((prev) => ({ ...prev, products: items }));
+        },
+        (err) => handleFirestoreError(err, OperationType.LIST, 'products')
+      )
+    );
+
+    const categoriesQ = isBootstrappedOwner
+      ? collection(db, 'categories')
+      : query(collection(db, 'categories'), where('visible', '==', true));
+    unsubs.push(
+      onSnapshot(
+        categoriesQ,
+        (snap) => {
+          if (snap.empty) return;
+          const items = snap.docs.map((d) => d.data() as Category);
+          setState((prev) => ({ ...prev, categories: items }));
+        },
+        (err) => handleFirestoreError(err, OperationType.LIST, 'categories')
+      )
+    );
+
+    const brandsQ = isBootstrappedOwner
+      ? collection(db, 'brands')
+      : query(collection(db, 'brands'), where('visible', '==', true));
+    unsubs.push(
+      onSnapshot(
+        brandsQ,
+        (snap) => {
+          if (snap.empty) return;
+          const items = snap.docs.map((d) => d.data() as Brand);
+          setState((prev) => ({ ...prev, brands: items }));
+        },
+        (err) => handleFirestoreError(err, OperationType.LIST, 'brands')
+      )
+    );
+
+    const bannersQ = isBootstrappedOwner
+      ? collection(db, 'banners')
+      : query(collection(db, 'banners'), where('isActive', '==', true));
+    unsubs.push(
+      onSnapshot(
+        bannersQ,
+        (snap) => {
+          if (snap.empty) return;
+          const items = snap.docs.map((d) => d.data() as BannerAd);
+          setState((prev) => ({ ...prev, banners: items }));
+        },
+        (err) => handleFirestoreError(err, OperationType.LIST, 'banners')
+      )
+    );
+
+    const couponsQ = isBootstrappedOwner
+      ? collection(db, 'coupons')
+      : query(collection(db, 'coupons'), where('isActive', '==', true));
+    unsubs.push(
+      onSnapshot(
+        couponsQ,
+        (snap) => {
+          if (snap.empty) return;
+          const items = snap.docs.map((d) => d.data() as Coupon);
+          setState((prev) => ({ ...prev, coupons: items }));
+        },
+        (err) => handleFirestoreError(err, OperationType.LIST, 'coupons')
+      )
+    );
+
+    // 3. Orders (scoped securely to customerUid for customers, or all for verified bootstrapped admin)
+    const ordersQ = isBootstrappedOwner
+      ? collection(db, 'orders')
+      : query(collection(db, 'orders'), where('customerUid', '==', fbUser.uid));
+    unsubs.push(
+      onSnapshot(
+        ordersQ,
+        (snap) => {
+          const items = snap.docs
+            .map((d) => d.data() as Order)
+            .sort((a, b) => (b.createdAt || '').localeCompare(a.createdAt || ''));
+          setState((prev) => ({ ...prev, orders: items }));
+        },
+        (err) => handleFirestoreError(err, OperationType.LIST, 'orders')
+      )
+    );
+
+    // 4. Consultations (scoped securely to customerUid or all for verified bootstrapped admin)
+    const consultsQ = isBootstrappedOwner
+      ? collection(db, 'consults')
+      : query(collection(db, 'consults'), where('customerUid', '==', fbUser.uid));
+    unsubs.push(
+      onSnapshot(
+        consultsQ,
+        (snap) => {
+          const items = snap.docs
+            .map((d) => d.data() as ConsultRequest)
+            .sort((a, b) => (b.createdAt || '').localeCompare(a.createdAt || ''));
+          setState((prev) => ({ ...prev, consults: items }));
+        },
+        (err) => handleFirestoreError(err, OperationType.LIST, 'consults')
+      )
+    );
+
+    // 5. Bootstrapped admin-only customers directory
+    if (isBootstrappedOwner) {
+      unsubs.push(
+        onSnapshot(
+          collection(db, 'users'),
+          (snap) => {
+            if (snap.empty) return;
+            const list = snap.docs.map((d) => d.data() as AppUser);
+            setState((prev) => ({ ...prev, directoryUsers: list }));
+          },
+          (err) => handleFirestoreError(err, OperationType.LIST, 'users')
+        )
+      );
+    }
+
+    return () => {
+      unsubs.forEach((fn) => fn());
+    };
+  }, [state.authReady, state.firebaseUser]);
+
+  // Auth Methods
+  const continueAsGuest = useCallback(async () => {
+    try {
+      const cred = await signInAnonymously(auth);
+      await ensureUserDocument(cred.user);
+      setState((prev) => ({
+        ...prev,
+        authScreenMode: 'none',
+        authModal: { open: false, view: 'choice', checkoutNotice: false },
+      }));
+      showToast(t('أهلاً بك! تتصفح الآن كضيف', 'Welcome! Browsing as Guest'));
+    } catch (error) {
+      throw new Error(mapFirebaseAuthError(error, stateRef.current.locale));
+    }
+  }, [ensureUserDocument, showToast, t]);
+
+  const registerWithEmail = useCallback(
+    async ({ name, email, password, phone }: RegisterPayload) => {
+      const current = auth.currentUser;
+      const guestCart = [...stateRef.current.cart];
+      const guestFavs = [...stateRef.current.user.favoriteProductIds];
+      const cleanEmail = email.trim();
+      const cleanName = name.trim();
+      const cleanPhone = (phone || '').trim();
+
+      try {
+        let userCredUser: User;
+
+        if (current?.isAnonymous) {
+          // Link anonymous guest account to Email/Password so cart & favorites stay on the same UID
+          const credential = EmailAuthProvider.credential(cleanEmail, password);
+          const linked = await linkWithCredential(current, credential);
+          userCredUser = linked.user;
+        } else {
+          const created = await createUserWithEmailAndPassword(auth, cleanEmail, password);
+          userCredUser = created.user;
+        }
+
+        await firebaseUpdateProfile(userCredUser, { displayName: cleanName });
+        await sendEmailVerification(userCredUser);
+
+        const nowIso = new Date().toISOString();
+        const existingSnap = await getDoc(doc(db, 'users', userCredUser.uid));
+        const userPayload = {
+          uid: userCredUser.uid,
+          name: cleanName,
+          email: cleanEmail,
+          phone: cleanPhone,
+          role: 'customer' as const,
+          isBlocked: false,
+          isAnonymous: false,
+          emailVerified: false,
+          favoriteProductIds: guestFavs,
+          cart: guestCart,
+          addresses: stateRef.current.user.addresses || [],
+          prescriptions: stateRef.current.user.prescriptions || [],
+          createdAt: stateRef.current.user.createdAt || nowIso,
+          updatedAt: nowIso,
+        };
+
+        if (existingSnap.exists()) {
+          await updateDoc(
+            doc(db, 'users', userCredUser.uid),
+            stripUndefined({
+              name: cleanName,
+              email: cleanEmail,
+              phone: cleanPhone,
+              isAnonymous: false,
+              emailVerified: false,
+              favoriteProductIds: guestFavs,
+              cart: guestCart,
+              updatedAt: nowIso,
+              updatedAtServer: serverTimestamp(),
+            })
+          );
+        } else {
+          await setDoc(
+            doc(db, 'users', userCredUser.uid),
+            stripUndefined({
+              ...userPayload,
+              createdAtServer: serverTimestamp(),
+              updatedAtServer: serverTimestamp(),
+            })
+          );
+        }
+
+        setState((prev) => ({
+          ...prev,
+          firebaseUser: userCredUser,
+          user: { ...prev.user, ...userPayload },
+          cart: guestCart,
+          authModal: { open: false, view: 'choice', checkoutNotice: false },
+          authScreenMode: 'verify_email',
+        }));
+        showToast(t('تم إنشاء الحساب وإرسال رابط التحقق إلى بريدك', 'Account created! Verification email sent'));
+      } catch (error) {
+        const code = getFirebaseAuthErrorCode(error);
+        if (code === 'auth/credential-already-in-use' || code === 'auth/email-already-in-use') {
+          throw new Error(mapFirebaseAuthError(error, stateRef.current.locale));
+        }
+        throw new Error(mapFirebaseAuthError(error, stateRef.current.locale));
+      }
+    },
+    [showToast, t]
+  );
+
+  const loginWithEmail = useCallback(
+    async (email: string, password: string) => {
+      const wasAnonymous = Boolean(auth.currentUser?.isAnonymous);
+      const guestCart = wasAnonymous ? [...stateRef.current.cart] : [];
+      const guestFavs = wasAnonymous ? [...stateRef.current.user.favoriteProductIds] : [];
+
+      try {
+        const cred = await signInWithEmailAndPassword(auth, email.trim(), password);
+        const signedUser = cred.user;
+        const userSnap = await getDoc(doc(db, 'users', signedUser.uid));
+        const existingData = userSnap.exists()
+          ? (userSnap.data() as Partial<AppUser> & { cart?: CartItem[] })
+          : {};
+
+        const accountCart = Array.isArray(existingData.cart) ? existingData.cart : [];
+        const mergedCart = guestCart.length > 0 ? mergeCartItems(accountCart, guestCart) : accountCart;
+
+        const accountFavs = Array.isArray(existingData.favoriteProductIds)
+          ? existingData.favoriteProductIds
+          : [];
+        const mergedFavs = Array.from(new Set([...accountFavs, ...guestFavs]));
+
+        const isBootstrappedOwner =
+          signedUser.email?.toLowerCase() === BOOTSTRAPPED_ADMIN_EMAIL && signedUser.emailVerified;
+
+        const nowIso = new Date().toISOString();
+        const syncedUserDoc = {
+          uid: signedUser.uid,
+          name: existingData.name || signedUser.displayName || 'عميل فيجن بلس',
+          email: signedUser.email || existingData.email || email.trim(),
+          phone: existingData.phone || '',
+          role: existingData.role || ('customer' as const),
+          isBlocked: Boolean(existingData.isBlocked),
+          isAnonymous: false,
+          emailVerified: signedUser.emailVerified,
+          favoriteProductIds: mergedFavs,
+          cart: mergedCart,
+          addresses: Array.isArray(existingData.addresses) ? existingData.addresses : [],
+          prescriptions: Array.isArray(existingData.prescriptions) ? existingData.prescriptions : [],
+          createdAt: existingData.createdAt || nowIso,
+          updatedAt: nowIso,
+        };
+
+        if (userSnap.exists()) {
+          await updateDoc(
+            doc(db, 'users', signedUser.uid),
+            stripUndefined({
+              email: syncedUserDoc.email,
+              isAnonymous: false,
+              emailVerified: signedUser.emailVerified,
+              favoriteProductIds: mergedFavs,
+              cart: mergedCart,
+              updatedAt: nowIso,
+              updatedAtServer: serverTimestamp(),
+            })
+          );
+        } else {
+          await setDoc(
+            doc(db, 'users', signedUser.uid),
+            stripUndefined({
+              ...syncedUserDoc,
+              role: 'customer',
+              isBlocked: false,
+              createdAtServer: serverTimestamp(),
+              updatedAtServer: serverTimestamp(),
+            })
+          );
+        }
+
+        setState((prev) => {
+          const goToCheckout = prev.pendingCheckoutReturn;
+          return {
+            ...prev,
+            firebaseUser: signedUser,
+            user: {
+              ...syncedUserDoc,
+              role: isBootstrappedOwner ? 'admin' : syncedUserDoc.role,
+              permissions: isBootstrappedOwner ? ALL_ADMIN_PERMS : existingData.permissions,
+            },
+            cart: mergedCart,
+            authModal: { open: false, view: 'choice', checkoutNotice: false },
+            authScreenMode: 'none',
+            activeTab: goToCheckout ? 'cart' : 'home',
+            pendingCheckoutReturn: goToCheckout ? !signedUser.emailVerified : false,
+          };
+        });
+
+        showToast(
+          guestCart.length > 0
+            ? t('تم تسجيل الدخول ودمج سلة المشتريات بنجاح', 'Signed in & cart merged')
+            : t('تم تسجيل الدخول بنجاح', 'Signed in successfully')
+        );
+      } catch (error) {
+        throw new Error(mapFirebaseAuthError(error, stateRef.current.locale));
+      }
+    },
+    [showToast, t]
+  );
+
+  const refreshEmailVerification = useCallback(
+    async (silent = false): Promise<boolean> => {
+      const current = auth.currentUser;
+      if (!current) return false;
+      await current.reload();
+      if (current.emailVerified) {
+        await current.getIdToken(true);
+        await syncUserDocFields(current.uid, {
+          emailVerified: true,
+          email: current.email || stateRef.current.user.email,
+        });
+        setState((prev) => {
+          const returnToCart = prev.pendingCheckoutReturn || prev.cart.length > 0;
+          return {
+            ...prev,
+            firebaseUser: auth.currentUser,
+            user: {
+              ...prev.user,
+              emailVerified: true,
+              email: current.email || prev.user.email,
+            },
+            authScreenMode: 'none',
+            authModal: { open: false, view: 'choice', checkoutNotice: false },
+            pendingCheckoutReturn: false,
+            activeTab: returnToCart ? 'cart' : prev.activeTab,
+          };
+        });
+        if (!silent) {
+          showToast(t('تم تأكيد بريدك الإلكتروني بنجاح!', 'Email verified successfully!'));
+        }
+        return true;
+      }
+      return false;
+    },
+    [showToast, syncUserDocFields, t]
+  );
+
+  const resendVerificationEmail = useCallback(async () => {
+    const current = auth.currentUser;
+    if (!current) return;
+    try {
+      await sendEmailVerification(current);
+      showToast(t('تم إرسال رابط التحقق إلى بريدك', 'Verification email sent'));
+    } catch (error) {
+      throw new Error(mapFirebaseAuthError(error, stateRef.current.locale));
+    }
+  }, [showToast, t]);
+
+  const changeVerificationEmail = useCallback(
+    async (newEmail: string, currentPassword?: string): Promise<{ requiresPassword?: boolean }> => {
+      const current = auth.currentUser;
+      if (!current) return {};
+      try {
+        if (currentPassword && current.email) {
+          const cred = EmailAuthProvider.credential(current.email, currentPassword);
+          await reauthenticateWithCredential(current, cred);
+        }
+        await verifyBeforeUpdateEmail(current, newEmail.trim());
+        await syncUserDocFields(current.uid, { email: newEmail.trim(), emailVerified: false });
+        setState((prev) => ({
+          ...prev,
+          user: { ...prev.user, email: newEmail.trim(), emailVerified: false },
+        }));
+        return {};
+      } catch (error) {
+        const code = getFirebaseAuthErrorCode(error);
+        if (code === 'auth/requires-recent-login') {
+          return { requiresPassword: true };
+        }
+        throw new Error(mapFirebaseAuthError(error, stateRef.current.locale));
+      }
+    },
+    [syncUserDocFields]
+  );
+
+  const logout = useCallback(async () => {
+    await signOut(auth);
+    setState((prev) => ({
+      ...prev,
+      firebaseUser: null,
+      user: createEmptyUser(),
+      cart: [],
+      orders: [],
+      consults: [],
+      authScreenMode: 'entry',
+      authModal: { open: false, view: 'choice', checkoutNotice: false },
+      pendingCheckoutReturn: false,
+      activeTab: 'home',
+    }));
+    showToast(t('تم تسجيل الخروج', 'Signed out'));
+  }, [showToast, t]);
+
+  const isGuest = !state.firebaseUser || state.firebaseUser.isAnonymous;
+  const isEmailVerified = Boolean(state.firebaseUser && !state.firebaseUser.isAnonymous && state.firebaseUser.emailVerified);
 
   const unreadNotificationsCount = useMemo(
     () => state.notifications.filter((n) => !n.isRead).length,
@@ -409,9 +1223,19 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     return false;
   };
 
+  const writeConfigDoc = async (configId: string, data: Record<string, unknown>) => {
+    try {
+      await setDoc(doc(db, 'store_config', configId), stripUndefined({ id: configId, ...data }));
+    } catch (error) {
+      handleFirestoreError(error, OperationType.WRITE, `store_config/${configId}`);
+    }
+  };
+
   const value: StoreContextValue = {
     ...state,
     t,
+    isGuest,
+    isEmailVerified,
     unreadNotificationsCount,
     cartCount,
     visibleProducts,
@@ -436,47 +1260,48 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     },
     setCatalogSearch: (catalogSearch) => setState((prev) => ({ ...prev, catalogSearch })),
     openProduct: (selectedProductId) => setState((prev) => ({ ...prev, selectedProductId })),
-    switchRole: (role) => {
+    openAuthEntry: () => setState((prev) => ({ ...prev, authScreenMode: 'entry' })),
+    openVerifyEmailScreen: () => setState((prev) => ({ ...prev, authScreenMode: 'verify_email' })),
+    openAuthModal: (view = 'choice', checkoutNotice = false) =>
       setState((prev) => ({
         ...prev,
-        user: {
-          ...prev.user,
-          role,
-          permissions:
-            role === 'admin'
-              ? [
-                  'dashboard', 'products', 'categories', 'home_builder', 'banners',
-                  'content', 'appearance', 'settings', 'orders', 'coupons',
-                  'notifications', 'consults', 'customers', 'roles',
-                ]
-              : role === 'staff'
-              ? ['dashboard', 'orders', 'consults']
-              : undefined,
-        },
-        activeTab: role === 'admin' || role === 'staff' ? 'admin' : 'home',
-      }));
-      showToast(
-        role === 'admin'
-          ? t('تم التبديل إلى لوحة الإدارة الكاملة', 'Switched to Full Admin Panel')
-          : role === 'staff'
-          ? t('تم التبديل إلى وضع موظف الطلبات', 'Switched to Staff Role')
-          : t('تم التبديل إلى متجر العملاء', 'Switched to Customer Storefront')
-      );
-    },
+        pendingCheckoutReturn: checkoutNotice ? true : prev.pendingCheckoutReturn,
+        authModal: { open: true, view, checkoutNotice },
+      })),
+    closeAuthModal: () =>
+      setState((prev) => ({
+        ...prev,
+        authModal: { ...prev.authModal, open: false },
+      })),
+    continueAsGuest,
+    loginWithEmail,
+    registerWithEmail,
+    refreshEmailVerification,
+    resendVerificationEmail,
+    changeVerificationEmail,
+    logout,
     updateProfile: (name, phone, email) => {
       setState((prev) => ({ ...prev, user: { ...prev.user, name, phone, email } }));
+      if (auth.currentUser) {
+        void syncUserDocFields(auth.currentUser.uid, { name, phone, email });
+      }
       showToast(t('تم تحديث بيانات الحساب', 'Profile updated'));
     },
     toggleFavorite: (productId) => {
-      setState((prev) => {
-        const exists = prev.user.favoriteProductIds.includes(productId);
-        const favoriteProductIds = exists
-          ? prev.user.favoriteProductIds.filter((id) => id !== productId)
-          : [...prev.user.favoriteProductIds, productId];
-        return { ...prev, user: { ...prev.user, favoriteProductIds } };
-      });
+      const exists = state.user.favoriteProductIds.includes(productId);
+      const favoriteProductIds = exists
+        ? state.user.favoriteProductIds.filter((id) => id !== productId)
+        : [...state.user.favoriteProductIds, productId];
+      setState((prev) => ({
+        ...prev,
+        user: { ...prev.user, favoriteProductIds },
+      }));
+      if (auth.currentUser) {
+        void syncUserDocFields(auth.currentUser.uid, { favoriteProductIds });
+      }
     },
     addReview: (productId, rating, comment) => {
+      let updatedProduct: Product | undefined;
       setState((prev) => {
         const products = prev.products.map((p) => {
           if (p.id !== productId) return p;
@@ -494,15 +1319,21 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
             ...p.reviews,
           ];
           const approved = nextReviews.filter((r) => r.status === 'approved');
-          const avg =
-            approved.reduce((s, r) => s + r.rating, 0) / Math.max(1, approved.length);
-          return { ...p, reviews: nextReviews, rating: Number(avg.toFixed(1)) };
+          const avg = approved.reduce((s, r) => s + r.rating, 0) / Math.max(1, approved.length);
+          updatedProduct = { ...p, reviews: nextReviews, rating: Number(avg.toFixed(1)) };
+          return updatedProduct;
         });
         return { ...prev, products };
       });
+      if (updatedProduct && state.user.role === 'admin') {
+        void setDoc(doc(db, 'products', productId), stripUndefined(updatedProduct)).catch((err) =>
+          handleFirestoreError(err, OperationType.WRITE, `products/${productId}`)
+        );
+      }
       showToast(t('شكراً لك، تم إضافة تقييمك', 'Review submitted'));
     },
     moderateReview: (productId, reviewId, action) => {
+      let updatedProduct: Product | undefined;
       setState((prev) => ({
         ...prev,
         products: prev.products.map((p) => {
@@ -516,57 +1347,89 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
             approved.length > 0
               ? approved.reduce((s, r) => s + r.rating, 0) / approved.length
               : p.rating;
-          return { ...p, reviews: nextReviews, rating: Number(avg.toFixed(1)) };
+          updatedProduct = { ...p, reviews: nextReviews, rating: Number(avg.toFixed(1)) };
+          return updatedProduct;
         }),
       }));
+      if (updatedProduct) {
+        void setDoc(doc(db, 'products', productId), stripUndefined(updatedProduct)).catch((err) =>
+          handleFirestoreError(err, OperationType.WRITE, `products/${productId}`)
+        );
+      }
       showToast(t('تم تحديث حالة التقييم', 'Review moderation saved'));
     },
     addToCart: (item) => {
-      setState((prev) => {
-        const hasCustomSpecs = Boolean(item.prescription || item.contactLensSelection);
-        const existingIndex = !hasCustomSpecs
-          ? prev.cart.findIndex(
-              (c) =>
-                c.productId === item.productId &&
-                c.variantId === item.variantId &&
-                !c.prescription &&
-                !c.contactLensSelection
+      const prevCart = stateRef.current.cart;
+      const hasCustomSpecs = Boolean(item.prescription || item.contactLensSelection);
+      const existingIndex = !hasCustomSpecs
+        ? prevCart.findIndex(
+            (c) =>
+              c.productId === item.productId &&
+              c.variantId === item.variantId &&
+              !c.prescription &&
+              !c.contactLensSelection
+          )
+        : -1;
+      const nextCart =
+        existingIndex >= 0
+          ? prevCart.map((c, idx) =>
+              idx === existingIndex ? { ...c, quantity: c.quantity + item.quantity } : c
             )
-          : -1;
-        let nextCart: CartItem[];
-        if (existingIndex >= 0) {
-          nextCart = prev.cart.map((c, idx) =>
-            idx === existingIndex ? { ...c, quantity: c.quantity + item.quantity } : c
-          );
-        } else {
-          nextCart = [
-            ...prev.cart,
-            { ...item, id: `ci_${Date.now()}_${Math.random().toString(36).slice(2, 6)}` },
-          ];
-        }
-        return { ...prev, cart: nextCart };
-      });
+          : [
+              ...prevCart,
+              { ...item, id: `ci_${Date.now()}_${Math.random().toString(36).slice(2, 6)}` },
+            ];
+      setState((prev) => ({ ...prev, cart: nextCart }));
+      if (auth.currentUser) {
+        void syncUserDocFields(auth.currentUser.uid, { cart: nextCart });
+      }
       showToast(t('تمت الإضافة إلى السلة', 'Added to cart'));
     },
     updateCartQty: (cartItemId, delta) => {
-      setState((prev) => ({
-        ...prev,
-        cart: prev.cart
-          .map((c) => (c.id === cartItemId ? { ...c, quantity: c.quantity + delta } : c))
-          .filter((c) => c.quantity > 0),
-      }));
+      const nextCart = stateRef.current.cart
+        .map((c) => (c.id === cartItemId ? { ...c, quantity: c.quantity + delta } : c))
+        .filter((c) => c.quantity > 0);
+      setState((prev) => ({ ...prev, cart: nextCart }));
+      if (auth.currentUser) {
+        void syncUserDocFields(auth.currentUser.uid, { cart: nextCart });
+      }
     },
     removeFromCart: (cartItemId) => {
-      setState((prev) => ({
-        ...prev,
-        cart: prev.cart.filter((c) => c.id !== cartItemId),
-      }));
+      const nextCart = stateRef.current.cart.filter((c) => c.id !== cartItemId);
+      setState((prev) => ({ ...prev, cart: nextCart }));
+      if (auth.currentUser) {
+        void syncUserDocFields(auth.currentUser.uid, { cart: nextCart });
+      }
     },
-    placeOrder: (payload) => {
-      const subtotalSdg = state.cart.reduce(
+    placeOrder: async (payload) => {
+      const current = auth.currentUser;
+      if (!current || current.isAnonymous) {
+        setState((prev) => ({
+          ...prev,
+          pendingCheckoutReturn: true,
+          authModal: { open: true, view: 'choice', checkoutNotice: true },
+        }));
+        return null;
+      }
+
+      await current.reload();
+      if (!current.emailVerified) {
+        setState((prev) => ({ ...prev, pendingCheckoutReturn: true }));
+        showToast(
+          t(
+            'يجب تأكيد بريدك الإلكتروني قبل إتمام الطلب',
+            'You must verify your email before placing an order'
+          )
+        );
+        return null;
+      }
+
+      // Refresh ID token so request.auth.token.email_verified is true in Firestore Rules
+      await current.getIdToken(true);
+
+      const subtotalSdg = stateRef.current.cart.reduce(
         (sum, item) =>
-          sum +
-          (item.unitPriceSdg + (item.prescription?.lensExtraPriceSdg || 0)) * item.quantity,
+          sum + (item.unitPriceSdg + (item.prescription?.lensExtraPriceSdg || 0)) * item.quantity,
         0
       );
       if (state.settings.minimumOrderSdg > 0 && subtotalSdg < state.settings.minimumOrderSdg) {
@@ -578,13 +1441,15 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         );
         return null;
       }
+
       const totalSdg = Math.max(0, subtotalSdg - payload.discountSdg + payload.deliveryFeeSdg);
       const initialStatus: OrderStatus =
         payload.paymentMethod === 'bankak' ? 'awaiting_payment_verification' : 'pending';
       const orderId = `ORD-2026-${Math.floor(1050 + Math.random() * 8900)}`;
+      const nowIso = new Date().toISOString();
 
-      const items = state.cart.map((ci) => {
-        const prod = state.products.find((p) => p.id === ci.productId);
+      const items = stateRef.current.cart.map((ci) => {
+        const prod = stateRef.current.products.find((p) => p.id === ci.productId);
         return {
           productId: ci.productId,
           titleAr: prod?.titleAr || 'منتج بصري',
@@ -600,7 +1465,7 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
 
       const newOrder: Order = {
         id: orderId,
-        customerUid: state.user.uid,
+        customerUid: current.uid,
         customerName: payload.customerName,
         customerPhone: payload.customerPhone,
         stateId: payload.stateId,
@@ -617,9 +1482,23 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         bankTransferReference: payload.bankTransferReference,
         bankTransferReceiptUrl: payload.bankTransferReceiptUrl,
         status: initialStatus,
-        createdAt: new Date().toISOString(),
-        updatedAt: new Date().toISOString(),
+        createdAt: nowIso,
+        updatedAt: nowIso,
       };
+
+      try {
+        await setDoc(
+          doc(db, 'orders', orderId),
+          stripUndefined({
+            ...newOrder,
+            createdAtServer: serverTimestamp(),
+            updatedAtServer: serverTimestamp(),
+          })
+        );
+        await syncUserDocFields(current.uid, { cart: [] });
+      } catch (error) {
+        handleFirestoreError(error, OperationType.CREATE, `orders/${orderId}`);
+      }
 
       const notif: AppNotification = {
         id: `n_${Date.now()}`,
@@ -640,39 +1519,35 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
             ? 'Our team is verifying your Bankak transfer receipt.'
             : 'Your COD order is pending confirmation.',
         isRead: false,
-        createdAt: new Date().toISOString(),
+        createdAt: nowIso,
         deepLinkType: 'order',
         deepLinkId: orderId,
       };
 
       setState((prev) => ({
         ...prev,
-        orders: [newOrder, ...prev.orders],
+        orders: [newOrder, ...prev.orders.filter((o) => o.id !== orderId)],
         cart: [],
+        pendingCheckoutReturn: false,
         notifications: [notif, ...prev.notifications],
-        coupons: payload.couponCode
-          ? prev.coupons.map((c) =>
-              c.code === payload.couponCode ? { ...c, usedCount: c.usedCount + 1 } : c
-            )
-          : prev.coupons,
-        products: prev.products.map((p) => {
-          const orderedQty = prev.cart
-            .filter((c) => c.productId === p.id)
-            .reduce((acc, c) => acc + c.quantity, 0);
-          return orderedQty > 0 ? { ...p, stock: Math.max(0, p.stock - orderedQty) } : p;
-        }),
         activeTab: 'orders',
       }));
       showToast(t(`تم إنشاء الطلب #${orderId} بنجاح`, `Order #${orderId} placed`));
       return newOrder;
     },
     cancelOrder: (orderId) => {
+      const nowIso = new Date().toISOString();
       setState((prev) => ({
         ...prev,
         orders: prev.orders.map((o) =>
-          o.id === orderId ? { ...o, status: 'cancelled', updatedAt: new Date().toISOString() } : o
+          o.id === orderId ? { ...o, status: 'cancelled', updatedAt: nowIso } : o
         ),
       }));
+      void updateDoc(doc(db, 'orders', orderId), {
+        status: 'cancelled',
+        updatedAt: nowIso,
+        updatedAtServer: serverTimestamp(),
+      }).catch((err) => handleFirestoreError(err, OperationType.UPDATE, `orders/${orderId}`));
       showToast(t('تم إلغاء الطلب', 'Order cancelled'));
     },
     reorder: (orderId) => {
@@ -687,14 +1562,19 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         prescription: item.prescription,
         contactLensSelection: item.contactLensSelection,
       }));
+      const nextCart = [...stateRef.current.cart, ...itemsToAdd];
       setState((prev) => ({
         ...prev,
-        cart: [...prev.cart, ...itemsToAdd],
+        cart: nextCart,
         activeTab: 'cart',
       }));
+      if (auth.currentUser) {
+        void syncUserDocFields(auth.currentUser.uid, { cart: nextCart });
+      }
       showToast(t('تمت إعادة إضافة منتجات الطلب للسلة', 'Order items added to cart'));
     },
     updateOrderStatus: (orderId, status) => {
+      const nowIso = new Date().toISOString();
       const notif: AppNotification = {
         id: `n_${Date.now()}`,
         titleAr: `تحديث حالة الطلب #${orderId}`,
@@ -702,20 +1582,24 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         bodyAr: `أصبحت حالة طلبك الآن: ${status}`,
         bodyEn: `Your order status is now: ${status}`,
         isRead: false,
-        createdAt: new Date().toISOString(),
+        createdAt: nowIso,
         deepLinkType: 'order',
         deepLinkId: orderId,
       };
       setState((prev) => ({
         ...prev,
-        orders: prev.orders.map((o) =>
-          o.id === orderId ? { ...o, status, updatedAt: new Date().toISOString() } : o
-        ),
+        orders: prev.orders.map((o) => (o.id === orderId ? { ...o, status, updatedAt: nowIso } : o)),
         notifications: [notif, ...prev.notifications],
       }));
+      void updateDoc(doc(db, 'orders', orderId), {
+        status,
+        updatedAt: nowIso,
+        updatedAtServer: serverTimestamp(),
+      }).catch((err) => handleFirestoreError(err, OperationType.UPDATE, `orders/${orderId}`));
       showToast(t('تم تحديث حالة الطلب وإشعار العميل', 'Order status updated'));
     },
     approveBankTransfer: (orderId) => {
+      const nowIso = new Date().toISOString();
       const notif: AppNotification = {
         id: `n_${Date.now()}`,
         titleAr: `تم اعتماد تحويل بنكك للطلب #${orderId}`,
@@ -723,22 +1607,26 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         bodyAr: 'تم تأكيد استلام المبلغ بنجاح، وطلبك الآن في مرحلة التجهيز.',
         bodyEn: 'Your transfer has been verified and your order is confirmed.',
         isRead: false,
-        createdAt: new Date().toISOString(),
+        createdAt: nowIso,
         deepLinkType: 'order',
         deepLinkId: orderId,
       };
       setState((prev) => ({
         ...prev,
         orders: prev.orders.map((o) =>
-          o.id === orderId
-            ? { ...o, status: 'confirmed', updatedAt: new Date().toISOString() }
-            : o
+          o.id === orderId ? { ...o, status: 'confirmed', updatedAt: nowIso } : o
         ),
         notifications: [notif, ...prev.notifications],
       }));
+      void updateDoc(doc(db, 'orders', orderId), {
+        status: 'confirmed',
+        updatedAt: nowIso,
+        updatedAtServer: serverTimestamp(),
+      }).catch((err) => handleFirestoreError(err, OperationType.UPDATE, `orders/${orderId}`));
       showToast(t('تم اعتماد الدفع عبر بنكك وتأكيد الطلب', 'Bankak transfer approved'));
     },
     rejectBankTransfer: (orderId) => {
+      const nowIso = new Date().toISOString();
       const notif: AppNotification = {
         id: `n_${Date.now()}`,
         titleAr: `تعذر التحقق من إيصال الطلب #${orderId}`,
@@ -746,19 +1634,22 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         bodyAr: 'يرجى التواصل مع خدمة العملاء أو إعادة إرسال إيصال التحويل الصحيح.',
         bodyEn: 'Please contact support regarding your bank transfer receipt.',
         isRead: false,
-        createdAt: new Date().toISOString(),
+        createdAt: nowIso,
         deepLinkType: 'order',
         deepLinkId: orderId,
       };
       setState((prev) => ({
         ...prev,
         orders: prev.orders.map((o) =>
-          o.id === orderId
-            ? { ...o, status: 'cancelled', updatedAt: new Date().toISOString() }
-            : o
+          o.id === orderId ? { ...o, status: 'cancelled', updatedAt: nowIso } : o
         ),
         notifications: [notif, ...prev.notifications],
       }));
+      void updateDoc(doc(db, 'orders', orderId), {
+        status: 'cancelled',
+        updatedAt: nowIso,
+        updatedAtServer: serverTimestamp(),
+      }).catch((err) => handleFirestoreError(err, OperationType.UPDATE, `orders/${orderId}`));
       showToast(t('تم رفض الإيصال وإشعار العميل', 'Transfer rejected'));
     },
     markNotificationRead: (id) => {
@@ -791,13 +1682,20 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         ...prev,
         notifications: [notif, ...prev.notifications],
       }));
+      void setDoc(
+        doc(db, 'notifications', notif.id),
+        stripUndefined({ ...notif, customerUid: 'all' })
+      ).catch((err) =>
+        handleFirestoreError(err, OperationType.CREATE, `notifications/${notif.id}`)
+      );
       showToast(t('تم إرسال الإشعار وحفظه في السجل', 'Notification sent & logged'));
     },
     createConsult: (topic, message, phone, imageUrl) => {
+      const uid = auth.currentUser?.uid || state.user.uid;
       const now = new Date().toISOString();
       const req: ConsultRequest = {
         id: `c_${Date.now()}`,
-        customerUid: state.user.uid,
+        customerUid: uid,
         customerName: state.user.name,
         phone,
         topic,
@@ -819,10 +1717,21 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         ...prev,
         consults: [req, ...prev.consults],
       }));
+      if (auth.currentUser) {
+        void setDoc(
+          doc(db, 'consults', req.id),
+          stripUndefined({
+            ...req,
+            createdAtServer: serverTimestamp(),
+            updatedAtServer: serverTimestamp(),
+          })
+        ).catch((err) => handleFirestoreError(err, OperationType.CREATE, `consults/${req.id}`));
+      }
       showToast(t('تم إرسال استشارتك لأخصائي البصريات', 'Consultation request sent'));
     },
     replyConsult: (consultId, text, sender) => {
       const now = new Date().toISOString();
+      let updatedConsult: ConsultRequest | undefined;
       setState((prev) => {
         const nextNotifs =
           sender === 'optician'
@@ -841,95 +1750,122 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
                 ...prev.notifications,
               ]
             : prev.notifications;
+        const nextConsults = prev.consults.map((c) => {
+          if (c.id !== consultId) return c;
+          updatedConsult = {
+            ...c,
+            status: sender === 'optician' ? ('answered' as const) : ('open' as const),
+            updatedAt: now,
+            messages: [
+              ...c.messages,
+              {
+                id: `m_${Date.now()}`,
+                sender,
+                senderName:
+                  sender === 'optician'
+                    ? prev.locale === 'ar'
+                      ? `أخصائي البصريات — ${prev.appearance.appNameAr}`
+                      : `Lead Optician — ${prev.appearance.appNameEn}`
+                    : prev.user.name,
+                text,
+                createdAt: now,
+              },
+            ],
+          };
+          return updatedConsult;
+        });
         return {
           ...prev,
           notifications: nextNotifs,
-          consults: prev.consults.map((c) =>
-            c.id === consultId
-              ? {
-                  ...c,
-                  status: sender === 'optician' ? 'answered' : 'open',
-                  updatedAt: now,
-                  messages: [
-                    ...c.messages,
-                    {
-                      id: `m_${Date.now()}`,
-                      sender,
-                      senderName:
-                        sender === 'optician'
-                          ? prev.locale === 'ar'
-                            ? `أخصائي البصريات — ${prev.appearance.appNameAr}`
-                            : `Lead Optician — ${prev.appearance.appNameEn}`
-                          : prev.user.name,
-                      text,
-                      createdAt: now,
-                    },
-                  ],
-                }
-              : c
-          ),
+          consults: nextConsults,
         };
       });
+      if (updatedConsult && auth.currentUser) {
+        void updateDoc(
+          doc(db, 'consults', consultId),
+          stripUndefined({
+            status: updatedConsult.status,
+            messages: updatedConsult.messages,
+            updatedAt: now,
+            updatedAtServer: serverTimestamp(),
+          })
+        ).catch((err) => handleFirestoreError(err, OperationType.UPDATE, `consults/${consultId}`));
+      }
       if (sender === 'optician') {
         showToast(t('تم إرسال الرد وإشعار العميل', 'Reply sent & customer notified'));
       }
     },
     closeConsult: (consultId) => {
+      const nowIso = new Date().toISOString();
       setState((prev) => ({
         ...prev,
         consults: prev.consults.map((c) =>
-          c.id === consultId ? { ...c, status: 'closed', updatedAt: new Date().toISOString() } : c
+          c.id === consultId ? { ...c, status: 'closed', updatedAt: nowIso } : c
         ),
       }));
+      void updateDoc(doc(db, 'consults', consultId), {
+        status: 'closed',
+        updatedAt: nowIso,
+        updatedAtServer: serverTimestamp(),
+      }).catch((err) => handleFirestoreError(err, OperationType.UPDATE, `consults/${consultId}`));
     },
     updateConsultTopics: (consultTopics) => {
       setState((prev) => ({ ...prev, consultTopics }));
+      void writeConfigDoc('consultTopics', { items: consultTopics });
       showToast(t('تم تحديث مواضيع الاستشارة', 'Consult topics updated'));
     },
     updateLensOptions: (lensOptions) => {
       setState((prev) => ({ ...prev, lensOptions }));
+      void writeConfigDoc('lensOptions', { items: lensOptions });
       showToast(t('تم تحديث خيارات العدسات والأسعار', 'Lens options updated'));
     },
     saveAddress: (addr) => {
+      const nextAddresses = [
+        ...stateRef.current.user.addresses,
+        { ...addr, id: `addr_${Date.now()}` },
+      ];
       setState((prev) => ({
         ...prev,
-        user: {
-          ...prev.user,
-          addresses: [...prev.user.addresses, { ...addr, id: `addr_${Date.now()}` }],
-        },
+        user: { ...prev.user, addresses: nextAddresses },
       }));
+      if (auth.currentUser) {
+        void syncUserDocFields(auth.currentUser.uid, { addresses: nextAddresses });
+      }
       showToast(t('تم حفظ العنوان', 'Address saved'));
     },
     deleteAddress: (id) => {
+      const nextAddresses = stateRef.current.user.addresses.filter((a) => a.id !== id);
       setState((prev) => ({
         ...prev,
-        user: {
-          ...prev.user,
-          addresses: prev.user.addresses.filter((a) => a.id !== id),
-        },
+        user: { ...prev.user, addresses: nextAddresses },
       }));
+      if (auth.currentUser) {
+        void syncUserDocFields(auth.currentUser.uid, { addresses: nextAddresses });
+      }
     },
     savePrescription: (rx) => {
+      const nextRx = [
+        { ...rx, id: `rx_${Date.now()}`, savedAt: new Date().toISOString() },
+        ...stateRef.current.user.prescriptions,
+      ];
       setState((prev) => ({
         ...prev,
-        user: {
-          ...prev.user,
-          prescriptions: [
-            { ...rx, id: `rx_${Date.now()}`, savedAt: new Date().toISOString() },
-            ...prev.user.prescriptions,
-          ],
-        },
+        user: { ...prev.user, prescriptions: nextRx },
       }));
+      if (auth.currentUser) {
+        void syncUserDocFields(auth.currentUser.uid, { prescriptions: nextRx });
+      }
       showToast(t('تم حفظ الوصفة الطبية في ملفك', 'Prescription saved to profile'));
     },
     deletePrescription: (id) => {
+      const nextRx = stateRef.current.user.prescriptions.filter((p) => p.id !== id);
       setState((prev) => ({
         ...prev,
-        user: {
-          ...prev.user,
-          prescriptions: prev.user.prescriptions.filter((p) => p.id !== id),
-        },
+        user: { ...prev.user, prescriptions: nextRx },
       }));
+      if (auth.currentUser) {
+        void syncUserDocFields(auth.currentUser.uid, { prescriptions: nextRx });
+      }
     },
     upsertProduct: (product) => {
       setState((prev) => {
@@ -939,23 +1875,27 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
           : [product, ...prev.products];
         return { ...prev, products };
       });
+      void setDoc(doc(db, 'products', product.id), stripUndefined(product)).catch((err) =>
+        handleFirestoreError(err, OperationType.WRITE, `products/${product.id}`)
+      );
       showToast(t('تم حفظ المنتج ونشره في المتجر', 'Product saved & live'));
     },
     duplicateProduct: (id) => {
-      setState((prev) => {
-        const src = prev.products.find((p) => p.id === id);
-        if (!src) return prev;
-        const copy: Product = {
-          ...src,
-          id: `p_copy_${Date.now()}`,
-          sku: `${src.sku}-COPY`,
-          titleAr: `${src.titleAr} (نسخة)`,
-          titleEn: `${src.titleEn} (Copy)`,
-          visible: false,
-          reviews: [],
-        };
-        return { ...prev, products: [copy, ...prev.products] };
-      });
+      const src = state.products.find((p) => p.id === id);
+      if (!src) return;
+      const copy: Product = {
+        ...src,
+        id: `p_copy_${Date.now()}`,
+        sku: `${src.sku}-COPY`,
+        titleAr: `${src.titleAr} (نسخة)`,
+        titleEn: `${src.titleEn} (Copy)`,
+        visible: false,
+        reviews: [],
+      };
+      setState((prev) => ({ ...prev, products: [copy, ...prev.products] }));
+      void setDoc(doc(db, 'products', copy.id), stripUndefined(copy)).catch((err) =>
+        handleFirestoreError(err, OperationType.WRITE, `products/${copy.id}`)
+      );
       showToast(t('تم نسخ المنتج كمسودة مخفية', 'Product duplicated as draft'));
     },
     deleteProduct: (id, permanent = false) => {
@@ -965,6 +1905,15 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
           ? prev.products.filter((p) => p.id !== id)
           : prev.products.map((p) => (p.id === id ? { ...p, isDeleted: true, visible: false } : p)),
       }));
+      if (permanent) {
+        void deleteDoc(doc(db, 'products', id)).catch((err) =>
+          handleFirestoreError(err, OperationType.DELETE, `products/${id}`)
+        );
+      } else {
+        void updateDoc(doc(db, 'products', id), { isDeleted: true, visible: false }).catch((err) =>
+          handleFirestoreError(err, OperationType.UPDATE, `products/${id}`)
+        );
+      }
       showToast(
         permanent
           ? t('تم حذف المنتج نهائياً', 'Product permanently deleted')
@@ -1001,9 +1950,18 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
             };
           });
         }
+        products
+          .filter((p) => ids.includes(p.id))
+          .forEach((p) => {
+            void setDoc(doc(db, 'products', p.id), stripUndefined(p)).catch((err) =>
+              handleFirestoreError(err, OperationType.WRITE, `products/${p.id}`)
+            );
+          });
         return { ...prev, products };
       });
-      showToast(t(`تم تنفيذ الإجراء الجماعي على ${ids.length} منتج`, `Bulk action applied to ${ids.length} items`));
+      showToast(
+        t(`تم تنفيذ الإجراء الجماعي على ${ids.length} منتج`, `Bulk action applied to ${ids.length} items`)
+      );
     },
     upsertCategory: (cat) => {
       setState((prev) => {
@@ -1013,6 +1971,9 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
           : [...prev.categories, cat];
         return { ...prev, categories };
       });
+      void setDoc(doc(db, 'categories', cat.id), stripUndefined(cat)).catch((err) =>
+        handleFirestoreError(err, OperationType.WRITE, `categories/${cat.id}`)
+      );
       showToast(t('تم حفظ الفئة', 'Category saved'));
     },
     deleteCategoryAndMove: (id, moveToCategoryId) => {
@@ -1030,6 +1991,9 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
             : prev.products,
         categories: prev.categories.filter((c) => c.id !== id),
       }));
+      void deleteDoc(doc(db, 'categories', id)).catch((err) =>
+        handleFirestoreError(err, OperationType.DELETE, `categories/${id}`)
+      );
       showToast(t('تم حذف الفئة', 'Category deleted'));
       return true;
     },
@@ -1041,6 +2005,9 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
           : [...prev.brands, brand];
         return { ...prev, brands };
       });
+      void setDoc(doc(db, 'brands', brand.id), stripUndefined(brand)).catch((err) =>
+        handleFirestoreError(err, OperationType.WRITE, `brands/${brand.id}`)
+      );
       showToast(t('تم حفظ العلامة التجارية', 'Brand saved'));
     },
     deleteBrand: (id) => {
@@ -1048,6 +2015,9 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         ...prev,
         brands: prev.brands.filter((b) => b.id !== id),
       }));
+      void deleteDoc(doc(db, 'brands', id)).catch((err) =>
+        handleFirestoreError(err, OperationType.DELETE, `brands/${id}`)
+      );
       showToast(t('تم حذف العلامة التجارية', 'Brand deleted'));
     },
     upsertBanner: (banner) => {
@@ -1058,6 +2028,9 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
           : [...prev.banners, banner];
         return { ...prev, banners };
       });
+      void setDoc(doc(db, 'banners', banner.id), stripUndefined(banner)).catch((err) =>
+        handleFirestoreError(err, OperationType.WRITE, `banners/${banner.id}`)
+      );
       showToast(t('تم حفظ البانر الإعلاني', 'Banner saved'));
     },
     deleteBanner: (id) => {
@@ -1065,6 +2038,9 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         ...prev,
         banners: prev.banners.filter((b) => b.id !== id),
       }));
+      void deleteDoc(doc(db, 'banners', id)).catch((err) =>
+        handleFirestoreError(err, OperationType.DELETE, `banners/${id}`)
+      );
     },
     upsertCoupon: (coupon) => {
       setState((prev) => {
@@ -1074,6 +2050,9 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
           : [coupon, ...prev.coupons];
         return { ...prev, coupons };
       });
+      void setDoc(doc(db, 'coupons', coupon.code), stripUndefined(coupon)).catch((err) =>
+        handleFirestoreError(err, OperationType.WRITE, `coupons/${coupon.code}`)
+      );
       showToast(t('تم حفظ كود الخصم', 'Coupon saved'));
     },
     deleteCoupon: (code) => {
@@ -1081,36 +2060,52 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         ...prev,
         coupons: prev.coupons.filter((c) => c.code !== code),
       }));
+      void deleteDoc(doc(db, 'coupons', code)).catch((err) =>
+        handleFirestoreError(err, OperationType.DELETE, `coupons/${code}`)
+      );
     },
     updateHomeSections: (homeSections) => {
       setState((prev) => ({ ...prev, homeSections }));
+      void writeConfigDoc('homeSections', { items: homeSections });
       showToast(t('تم تحديث تصميم الصفحة الرئيسية فوراً', 'Home layout updated live'));
     },
     updateAppTexts: (appTexts) => {
       setState((prev) => ({ ...prev, appTexts }));
+      void writeConfigDoc('texts', { ...appTexts });
       showToast(t('تم تحديث نصوص وسياسات التطبيق فوراً', 'App content & policies updated'));
     },
     updateAppearance: (appearance) => {
       setState((prev) => ({ ...prev, appearance, theme: appearance.defaultTheme }));
+      void writeConfigDoc('appearance', { ...appearance });
       showToast(t('تم تحديث مظهر وألوان التطبيق فوراً', 'App appearance updated live'));
     },
     updateSettings: (settings) => {
       setState((prev) => ({ ...prev, settings }));
+      void writeConfigDoc('settings', { ...settings });
       showToast(t('تم حفظ إعدادات المتجر ورسوم الولايات', 'Store settings updated'));
     },
     toggleBlockUser: (uid) => {
+      const target = stateRef.current.directoryUsers.find((u) => u.uid === uid);
+      const nextBlocked = !target?.isBlocked;
       setState((prev) => ({
         ...prev,
         directoryUsers: prev.directoryUsers.map((u) =>
-          u.uid === uid ? { ...u, isBlocked: !u.isBlocked } : u
+          u.uid === uid ? { ...u, isBlocked: nextBlocked } : u
         ),
-        user: prev.user.uid === uid ? { ...prev.user, isBlocked: !prev.user.isBlocked } : prev.user,
+        user: prev.user.uid === uid ? { ...prev.user, isBlocked: nextBlocked } : prev.user,
       }));
+      void updateDoc(doc(db, 'users', uid), {
+        isBlocked: nextBlocked,
+        updatedAt: new Date().toISOString(),
+        updatedAtServer: serverTimestamp(),
+      }).catch((err) => handleFirestoreError(err, OperationType.UPDATE, `users/${uid}`));
       showToast(t('تم تحديث حالة حساب العميل', 'Customer status updated'));
     },
     upsertStaffOrAdmin: (userRecord) => {
       setState((prev) => {
-        const exists = prev.directoryUsers.some((u) => u.uid === userRecord.uid || u.email === userRecord.email);
+        const exists = prev.directoryUsers.some(
+          (u) => u.uid === userRecord.uid || u.email === userRecord.email
+        );
         const directoryUsers = exists
           ? prev.directoryUsers.map((u) =>
               u.uid === userRecord.uid || u.email === userRecord.email ? userRecord : u
@@ -1118,6 +2113,14 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
           : [userRecord, ...prev.directoryUsers];
         return { ...prev, directoryUsers };
       });
+      void setDoc(
+        doc(db, 'admins', userRecord.uid),
+        stripUndefined({
+          uid: userRecord.uid,
+          role: userRecord.role,
+          email: userRecord.email,
+        })
+      ).catch((err) => handleFirestoreError(err, OperationType.WRITE, `admins/${userRecord.uid}`));
       showToast(t('تم حفظ صلاحيات المسؤول/الموظف', 'Admin/Staff permissions saved'));
     },
     removeAdminRole: (uid) => {
@@ -1127,6 +2130,9 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
           u.uid === uid ? { ...u, role: 'customer', permissions: undefined } : u
         ),
       }));
+      void deleteDoc(doc(db, 'admins', uid)).catch((err) =>
+        handleFirestoreError(err, OperationType.DELETE, `admins/${uid}`)
+      );
       showToast(t('تمت إزالة صلاحية الإدارة', 'Admin role removed'));
     },
     showToast,

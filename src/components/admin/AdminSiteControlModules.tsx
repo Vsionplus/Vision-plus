@@ -508,15 +508,35 @@ export const AdminStoreSettingsModule: React.FC = () => {
           <Settings className="w-4 h-4 text-[#D9B24C]" />
           {t('إعدادات المتجر والتواصل بالفوتر وبنكك والصيانة', 'Store Settings, Footer Contacts, Bankak & Maintenance')}
         </h2>
-        <button
-          type="button"
-          onClick={() => setDraft({ ...draft, maintenanceMode: !draft.maintenanceMode })}
-          className={`px-3.5 py-1.5 rounded-lg font-extrabold ${
-            draft.maintenanceMode ? 'bg-rose-600 text-white' : 'bg-slate-200 text-slate-700'
-          }`}
-        >
-          {draft.maintenanceMode ? t('وضع الصيانة: مفعل ✓', 'Maintenance Mode: ON') : t('وضع الصيانة: متوقف', 'Maintenance Mode: OFF')}
-        </button>
+        <div className="flex flex-wrap items-center gap-2">
+          <button
+            type="button"
+            onClick={() =>
+              setDraft({
+                ...draft,
+                requireEmailVerification: !(draft.requireEmailVerification ?? true),
+              })
+            }
+            className={`min-h-[40px] px-3.5 py-1.5 rounded-lg font-extrabold ${
+              (draft.requireEmailVerification ?? true)
+                ? 'bg-emerald-600 text-white'
+                : 'bg-slate-200 text-slate-700'
+            }`}
+          >
+            {(draft.requireEmailVerification ?? true)
+              ? t('اشتراط تأكيد البريد قبل الطلب: مفعل ✓', 'Require Email Verification: ON')
+              : t('اشتراط تأكيد البريد قبل الطلب: متوقف', 'Require Email Verification: OFF')}
+          </button>
+          <button
+            type="button"
+            onClick={() => setDraft({ ...draft, maintenanceMode: !draft.maintenanceMode })}
+            className={`min-h-[40px] px-3.5 py-1.5 rounded-lg font-extrabold ${
+              draft.maintenanceMode ? 'bg-rose-600 text-white' : 'bg-slate-200 text-slate-700'
+            }`}
+          >
+            {draft.maintenanceMode ? t('وضع الصيانة: مفعل ✓', 'Maintenance Mode: ON') : t('وضع الصيانة: متوقف', 'Maintenance Mode: OFF')}
+          </button>
+        </div>
       </div>
 
       {draft.maintenanceMode && (

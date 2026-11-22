@@ -434,6 +434,7 @@ export interface StoreSettings {
   bankakBranchAr: string;
   otherBankDetailsAr: string;
   minimumOrderSdg: number;
+  requireEmailVerification: boolean;
   maintenanceMode: boolean;
   maintenanceMessageAr: string;
   maintenanceMessageEn: string;
@@ -468,7 +469,10 @@ export interface AppUser {
   role: UserRole;
   permissions?: StaffPermission[];
   isBlocked?: boolean;
+  isAnonymous?: boolean;
+  emailVerified?: boolean;
   createdAt?: string;
+  updatedAt?: string;
   favoriteProductIds: string[];
   addresses: SavedAddress[];
   prescriptions: SavedPrescription[];

@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import {
   Trash2,
   Tag,
@@ -9,6 +9,11 @@ import {
   Upload,
   CheckCircle2,
   ShoppingBag,
+  MailWarning,
+  Send,
+  RefreshCw,
+  LogIn,
+  UserPlus,
 } from 'lucide-react';
 import { useStore } from '../store/StoreContext';
 import { PaymentMethod } from '../types';
@@ -26,6 +31,12 @@ export const CartCheckoutView: React.FC = () => {
     appTexts,
     appearance,
     user,
+    isGuest,
+    isEmailVerified,
+    openAuthModal,
+    openVerifyEmailScreen,
+    resendVerificationEmail,
+    refreshEmailVerification,
     updateCartQty,
     removeFromCart,
     placeOrder,
@@ -36,24 +47,44 @@ export const CartCheckoutView: React.FC = () => {
   const [couponInput, setCouponInput] = useState('');
   const [appliedCouponCode, setAppliedCouponCode] = useState<string | null>(null);
 
-  const [customerName, setCustomerName] = useState(user.name);
-  const [customerPhone, setCustomerPhone] = useState(user.phone);
+  const [customerName, setCustomerName] = useState(isGuest ? '' : user.name);
+  const [customerPhone, setCustomerPhone] = useState(user.phone || '+249');
   const [stateId, setStateId] = useState(user.addresses[0]?.stateId || 'khartoum');
   const [city, setCity] = useState(user.addresses[0]?.city || 'الخرطوم');
   const [area, setArea] = useState(user.addresses[0]?.area || 'العمارات');
-  const [addressDetails, setAddressDetails] = useState(
-    user.addresses[0]?.details || 'شارع 15، جوار المستشفى'
-  );
+  const [addressDetails, setAddressDetails] = useState(user.addresses[0]?.details || '');
   const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>('bankak');
   const [bankRef, setBankRef] = useState('');
   const [receiptUrl, setReceiptUrl] = useState('');
+  const [submitting, setSubmitting] = useState(false);
+
+  const [resendCooldown, setResendCooldown] = useState(0);
+  const [resending, setResending] = useState(false);
+  const [checkingVerify, setCheckingVerify] = useState(false);
+  const [verifyNotice, setVerifyNotice] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!isGuest && user.name && !customerName) {
+      setCustomerName(user.name);
+    }
+    if (!isGuest && user.phone && (!customerPhone || customerPhone === '+249')) {
+      setCustomerPhone(user.phone);
+    }
+  }, [isGuest, user.name, user.phone, customerName, customerPhone]);
+
+  useEffect(() => {
+    if (resendCooldown <= 0) return;
+    const timer = window.setInterval(() => {
+      setResendCooldown((prev) => (prev <= 1 ? 0 : prev - 1));
+    }, 1000);
+    return () => window.clearInterval(timer);
+  }, [resendCooldown]);
 
   const subtotalSdg = useMemo(
     () =>
       cart.reduce(
         (sum, item) =>
-          sum +
-          (item.unitPriceSdg + (item.prescription?.lensExtraPriceSdg || 0)) * item.quantity,
+          sum + (item.unitPriceSdg + (item.prescription?.lensExtraPriceSdg || 0)) * item.quantity,
         0
       ),
     [cart]
@@ -83,6 +114,8 @@ export const CartCheckoutView: React.FC = () => {
     settings.deliveryFees.find((s) => s.id === stateId) || settings.deliveryFees[0];
   const deliveryFeeSdg = selectedState ? selectedState.feeSdg : 3500;
   const totalSdg = Math.max(0, subtotalSdg - discountSdg + deliveryFeeSdg);
+
+  const requiresEmailVerification = !isGuest && !isEmailVerified;
 
   const handleApplyCoupon = () => {
     const code = couponInput.trim().toUpperCase();
@@ -122,8 +155,65 @@ export const CartCheckoutView: React.FC = () => {
     reader.readAsDataURL(file);
   };
 
-  const handleSubmitOrder = (e: React.FormEvent) => {
+  const handleResendClick = async () => {
+    if (resendCooldown > 0) return;
+    setVerifyNotice(null);
+    setResending(true);
+    try {
+      await resendVerificationEmail();
+      setResendCooldown(60);
+      setVerifyNotice(
+        t(
+          'تم إرسال رابط التحقق إلى بريدك الإلكتروني. تحقق من البريد الوارد ومجلد Spam.',
+          'Verification link sent. Check your inbox and Spam folder.'
+        )
+      );
+    } catch (err) {
+      setVerifyNotice(
+        err instanceof Error ? err.message : t('تعذر إعادة إرسال الرابط', 'Could not resend link')
+      );
+    } finally {
+      setResending(false);
+    }
+  };
+
+  const handleRefreshVerified = async () => {
+    setVerifyNotice(null);
+    setCheckingVerify(true);
+    try {
+      const ok = await refreshEmailVerification(false);
+      if (!ok) {
+        setVerifyNotice(
+          t(
+            'لم يتم تأكيد البريد الإلكتروني بعد. اضغط على الرابط في رسالتك أولاً.',
+            'Email is not verified yet. Please tap the verification link first.'
+          )
+        );
+      }
+    } catch (err) {
+      setVerifyNotice(err instanceof Error ? err.message : t('تعذر التحقق', 'Check failed'));
+    } finally {
+      setCheckingVerify(false);
+    }
+  };
+
+  const handleSubmitOrder = async (e: React.FormEvent) => {
     e.preventDefault();
+
+    // 1. Block Guest -> open checkout auth modal
+    if (isGuest) {
+      openAuthModal('choice', true);
+      return;
+    }
+
+    // 2. Block Unverified Email -> enforce verification
+    if (!isEmailVerified) {
+      showToast(
+        t('يجب تأكيد بريدك الإلكتروني قبل إتمام الطلب', 'Verify your email before placing an order')
+      );
+      return;
+    }
+
     if (!customerName.trim()) {
       showToast(t('يرجى كتابة الاسم الكامل', 'Please enter full name'));
       return;
@@ -153,20 +243,32 @@ export const CartCheckoutView: React.FC = () => {
       return;
     }
 
-    placeOrder({
-      customerName: customerName.trim(),
-      customerPhone: normalizeSudanPhone(customerPhone),
-      stateId,
-      city: city.trim(),
-      area: area.trim(),
-      addressDetails: addressDetails.trim(),
-      paymentMethod,
-      couponCode: activeCoupon?.code,
-      discountSdg,
-      deliveryFeeSdg,
-      bankTransferReference: bankRef.trim() || undefined,
-      bankTransferReceiptUrl: receiptUrl || undefined,
-    });
+    setSubmitting(true);
+    try {
+      await placeOrder({
+        customerName: customerName.trim(),
+        customerPhone: normalizeSudanPhone(customerPhone),
+        stateId,
+        city: city.trim(),
+        area: area.trim(),
+        addressDetails: addressDetails.trim(),
+        paymentMethod,
+        couponCode: activeCoupon?.code,
+        discountSdg,
+        deliveryFeeSdg,
+        bankTransferReference: bankRef.trim() || undefined,
+        bankTransferReceiptUrl: receiptUrl || undefined,
+      });
+    } catch {
+      showToast(
+        t(
+          'تعذر حفظ الطلب في الخادم. تأكد من تأكيد بريدك الإلكتروني واتصال الشبكة.',
+          'Could not save order. Please ensure your email is verified and retry.'
+        )
+      );
+    } finally {
+      setSubmitting(false);
+    }
   };
 
   if (cart.length === 0) {
@@ -185,7 +287,7 @@ export const CartCheckoutView: React.FC = () => {
           type="button"
           onClick={() => openCatalog('all', '')}
           style={{ backgroundColor: appearance.primaryColor }}
-          className="px-6 py-2.5 rounded-xl text-white text-sm font-bold"
+          className="min-h-[44px] px-6 py-2.5 rounded-xl text-white text-sm font-bold"
         >
           {locale === 'ar' ? appTexts.btnStartShoppingAr : appTexts.btnStartShoppingEn}
         </button>
@@ -196,6 +298,94 @@ export const CartCheckoutView: React.FC = () => {
   return (
     <div className="max-w-7xl mx-auto px-4 sm:px-6 pt-6 space-y-6">
       <h1 className="text-2xl font-extrabold">{t('سلة التسوق وإتمام الطلب', 'Cart & Checkout')}</h1>
+
+      {/* Guest Checkout Gate Banner */}
+      {isGuest && (
+        <div className="rounded-2xl border border-amber-300 dark:border-amber-800/70 bg-amber-50 dark:bg-amber-950/25 p-4 flex flex-wrap items-center justify-between gap-3">
+          <div className="text-xs sm:text-sm font-bold text-[#11223E] dark:text-amber-200">
+            {t('سجّل دخولك أو أنشئ حساباً لإتمام الشراء', 'Sign in or create an account to complete purchase')}
+          </div>
+          <div className="flex flex-wrap items-center gap-2">
+            <button
+              type="button"
+              onClick={() => openAuthModal('login', true)}
+              style={{ backgroundColor: appearance.primaryColor }}
+              className="min-h-[44px] px-4 rounded-xl text-white text-xs font-extrabold inline-flex items-center gap-1.5"
+            >
+              <LogIn className="w-4 h-4" />
+              {t('تسجيل الدخول', 'Sign In')}
+            </button>
+            <button
+              type="button"
+              onClick={() => openAuthModal('register', true)}
+              style={{ backgroundColor: appearance.secondaryColor, color: appearance.primaryColor }}
+              className="min-h-[44px] px-4 rounded-xl text-xs font-extrabold inline-flex items-center gap-1.5"
+            >
+              <UserPlus className="w-4 h-4" />
+              {t('إنشاء حساب جديد', 'Create Account')}
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Unverified Email Gate Banner */}
+      {requiresEmailVerification && (
+        <div className="rounded-2xl border-2 border-rose-300 dark:border-rose-900 bg-rose-50 dark:bg-rose-950/30 p-5 space-y-3">
+          <div className="flex items-start gap-3">
+            <MailWarning className="w-6 h-6 text-rose-600 dark:text-rose-400 shrink-0 mt-0.5" />
+            <div className="space-y-1">
+              <h2 className="text-sm sm:text-base font-extrabold text-rose-800 dark:text-rose-200">
+                {t('يجب تأكيد بريدك الإلكتروني قبل إتمام الطلب', 'You must verify your email before placing an order')}
+              </h2>
+              <p className="text-xs text-rose-700 dark:text-rose-300">
+                {t(
+                  `أرسلنا رابط التحقق إلى (${user.email}). افتح الرسالة واضغط الرابط ثم اضغط "لقد تحققت، تحديث".`,
+                  `Check (${user.email}) and Spam folder for the verification link.`
+                )}
+              </p>
+              {verifyNotice && (
+                <p className="text-xs font-bold text-[#11223E] dark:text-amber-300 pt-1">{verifyNotice}</p>
+              )}
+            </div>
+          </div>
+
+          <div className="flex flex-wrap items-center gap-2 pt-1">
+            <button
+              type="button"
+              disabled={checkingVerify}
+              onClick={handleRefreshVerified}
+              style={{ backgroundColor: appearance.secondaryColor, color: appearance.primaryColor }}
+              className="min-h-[44px] px-4 rounded-xl text-xs font-extrabold inline-flex items-center gap-1.5 disabled:opacity-60"
+            >
+              <RefreshCw className={`w-4 h-4 ${checkingVerify ? 'animate-spin' : ''}`} />
+              {t('لقد تحققت، تحديث', 'I Verified, Refresh')}
+            </button>
+
+            <button
+              type="button"
+              disabled={resending || resendCooldown > 0}
+              onClick={handleResendClick}
+              style={{ backgroundColor: appearance.primaryColor }}
+              className="min-h-[44px] px-4 rounded-xl text-white text-xs font-bold inline-flex items-center gap-1.5 disabled:opacity-50"
+            >
+              <Send className="w-4 h-4" />
+              {resendCooldown > 0
+                ? t(`إعادة إرسال الرابط (${resendCooldown} ث)`, `Resend (${resendCooldown}s)`)
+                : resending
+                ? t('جارٍ الإرسال...', 'Sending...')
+                : t('إعادة إرسال الرابط', 'Resend Link')}
+            </button>
+
+            <button
+              type="button"
+              onClick={openVerifyEmailScreen}
+              className="min-h-[44px] px-4 rounded-xl border border-rose-300 dark:border-rose-800 bg-white dark:bg-[#131C2E] text-xs font-bold"
+            >
+              {t('تغيير البريد / صفحة التأكيد', 'Change Email / Verify Screen')}
+            </button>
+          </div>
+        </div>
+      )}
 
       <form onSubmit={handleSubmitOrder} className="grid lg:grid-cols-12 gap-6 items-start">
         <div className="lg:col-span-7 space-y-6">
@@ -221,7 +411,7 @@ export const CartCheckoutView: React.FC = () => {
                       <button
                         type="button"
                         onClick={() => removeFromCart(item.id)}
-                        className="text-stone-400 hover:text-rose-600 p-1"
+                        className="text-stone-400 hover:text-rose-600 p-1 min-w-[44px] min-h-[44px] flex items-center justify-center"
                         aria-label={t('حذف', 'Remove')}
                       >
                         <Trash2 className="w-4 h-4" />
@@ -251,13 +441,21 @@ export const CartCheckoutView: React.FC = () => {
 
                     <div className="pt-2 flex items-center justify-between">
                       <div className="flex items-center border border-stone-200 dark:border-zinc-700 rounded-lg">
-                        <button type="button" onClick={() => updateCartQty(item.id, -1)} className="px-2.5 py-1 text-xs font-bold">
+                        <button
+                          type="button"
+                          onClick={() => updateCartQty(item.id, -1)}
+                          className="min-w-[40px] min-h-[40px] text-xs font-bold"
+                        >
                           −
                         </button>
                         <span className="px-2.5 font-mono-num text-xs font-bold tabular-nums">
                           {item.quantity}
                         </span>
-                        <button type="button" onClick={() => updateCartQty(item.id, 1)} className="px-2.5 py-1 text-xs font-bold">
+                        <button
+                          type="button"
+                          onClick={() => updateCartQty(item.id, 1)}
+                          className="min-w-[40px] min-h-[40px] text-xs font-bold"
+                        >
                           +
                         </button>
                       </div>
@@ -286,7 +484,7 @@ export const CartCheckoutView: React.FC = () => {
                     setAddressDetails(addr.details);
                     setCustomerPhone(addr.phone);
                   }}
-                  className="px-2.5 py-1.5 rounded-lg border border-stone-200 dark:border-zinc-700 bg-stone-50 dark:bg-zinc-900 text-xs"
+                  className="px-2.5 py-2 rounded-lg border border-stone-200 dark:border-zinc-700 bg-stone-50 dark:bg-zinc-900 text-xs"
                 >
                   <option value="">{t('اختر عنواناً محفوظاً...', 'Pick saved address...')}</option>
                   {user.addresses.map((a) => (
@@ -301,15 +499,31 @@ export const CartCheckoutView: React.FC = () => {
             <div className="grid sm:grid-cols-2 gap-3 text-xs">
               <div>
                 <label className="block font-semibold mb-1">{t('الاسم الكامل', 'Full Name')}</label>
-                <input required value={customerName} onChange={(e) => setCustomerName(e.target.value)} className="w-full px-3 py-2 rounded-lg border border-stone-200 dark:border-zinc-700 bg-stone-50 dark:bg-zinc-900" />
+                <input
+                  required={!isGuest}
+                  value={customerName}
+                  onChange={(e) => setCustomerName(e.target.value)}
+                  className="w-full min-h-[44px] px-3 py-2 rounded-lg border border-stone-200 dark:border-zinc-700 bg-stone-50 dark:bg-zinc-900"
+                />
               </div>
               <div>
                 <label className="block font-semibold mb-1">{t('رقم الهاتف (+249)', 'Sudan Phone (+249)')}</label>
-                <input required dir="ltr" value={customerPhone} onChange={(e) => setCustomerPhone(e.target.value)} placeholder="+249912345678" className="w-full px-3 py-2 rounded-lg border border-stone-200 dark:border-zinc-700 bg-stone-50 dark:bg-zinc-900 font-mono-num" />
+                <input
+                  required={!isGuest}
+                  dir="ltr"
+                  value={customerPhone}
+                  onChange={(e) => setCustomerPhone(e.target.value)}
+                  placeholder="+249912345678"
+                  className="w-full min-h-[44px] px-3 py-2 rounded-lg border border-stone-200 dark:border-zinc-700 bg-stone-50 dark:bg-zinc-900 font-mono-num"
+                />
               </div>
               <div>
                 <label className="block font-semibold mb-1">{t('الولاية', 'Sudan State')}</label>
-                <select value={stateId} onChange={(e) => setStateId(e.target.value)} className="w-full px-3 py-2 rounded-lg border border-stone-200 dark:border-zinc-700 bg-stone-50 dark:bg-zinc-900">
+                <select
+                  value={stateId}
+                  onChange={(e) => setStateId(e.target.value)}
+                  className="w-full min-h-[44px] px-3 py-2 rounded-lg border border-stone-200 dark:border-zinc-700 bg-stone-50 dark:bg-zinc-900"
+                >
                   {settings.deliveryFees.map((st) => (
                     <option key={st.id} value={st.id}>
                       {locale === 'ar' ? st.nameAr : st.nameEn} ({formatSdg(st.feeSdg)})
@@ -319,15 +533,31 @@ export const CartCheckoutView: React.FC = () => {
               </div>
               <div>
                 <label className="block font-semibold mb-1">{t('المدينة / المحلية', 'City / Locality')}</label>
-                <input required value={city} onChange={(e) => setCity(e.target.value)} className="w-full px-3 py-2 rounded-lg border border-stone-200 dark:border-zinc-700 bg-stone-50 dark:bg-zinc-900" />
+                <input
+                  required={!isGuest}
+                  value={city}
+                  onChange={(e) => setCity(e.target.value)}
+                  className="w-full min-h-[44px] px-3 py-2 rounded-lg border border-stone-200 dark:border-zinc-700 bg-stone-50 dark:bg-zinc-900"
+                />
               </div>
               <div>
                 <label className="block font-semibold mb-1">{t('الحي / المنطقة', 'Area / Neighborhood')}</label>
-                <input required value={area} onChange={(e) => setArea(e.target.value)} className="w-full px-3 py-2 rounded-lg border border-stone-200 dark:border-zinc-700 bg-stone-50 dark:bg-zinc-900" />
+                <input
+                  required={!isGuest}
+                  value={area}
+                  onChange={(e) => setArea(e.target.value)}
+                  className="w-full min-h-[44px] px-3 py-2 rounded-lg border border-stone-200 dark:border-zinc-700 bg-stone-50 dark:bg-zinc-900"
+                />
               </div>
               <div>
                 <label className="block font-semibold mb-1">{t('وصف العنوان', 'Street / Landmark')}</label>
-                <input required value={addressDetails} onChange={(e) => setAddressDetails(e.target.value)} className="w-full px-3 py-2 rounded-lg border border-stone-200 dark:border-zinc-700 bg-stone-50 dark:bg-zinc-900" />
+                <input
+                  required={!isGuest}
+                  value={addressDetails}
+                  onChange={(e) => setAddressDetails(e.target.value)}
+                  placeholder={t('الشارع وأقرب معلم', 'Street and nearest landmark')}
+                  className="w-full min-h-[44px] px-3 py-2 rounded-lg border border-stone-200 dark:border-zinc-700 bg-stone-50 dark:bg-zinc-900"
+                />
               </div>
             </div>
           </div>
@@ -391,7 +621,7 @@ export const CartCheckoutView: React.FC = () => {
                       navigator.clipboard?.writeText(settings.bankakAccountNumber);
                       showToast(t('تم نسخ رقم حساب بنكك', 'Bankak account copied'));
                     }}
-                    className="px-3 py-1.5 rounded-lg bg-white dark:bg-[#181B1E] border border-stone-200 dark:border-zinc-700 font-mono-num font-bold flex items-center gap-1.5"
+                    className="min-h-[44px] px-3 py-1.5 rounded-lg bg-white dark:bg-[#181B1E] border border-stone-200 dark:border-zinc-700 font-mono-num font-bold flex items-center gap-1.5"
                   >
                     <span>{settings.bankakAccountNumber}</span>
                     <Copy className="w-3.5 h-3.5" style={{ color: appearance.secondaryColor }} />
@@ -399,7 +629,9 @@ export const CartCheckoutView: React.FC = () => {
                 </div>
 
                 {settings.otherBankDetailsAr && (
-                  <p className="text-[11px] text-stone-500 dark:text-zinc-400">{settings.otherBankDetailsAr}</p>
+                  <p className="text-[11px] text-stone-500 dark:text-zinc-400">
+                    {settings.otherBankDetailsAr}
+                  </p>
                 )}
 
                 <div className="grid sm:grid-cols-2 gap-3 pt-2">
@@ -407,15 +639,22 @@ export const CartCheckoutView: React.FC = () => {
                     <label className="block font-semibold mb-1">
                       {t('رقم العملية المرجعي', 'Transfer Reference ID')}
                     </label>
-                    <input value={bankRef} onChange={(e) => setBankRef(e.target.value)} placeholder="BNK-..." className="w-full px-3 py-2 rounded-lg border border-stone-200 dark:border-zinc-700 bg-white dark:bg-[#181B1E] font-mono-num" />
+                    <input
+                      value={bankRef}
+                      onChange={(e) => setBankRef(e.target.value)}
+                      placeholder="BNK-..."
+                      className="w-full min-h-[44px] px-3 py-2 rounded-lg border border-stone-200 dark:border-zinc-700 bg-white dark:bg-[#181B1E] font-mono-num"
+                    />
                   </div>
                   <div>
                     <label className="block font-semibold mb-1">
                       {t('صورة إشعار التحويل (بنكك)', 'Upload Transfer Receipt')}
                     </label>
-                    <label className="flex items-center justify-center gap-2 px-3 py-2 rounded-lg border border-dashed border-[var(--vp-secondary)] bg-white dark:bg-[#181B1E] font-semibold cursor-pointer">
+                    <label className="min-h-[44px] flex items-center justify-center gap-2 px-3 py-2 rounded-lg border border-dashed border-[var(--vp-secondary)] bg-white dark:bg-[#181B1E] font-semibold cursor-pointer">
                       <Upload className="w-4 h-4" />
-                      <span>{receiptUrl ? t('تم رفع الإيصال ✓', 'Receipt Uploaded ✓') : t('اختر لقطة الشاشة', 'Select Screenshot')}</span>
+                      <span>
+                        {receiptUrl ? t('تم رفع الإيصال ✓', 'Receipt Uploaded ✓') : t('اختر لقطة الشاشة', 'Select Screenshot')}
+                      </span>
                       <input type="file" accept="image/*" onChange={handleReceiptUpload} className="hidden" />
                     </label>
                   </div>
@@ -430,7 +669,10 @@ export const CartCheckoutView: React.FC = () => {
 
           {settings.minimumOrderSdg > 0 && (
             <p className="text-[11px] text-slate-500 dark:text-slate-400">
-              {t(`الحد الأدنى للطلب: ${formatSdg(settings.minimumOrderSdg)}`, `Minimum order: ${formatSdg(settings.minimumOrderSdg)}`)}
+              {t(
+                `الحد الأدنى للطلب: ${formatSdg(settings.minimumOrderSdg)}`,
+                `Minimum order: ${formatSdg(settings.minimumOrderSdg)}`
+              )}
             </p>
           )}
 
@@ -442,10 +684,14 @@ export const CartCheckoutView: React.FC = () => {
                 value={couponInput}
                 onChange={(e) => setCouponInput(e.target.value)}
                 placeholder={t('كود خصم (جرب NILE10)', 'Coupon code')}
-                className="w-full ps-9 pe-3 py-2 rounded-lg border border-stone-200 dark:border-zinc-700 bg-stone-50 dark:bg-zinc-900 text-xs font-mono-num uppercase"
+                className="w-full min-h-[44px] ps-9 pe-3 py-2 rounded-lg border border-stone-200 dark:border-zinc-700 bg-stone-50 dark:bg-zinc-900 text-xs font-mono-num uppercase"
               />
             </div>
-            <button type="button" onClick={handleApplyCoupon} className="px-4 py-2 rounded-lg bg-stone-900 dark:bg-stone-100 text-white dark:text-stone-900 text-xs font-bold">
+            <button
+              type="button"
+              onClick={handleApplyCoupon}
+              className="min-h-[44px] px-4 py-2 rounded-lg bg-stone-900 dark:bg-stone-100 text-white dark:text-stone-900 text-xs font-bold"
+            >
               {t('تطبيق', 'Apply')}
             </button>
           </div>
@@ -457,15 +703,20 @@ export const CartCheckoutView: React.FC = () => {
             </div>
             {discountSdg > 0 && (
               <div className="flex justify-between text-emerald-700 dark:text-emerald-400">
-                <span>{t('الخصم', 'Discount')} ({activeCoupon?.code})</span>
+                <span>
+                  {t('الخصم', 'Discount')} ({activeCoupon?.code})
+                </span>
                 <span className="font-mono-num font-semibold tabular-nums">− {formatSdg(discountSdg)}</span>
               </div>
             )}
             <div className="flex justify-between">
               <span className="text-stone-600 dark:text-zinc-400">
-                {t('رسوم التوصيل', 'Delivery Fee')} ({locale === 'ar' ? selectedState?.nameAr : selectedState?.nameEn})
+                {t('رسوم التوصيل', 'Delivery Fee')} (
+                {locale === 'ar' ? selectedState?.nameAr : selectedState?.nameEn})
               </span>
-              <span className="font-mono-num font-semibold tabular-nums">{formatSdg(deliveryFeeSdg)}</span>
+              <span className="font-mono-num font-semibold tabular-nums">
+                {formatSdg(deliveryFeeSdg)}
+              </span>
             </div>
             <div className="flex justify-between text-base font-extrabold pt-3 border-t border-stone-200 dark:border-zinc-800">
               <span>{t('الإجمالي النهائي', 'Total')}</span>
@@ -475,14 +726,33 @@ export const CartCheckoutView: React.FC = () => {
             </div>
           </div>
 
-          <button
-            type="submit"
-            style={{ backgroundColor: appearance.secondaryColor, color: appearance.primaryColor }}
-            className="w-full py-3.5 px-6 rounded-xl font-extrabold text-sm flex items-center justify-center gap-2 transition-opacity hover:opacity-90"
-          >
-            <CheckCircle2 className="w-4 h-4" />
-            <span>{locale === 'ar' ? appTexts.btnCheckoutAr : appTexts.btnCheckoutEn}</span>
-          </button>
+          {isGuest ? (
+            <button
+              type="button"
+              onClick={() => openAuthModal('choice', true)}
+              style={{ backgroundColor: appearance.secondaryColor, color: appearance.primaryColor }}
+              className="w-full min-h-[48px] py-3.5 px-6 rounded-xl font-extrabold text-sm flex items-center justify-center gap-2 transition-opacity hover:opacity-90"
+            >
+              <CheckCircle2 className="w-4 h-4" />
+              <span>{t('إتمام الطلب', 'Proceed to Checkout')}</span>
+            </button>
+          ) : (
+            <button
+              type="submit"
+              disabled={submitting || requiresEmailVerification}
+              style={{ backgroundColor: appearance.secondaryColor, color: appearance.primaryColor }}
+              className="w-full min-h-[48px] py-3.5 px-6 rounded-xl font-extrabold text-sm flex items-center justify-center gap-2 transition-opacity hover:opacity-90 disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              <CheckCircle2 className="w-4 h-4" />
+              <span>
+                {submitting
+                  ? t('جارٍ إرسال الطلب...', 'Submitting Order...')
+                  : locale === 'ar'
+                  ? appTexts.btnCheckoutAr
+                  : appTexts.btnCheckoutEn}
+              </span>
+            </button>
+          )}
         </div>
       </form>
     </div>

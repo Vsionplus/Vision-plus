@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import {
   MapPin,
   Phone,
@@ -7,19 +7,29 @@ import {
   Trash2,
   ExternalLink,
   MessageCircle,
-  RotateCcw,
   ShieldCheck,
   HelpCircle,
   FileText,
+  LogIn,
+  UserPlus,
+  LogOut,
+  MailCheck,
+  MailWarning,
 } from 'lucide-react';
 import { useStore } from '../store/StoreContext';
 import { formatSdg, isValidSudanPhone, normalizeSudanPhone } from '../utils/format';
+import { PWAInstallButton } from './PWAInstallButton';
 
 export const ProfileView: React.FC = () => {
   const {
     locale,
     t,
     user,
+    isGuest,
+    isEmailVerified,
+    openAuthModal,
+    openVerifyEmailScreen,
+    logout,
     settings,
     appearance,
     updateProfile,
@@ -28,14 +38,18 @@ export const ProfileView: React.FC = () => {
     savePrescription,
     deletePrescription,
     setActiveTab,
-    switchRole,
-    resetDemoData,
     showToast,
   } = useStore();
 
   const [name, setName] = useState(user.name);
   const [phone, setPhone] = useState(user.phone);
   const [email, setEmail] = useState(user.email);
+
+  useEffect(() => {
+    setName(user.name);
+    setPhone(user.phone);
+    setEmail(user.email);
+  }, [user.uid, user.name, user.phone, user.email]);
 
   const [addrLabel, setAddrLabel] = useState('');
   const [addrState, setAddrState] = useState('khartoum');
@@ -100,12 +114,13 @@ export const ProfileView: React.FC = () => {
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
+          <PWAInstallButton variant="profile" />
           {(user.role === 'admin' || user.role === 'staff') && (
             <button
               type="button"
               onClick={() => setActiveTab('admin')}
               style={{ backgroundColor: appearance.secondaryColor, color: appearance.primaryColor }}
-              className="px-3.5 py-2 rounded-lg text-xs font-extrabold inline-flex items-center gap-1.5"
+              className="min-h-[44px] px-3.5 py-2 rounded-lg text-xs font-extrabold inline-flex items-center gap-1.5"
             >
               <ShieldCheck className="w-4 h-4" />
               {t('لوحة تحكم الإدارة', 'Admin Control Panel')}
@@ -113,28 +128,88 @@ export const ProfileView: React.FC = () => {
           )}
           <button
             type="button"
-            onClick={() => switchRole(user.role === 'admin' ? 'customer' : 'admin')}
-            className="px-3.5 py-2 rounded-lg border border-stone-200 dark:border-zinc-700 bg-white dark:bg-[#181B1E] text-xs font-semibold"
-          >
-            {user.role === 'admin' ? t('تبديل لوضع العميل', 'Switch to Customer') : t('تبديل لوضع المالك', 'Switch to Admin')}
-          </button>
-          <button
-            type="button"
             onClick={() => setActiveTab('favorites')}
-            className="px-3.5 py-2 rounded-lg border border-stone-200 dark:border-zinc-700 bg-white dark:bg-[#181B1E] text-xs font-semibold"
+            className="min-h-[44px] px-3.5 py-2 rounded-lg border border-stone-200 dark:border-zinc-700 bg-white dark:bg-[#181B1E] text-xs font-semibold"
           >
             {t('المفضلة', 'Favorites')} ({user.favoriteProductIds.length})
           </button>
           <button
             type="button"
-            onClick={resetDemoData}
-            className="px-3.5 py-2 rounded-lg border border-stone-200 dark:border-zinc-700 bg-white dark:bg-[#181B1E] text-xs font-semibold inline-flex items-center gap-1.5"
+            onClick={() => void logout()}
+            className="min-h-[44px] px-3.5 py-2 rounded-lg border border-rose-200 dark:border-rose-900/50 text-rose-700 dark:text-rose-400 bg-white dark:bg-[#181B1E] text-xs font-bold inline-flex items-center gap-1.5"
           >
-            <RotateCcw className="w-3.5 h-3.5" />
-            {t('استعادة البيانات الافتراضية', 'Reset Demo Data')}
+            <LogOut className="w-3.5 h-3.5" />
+            {t('تسجيل الخروج', 'Sign Out')}
           </button>
         </div>
       </div>
+
+      {/* Auth / Verification Status Card */}
+      {isGuest ? (
+        <div className="bg-amber-50 dark:bg-amber-950/25 border border-amber-200 dark:border-amber-900/50 rounded-2xl p-5 flex flex-wrap items-center justify-between gap-4">
+          <div className="space-y-1">
+            <h2 className="text-base font-extrabold">
+              {t('أنت داخل كضيف، سجّل دخولك لإتمام الشراء', 'Browsing as Guest')}
+            </h2>
+            <p className="text-xs text-stone-600 dark:text-zinc-400">
+              {t(
+                'سجّل دخولك أو أنشئ حساباً جديداً الآن لحفظ سلتك ومفضلتك وإتمام الطلبات.',
+                'Sign in or register to save your cart, favorites, and complete orders.'
+              )}
+            </p>
+          </div>
+          <div className="flex flex-wrap items-center gap-2">
+            <button
+              type="button"
+              onClick={() => openAuthModal('login', false)}
+              style={{ backgroundColor: appearance.primaryColor }}
+              className="min-h-[44px] px-4 rounded-xl text-white text-xs font-extrabold inline-flex items-center gap-1.5"
+            >
+              <LogIn className="w-4 h-4" />
+              {t('تسجيل الدخول', 'Sign In')}
+            </button>
+            <button
+              type="button"
+              onClick={() => openAuthModal('register', false)}
+              style={{ backgroundColor: appearance.secondaryColor, color: appearance.primaryColor }}
+              className="min-h-[44px] px-4 rounded-xl text-xs font-extrabold inline-flex items-center gap-1.5"
+            >
+              <UserPlus className="w-4 h-4" />
+              {t('إنشاء حساب جديد', 'Create Account')}
+            </button>
+          </div>
+        </div>
+      ) : (
+        <div className="bg-white dark:bg-[#181B1E] border border-stone-200 dark:border-zinc-800 rounded-2xl p-4 flex flex-wrap items-center justify-between gap-3 text-xs">
+          <div className="flex items-center gap-2.5">
+            {isEmailVerified ? (
+              <MailCheck className="w-5 h-5 text-emerald-600 shrink-0" />
+            ) : (
+              <MailWarning className="w-5 h-5 text-amber-600 shrink-0" />
+            )}
+            <div>
+              <div className="font-bold">
+                {isEmailVerified
+                  ? t('البريد الإلكتروني مؤكد ومفعل', 'Email Address Verified')
+                  : t('البريد الإلكتروني بانتظار التأكيد', 'Email Verification Pending')}
+              </div>
+              <div dir="ltr" className="text-stone-500 dark:text-zinc-400 font-mono-num">
+                {user.email}
+              </div>
+            </div>
+          </div>
+          {!isEmailVerified && (
+            <button
+              type="button"
+              onClick={openVerifyEmailScreen}
+              style={{ backgroundColor: appearance.secondaryColor, color: appearance.primaryColor }}
+              className="min-h-[44px] px-4 rounded-xl text-xs font-extrabold"
+            >
+              {t('تأكيد البريد الآن', 'Verify Email Now')}
+            </button>
+          )}
+        </div>
+      )}
 
       <div className="grid lg:grid-cols-12 gap-6 items-start">
         <form

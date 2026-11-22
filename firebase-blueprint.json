@@ -1,0 +1,217 @@
+{
+  "entities": {
+    "UserProfile": {
+      "title": "UserProfile",
+      "description": "Customer, guest, staff, or admin profile with cart, favorites, addresses, and prescriptions.",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string", "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "name": { "type": "string", "maxLength": 120 },
+        "email": { "type": "string", "maxLength": 160 },
+        "phone": { "type": "string", "maxLength": 32 },
+        "role": { "type": "string", "enum": ["customer", "staff", "admin"] },
+        "permissions": { "type": "array" },
+        "isBlocked": { "type": "boolean" },
+        "isAnonymous": { "type": "boolean" },
+        "emailVerified": { "type": "boolean" },
+        "favoriteProductIds": { "type": "array" },
+        "cart": { "type": "array" },
+        "addresses": { "type": "array" },
+        "prescriptions": { "type": "array" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["uid", "name", "role", "isBlocked", "favoriteProductIds", "cart"]
+    },
+    "Order": {
+      "title": "Order",
+      "description": "Verified customer optical order in SDG with delivery state and payment verification.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "customerUid": { "type": "string", "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "customerName": { "type": "string", "maxLength": 120 },
+        "customerPhone": { "type": "string", "maxLength": 32 },
+        "stateId": { "type": "string", "maxLength": 64 },
+        "city": { "type": "string", "maxLength": 80 },
+        "area": { "type": "string", "maxLength": 120 },
+        "addressDetails": { "type": "string", "maxLength": 400 },
+        "items": { "type": "array" },
+        "subtotalSdg": { "type": "number" },
+        "discountSdg": { "type": "number" },
+        "deliveryFeeSdg": { "type": "number" },
+        "totalSdg": { "type": "number" },
+        "couponCode": { "type": "string", "maxLength": 40 },
+        "paymentMethod": { "type": "string", "enum": ["cod", "bankak"] },
+        "bankTransferReference": { "type": "string", "maxLength": 120 },
+        "bankTransferReceiptUrl": { "type": "string", "maxLength": 400000 },
+        "status": {
+          "type": "string",
+          "enum": ["pending", "awaiting_payment_verification", "confirmed", "preparing", "shipped", "delivered", "cancelled"]
+        },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["id", "customerUid", "customerName", "customerPhone", "stateId", "city", "area", "addressDetails", "items", "subtotalSdg", "discountSdg", "deliveryFeeSdg", "totalSdg", "paymentMethod", "status", "createdAt", "updatedAt"]
+    },
+    "Product": {
+      "title": "Product",
+      "description": "Optical storefront product document.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "sku": { "type": "string", "maxLength": 80 },
+        "titleAr": { "type": "string", "maxLength": 200 },
+        "titleEn": { "type": "string", "maxLength": 200 },
+        "priceSdg": { "type": "number" },
+        "stock": { "type": "number" },
+        "visible": { "type": "boolean" }
+      },
+      "required": ["id", "titleAr", "titleEn", "priceSdg", "stock", "visible"]
+    },
+    "Category": {
+      "title": "Category",
+      "description": "Optical catalog category.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "nameAr": { "type": "string", "maxLength": 120 },
+        "nameEn": { "type": "string", "maxLength": 120 },
+        "order": { "type": "number" },
+        "visible": { "type": "boolean" }
+      },
+      "required": ["id", "nameAr", "nameEn", "visible"]
+    },
+    "Brand": {
+      "title": "Brand",
+      "description": "Eyewear brand record.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "nameAr": { "type": "string", "maxLength": 120 },
+        "nameEn": { "type": "string", "maxLength": 120 },
+        "visible": { "type": "boolean" }
+      },
+      "required": ["id", "nameAr", "nameEn", "visible"]
+    },
+    "Banner": {
+      "title": "Banner",
+      "description": "Promotional home banner.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "titleAr": { "type": "string", "maxLength": 200 },
+        "isActive": { "type": "boolean" }
+      },
+      "required": ["id", "titleAr", "isActive"]
+    },
+    "Coupon": {
+      "title": "Coupon",
+      "description": "Discount coupon code.",
+      "type": "object",
+      "properties": {
+        "code": { "type": "string", "maxLength": 64, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "type": { "type": "string", "enum": ["percent", "fixed"] },
+        "value": { "type": "number" },
+        "isActive": { "type": "boolean" }
+      },
+      "required": ["code", "type", "value", "isActive"]
+    },
+    "Consult": {
+      "title": "Consult",
+      "description": "Optician consultation request thread.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "customerUid": { "type": "string", "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "customerName": { "type": "string", "maxLength": 120 },
+        "phone": { "type": "string", "maxLength": 32 },
+        "topic": { "type": "string", "maxLength": 100 },
+        "status": { "type": "string", "enum": ["open", "answered", "closed"] },
+        "messages": { "type": "array" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["id", "customerUid", "customerName", "phone", "topic", "status", "messages"]
+    },
+    "Notification": {
+      "title": "Notification",
+      "description": "Customer or broadcast notification.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "customerUid": { "type": "string", "maxLength": 128 },
+        "titleAr": { "type": "string", "maxLength": 200 },
+        "bodyAr": { "type": "string", "maxLength": 600 },
+        "isRead": { "type": "boolean" }
+      },
+      "required": ["id", "customerUid", "titleAr", "bodyAr", "isRead"]
+    },
+    "StoreConfig": {
+      "title": "StoreConfig",
+      "description": "Dynamic store configuration document (settings, appearance, texts, homeSections, lensOptions, consultTopics).",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 64, "pattern": "^[a-zA-Z0-9_\\-]+$" }
+      },
+      "required": ["id"]
+    },
+    "AdminRecord": {
+      "title": "AdminRecord",
+      "description": "Trusted admin/staff RBAC grant.",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string", "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "role": { "type": "string", "enum": ["admin", "staff"] },
+        "email": { "type": "string", "maxLength": 160 }
+      },
+      "required": ["uid", "role"]
+    }
+  },
+  "firestore": {
+    "/users/{userId}": {
+      "schema": { "$ref": "#/entities/UserProfile" },
+      "description": "Customer, guest, staff, and admin user profiles, carts, favorites, addresses, and prescriptions."
+    },
+    "/orders/{orderId}": {
+      "schema": { "$ref": "#/entities/Order" },
+      "description": "Customer orders. Requires verified non-anonymous email auth on creation."
+    },
+    "/products/{productId}": {
+      "schema": { "$ref": "#/entities/Product" },
+      "description": "Optical products catalog."
+    },
+    "/categories/{categoryId}": {
+      "schema": { "$ref": "#/entities/Category" },
+      "description": "Product categories."
+    },
+    "/brands/{brandId}": {
+      "schema": { "$ref": "#/entities/Brand" },
+      "description": "Product brands."
+    },
+    "/banners/{bannerId}": {
+      "schema": { "$ref": "#/entities/Banner" },
+      "description": "Promotional store banners."
+    },
+    "/coupons/{couponId}": {
+      "schema": { "$ref": "#/entities/Coupon" },
+      "description": "Discount coupons."
+    },
+    "/consults/{consultId}": {
+      "schema": { "$ref": "#/entities/Consult" },
+      "description": "Optician consultation tickets."
+    },
+    "/notifications/{notificationId}": {
+      "schema": { "$ref": "#/entities/Notification" },
+      "description": "Store & order notifications."
+    },
+    "/store_config/{configId}": {
+      "schema": { "$ref": "#/entities/StoreConfig" },
+      "description": "Live store settings, appearance, texts, home sections, lens options, and consult topics."
+    },
+    "/admins/{userId}": {
+      "schema": { "$ref": "#/entities/AdminRecord" },
+      "description": "Trusted admin and staff RBAC documents."
+    }
+  }
+}

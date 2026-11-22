@@ -829,6 +829,7 @@ export const STORE_SETTINGS_SEED: StoreSettings = {
   bankakBranchAr: 'بنك الخرطوم — فرع العمارات (تطبيق بنكك)',
   otherBankDetailsAr: 'بنك فيصل الإسلامي (فوري): حساب رقم 8841205 — باسم فيجن بلس للبصريات',
   minimumOrderSdg: 5000,
+  requireEmailVerification: true,
   maintenanceMode: false,
   maintenanceMessageAr: 'نقوم حالياً بتحديث تشكيلة العدسات والإطارات. سنعود للعمل خلال دقائق.',
   maintenanceMessageEn: 'We are updating our eyewear catalog and will be back online shortly.',

@@ -1,6 +1,7 @@
 import React from 'react';
 import { Phone, MessageCircle, Mail, MapPin, Clock, ExternalLink } from 'lucide-react';
 import { useStore } from '../store/StoreContext';
+import { PWAInstallButton } from './PWAInstallButton';
 
 const SocialBrandIcon: React.FC<{ platform: string }> = ({ platform }) => {
   switch (platform) {
@@ -213,6 +214,9 @@ export const Footer: React.FC = () => {
             {t('من نحن والسياسات', 'About & Policies')}
           </button>
         </nav>
+
+        {/* PWA Install Prompt Button (auto-hidden when standalone) */}
+        <PWAInstallButton variant="footer" />
 
         {/* 5. Copyright line */}
         <div className="text-xs text-slate-300/90 pt-2 border-t border-white/10 w-full max-w-3xl">

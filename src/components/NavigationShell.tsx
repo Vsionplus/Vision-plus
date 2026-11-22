@@ -16,10 +16,15 @@ import {
   Heart,
   MessageCircle,
   Wrench,
+  RefreshCw,
+  LogIn,
+  UserPlus,
+  LogOut,
 } from 'lucide-react';
 import { useStore } from '../store/StoreContext';
 import { formatShortDate } from '../utils/format';
 import { Footer } from './Footer';
+import { usePWAUpdate } from '../hooks/usePWA';
 
 export const NavigationShell: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const {
@@ -31,7 +36,9 @@ export const NavigationShell: React.FC<{ children: React.ReactNode }> = ({ child
     setActiveTab,
     openCatalog,
     user,
-    switchRole,
+    isGuest,
+    openAuthModal,
+    logout,
     settings,
     appearance,
     appTexts,
@@ -49,6 +56,7 @@ export const NavigationShell: React.FC<{ children: React.ReactNode }> = ({ child
   const [headerSearch, setHeaderSearch] = useState('');
   const [cartBounce, setCartBounce] = useState(false);
   const prevCartCountRef = useRef(cartCount);
+  const { needRefresh, reloadApp, dismissUpdate } = usePWAUpdate();
 
   useEffect(() => {
     if (cartCount > prevCartCountRef.current) {
@@ -185,34 +193,37 @@ export const NavigationShell: React.FC<{ children: React.ReactNode }> = ({ child
           <div className="bg-slate-50 dark:bg-[#0F1624] border-t border-slate-200/70 dark:border-slate-800/80">
             <div className="max-w-7xl mx-auto px-3 sm:px-6 py-1.5 flex items-center justify-between gap-2 overflow-x-auto text-xs">
               <div className="flex items-center gap-2 shrink-0">
-                <button
-                  type="button"
-                  onClick={() => switchRole(user.role === 'admin' ? 'customer' : 'admin')}
-                  style={
-                    user.role === 'admin'
-                      ? { backgroundColor: appearance.secondaryColor, color: appearance.primaryColor }
-                      : undefined
-                  }
-                  className={`px-2.5 py-1 rounded-lg font-semibold flex items-center gap-1.5 transition-colors whitespace-nowrap ${
-                    user.role === 'admin'
-                      ? ''
-                      : 'bg-slate-200/80 dark:bg-slate-800 text-[#11223E] dark:text-slate-200 hover:bg-slate-300 dark:hover:bg-slate-700'
-                  }`}
-                >
-                  <ShieldCheck className="w-3.5 h-3.5" />
-                  {user.role === 'admin'
-                    ? t('وضع المالك (Admin) — عودة للمتجر', 'Admin Active — Back to Store')
-                    : t('دخول لوحة تحكم المالك', 'Open Admin Panel')}
-                </button>
-
-                {isAdminOrStaff && activeTab !== 'admin' && (
+                {isAdminOrStaff && (
                   <button
                     type="button"
-                    onClick={() => setActiveTab('admin')}
-                    style={{ backgroundColor: appearance.primaryColor }}
-                    className="px-2.5 py-1 rounded-lg text-white font-semibold whitespace-nowrap"
+                    onClick={() => setActiveTab(activeTab === 'admin' ? 'home' : 'admin')}
+                    style={{ backgroundColor: appearance.secondaryColor, color: appearance.primaryColor }}
+                    className="px-2.5 py-1 rounded-lg font-bold flex items-center gap-1.5 whitespace-nowrap"
                   >
-                    {t('فتح لوحة الإدارة', 'Open Panel')}
+                    <ShieldCheck className="w-3.5 h-3.5" />
+                    {activeTab === 'admin'
+                      ? t('العودة إلى المتجر', 'Back to Store')
+                      : t('لوحة تحكم الإدارة', 'Admin Panel')}
+                  </button>
+                )}
+
+                {isGuest ? (
+                  <button
+                    type="button"
+                    onClick={() => openAuthModal('login', false)}
+                    className="px-2.5 py-1 rounded-lg bg-[#11223E] text-white font-semibold flex items-center gap-1.5 whitespace-nowrap"
+                  >
+                    <LogIn className="w-3.5 h-3.5" />
+                    {t('تسجيل الدخول', 'Sign In')}
+                  </button>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={() => void logout()}
+                    className="px-2.5 py-1 rounded-lg bg-slate-200/80 dark:bg-slate-800 text-[#11223E] dark:text-slate-200 font-semibold flex items-center gap-1.5 whitespace-nowrap"
+                  >
+                    <LogOut className="w-3.5 h-3.5" />
+                    {t('تسجيل الخروج', 'Sign Out')}
                   </button>
                 )}
               </div>
@@ -262,6 +273,37 @@ export const NavigationShell: React.FC<{ children: React.ReactNode }> = ({ child
             </div>
           </div>
         </header>
+
+        {/* Gentle Guest Banner */}
+        {isGuest && activeTab !== 'admin' && !showMaintenanceWall && (
+          <div className="bg-amber-50 dark:bg-amber-950/30 border-b border-amber-200 dark:border-amber-900/50">
+            <div className="max-w-7xl mx-auto px-3 sm:px-6 py-2 flex flex-wrap items-center justify-between gap-2 text-xs">
+              <span className="font-bold text-[#11223E] dark:text-amber-200">
+                {t('أنت داخل كضيف، سجّل دخولك لإتمام الشراء', 'You are browsing as a guest, sign in to complete purchase')}
+              </span>
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => openAuthModal('login', false)}
+                  style={{ backgroundColor: appearance.primaryColor }}
+                  className="min-h-[36px] px-3 py-1 rounded-lg text-white font-bold inline-flex items-center gap-1"
+                >
+                  <LogIn className="w-3.5 h-3.5" />
+                  {t('تسجيل الدخول', 'Sign In')}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => openAuthModal('register', false)}
+                  style={{ backgroundColor: appearance.secondaryColor, color: appearance.primaryColor }}
+                  className="min-h-[36px] px-3 py-1 rounded-lg font-extrabold inline-flex items-center gap-1"
+                >
+                  <UserPlus className="w-3.5 h-3.5" />
+                  {t('إنشاء حساب جديد', 'Register')}
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
 
         {/* Scrollable Main Content with safe bottom clearance for fixed mobile bar */}
         <main className="flex-1 pb-[calc(64px+env(safe-area-inset-bottom))] md:pb-12">
@@ -460,6 +502,39 @@ export const NavigationShell: React.FC<{ children: React.ReactNode }> = ({ child
               {t('عرض السلة', 'View Cart')}
             </button>
           )}
+        </div>
+      )}
+
+      {/* Service Worker "New Version Available" Toast with Reload Button */}
+      {needRefresh && (
+        <div
+          role="status"
+          aria-live="polite"
+          className="fixed bottom-[calc(80px+env(safe-area-inset-bottom))] md:bottom-6 end-4 z-[56] max-w-sm rounded-2xl bg-[#11223E] text-white border border-[#D9B24C]/40 shadow-2xl px-4 py-3 flex items-center gap-3"
+        >
+          <RefreshCw className="w-4 h-4 shrink-0 text-[#D9B24C]" />
+          <span className="text-xs sm:text-sm font-bold leading-snug">
+            {t('يتوفر تحديث جديد للتطبيق', 'New version available')}
+          </span>
+          <button
+            type="button"
+            onClick={() => void reloadApp()}
+            style={{
+              backgroundColor: appearance.secondaryColor,
+              color: appearance.primaryColor,
+            }}
+            className="px-3 py-1.5 rounded-lg text-xs font-extrabold whitespace-nowrap shrink-0 hover:opacity-90 transition-opacity"
+          >
+            {t('إعادة التحميل', 'Reload')}
+          </button>
+          <button
+            type="button"
+            onClick={dismissUpdate}
+            aria-label={t('إغلاق', 'Dismiss')}
+            className="p-1 rounded-lg text-slate-300 hover:text-white hover:bg-white/10 shrink-0"
+          >
+            <X className="w-4 h-4" />
+          </button>
         </div>
       )}
     </>
