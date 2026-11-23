@@ -29,6 +29,11 @@ service cloud.firestore {
       return isSignedIn() && request.auth.uid == uid;
     }
 
+    function isNonAnonymousOwner(uid) {
+      return isOwner(uid)
+        && request.auth.token.firebase.sign_in_provider != 'anonymous';
+    }
+
     function isEmailVerified() {
       return isSignedIn()
         && request.auth.token.firebase.sign_in_provider != 'anonymous'
@@ -101,6 +106,97 @@ service cloud.firestore {
         && data.updatedAtServer is timestamp;
     }
 
+    function isValidSavedAddress(data) {
+      return data.keys().hasAll([
+          'id',
+          'uid',
+          'label',
+          'stateId',
+          'city',
+          'area',
+          'details',
+          'phone',
+          'updatedAtServer'
+        ])
+        && data.keys().hasOnly([
+          'id',
+          'uid',
+          'label',
+          'recipientName',
+          'stateId',
+          'city',
+          'area',
+          'details',
+          'phone',
+          'mapUrl',
+          'isDefault',
+          'createdAtServer',
+          'updatedAtServer'
+        ])
+        && isValidId(data.id)
+        && isValidId(data.uid)
+        && data.uid == request.auth.uid
+        && data.label is string && data.label.size() >= 1 && data.label.size() <= 80
+        && (!('recipientName' in data) || (data.recipientName is string && data.recipientName.size() <= 120))
+        && data.stateId is string && data.stateId.size() >= 1 && data.stateId.size() <= 64
+        && data.city is string && data.city.size() >= 1 && data.city.size() <= 80
+        && data.area is string && data.area.size() >= 1 && data.area.size() <= 120
+        && data.details is string && data.details.size() >= 1 && data.details.size() <= 400
+        && data.phone is string && data.phone.size() >= 6 && data.phone.size() <= 32
+        && (!('mapUrl' in data) || (data.mapUrl is string && data.mapUrl.size() <= 500))
+        && (!('isDefault' in data) || data.isDefault is bool)
+        && (!('createdAtServer' in data) || data.createdAtServer is timestamp)
+        && data.updatedAtServer is timestamp;
+    }
+
+    function isValidSavedPrescription(data) {
+      return data.keys().hasAll([
+          'id',
+          'uid',
+          'label',
+          'rightEye',
+          'leftEye',
+          'pd',
+          'savedAt',
+          'updatedAtServer'
+        ])
+        && data.keys().hasOnly([
+          'id',
+          'uid',
+          'label',
+          'kind',
+          'rightEye',
+          'leftEye',
+          'pd',
+          'pdMode',
+          'pdRight',
+          'pdLeft',
+          'contactRight',
+          'contactLeft',
+          'notes',
+          'savedAt',
+          'createdAtServer',
+          'updatedAtServer'
+        ])
+        && isValidId(data.id)
+        && isValidId(data.uid)
+        && data.uid == request.auth.uid
+        && data.label is string && data.label.size() >= 1 && data.label.size() <= 120
+        && (!('kind' in data) || (data.kind is string && data.kind in ['eyeglasses', 'contact_lenses']))
+        && data.rightEye is map
+        && data.leftEye is map
+        && data.pd is string && data.pd.size() <= 32
+        && (!('pdMode' in data) || (data.pdMode is string && data.pdMode in ['single', 'dual']))
+        && (!('pdRight' in data) || (data.pdRight is string && data.pdRight.size() <= 32))
+        && (!('pdLeft' in data) || (data.pdLeft is string && data.pdLeft.size() <= 32))
+        && (!('contactRight' in data) || data.contactRight is map)
+        && (!('contactLeft' in data) || data.contactLeft is map)
+        && (!('notes' in data) || (data.notes is string && data.notes.size() <= 500))
+        && data.savedAt is string && data.savedAt.size() <= 64
+        && (!('createdAtServer' in data) || data.createdAtServer is timestamp)
+        && data.updatedAtServer is timestamp;
+    }
+
     function isValidOrder(data) {
       return data.keys().hasAll([
           'id',
@@ -132,7 +228,10 @@ service cloud.firestore {
           'city',
           'area',
           'addressDetails',
+          'address',
           'items',
+          'itemsSubtotalSdg',
+          'lensOptionsTotalSdg',
           'subtotalSdg',
           'discountSdg',
           'deliveryFeeSdg',
@@ -155,7 +254,10 @@ service cloud.firestore {
         && data.city is string && data.city.size() >= 1 && data.city.size() <= 80
         && data.area is string && data.area.size() >= 1 && data.area.size() <= 120
         && data.addressDetails is string && data.addressDetails.size() >= 1 && data.addressDetails.size() <= 400
+        && (!('address' in data) || data.address is map)
         && data.items is list && data.items.size() >= 1 && data.items.size() <= 50 && data.items[0] is map
+        && (!('itemsSubtotalSdg' in data) || (data.itemsSubtotalSdg is number && data.itemsSubtotalSdg >= 0))
+        && (!('lensOptionsTotalSdg' in data) || (data.lensOptionsTotalSdg is number && data.lensOptionsTotalSdg >= 0))
         && data.subtotalSdg is number && data.subtotalSdg >= 0
         && data.discountSdg is number && data.discountSdg >= 0
         && data.deliveryFeeSdg is number && data.deliveryFeeSdg >= 0
@@ -430,6 +532,71 @@ service cloud.firestore {
           )
         );
       allow delete: if isAdmin() && isValidId(userId);
+
+      match /addresses/{addressId} {
+        allow get: if isSignedIn() && isValidId(addressId) && (isNonAnonymousOwner(userId) || isAdmin());
+        allow list: if isSignedIn() && (isNonAnonymousOwner(userId) || isBootstrappedAdmin());
+        allow create: if isNonAnonymousOwner(userId)
+          && isValidId(addressId)
+          && isValidSavedAddress(incoming())
+          && incoming().id == addressId
+          && incoming().updatedAtServer == request.time
+          && (!('createdAtServer' in incoming()) || incoming().createdAtServer == request.time);
+        allow update: if isNonAnonymousOwner(userId)
+          && isValidId(addressId)
+          && isValidSavedAddress(incoming())
+          && incoming().id == existing().id
+          && incoming().uid == existing().uid
+          && (!('createdAtServer' in existing()) || incoming().createdAtServer == existing().createdAtServer)
+          && incoming().updatedAtServer == request.time
+          && incoming().diff(existing()).affectedKeys().hasOnly([
+            'label',
+            'recipientName',
+            'stateId',
+            'city',
+            'area',
+            'details',
+            'phone',
+            'mapUrl',
+            'isDefault',
+            'updatedAtServer'
+          ]);
+        allow delete: if isNonAnonymousOwner(userId) && isValidId(addressId);
+      }
+
+      match /prescriptions/{rxId} {
+        allow get: if isSignedIn() && isValidId(rxId) && (isNonAnonymousOwner(userId) || isAdmin());
+        allow list: if isSignedIn() && (isNonAnonymousOwner(userId) || isBootstrappedAdmin());
+        allow create: if isNonAnonymousOwner(userId)
+          && isValidId(rxId)
+          && isValidSavedPrescription(incoming())
+          && incoming().id == rxId
+          && incoming().updatedAtServer == request.time
+          && (!('createdAtServer' in incoming()) || incoming().createdAtServer == request.time);
+        allow update: if isNonAnonymousOwner(userId)
+          && isValidId(rxId)
+          && isValidSavedPrescription(incoming())
+          && incoming().id == existing().id
+          && incoming().uid == existing().uid
+          && incoming().savedAt == existing().savedAt
+          && (!('createdAtServer' in existing()) || incoming().createdAtServer == existing().createdAtServer)
+          && incoming().updatedAtServer == request.time
+          && incoming().diff(existing()).affectedKeys().hasOnly([
+            'label',
+            'kind',
+            'rightEye',
+            'leftEye',
+            'pd',
+            'pdMode',
+            'pdRight',
+            'pdLeft',
+            'contactRight',
+            'contactLeft',
+            'notes',
+            'updatedAtServer'
+          ]);
+        allow delete: if isNonAnonymousOwner(userId) && isValidId(rxId);
+      }
     }
 
     match /orders/{orderId} {

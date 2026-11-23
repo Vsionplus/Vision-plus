@@ -1,12 +1,57 @@
 import { initializeApp } from 'firebase/app';
 import { getAuth } from 'firebase/auth';
 import { doc, getDocFromServer, getFirestore } from 'firebase/firestore';
+import { deleteObject, getDownloadURL, getStorage, ref, uploadBytesResumable } from 'firebase/storage';
 import firebaseConfig from '../../firebase-applet-config.json';
 import { Locale } from '../types';
 
 const app = initializeApp(firebaseConfig);
 export const db = getFirestore(app, firebaseConfig.firestoreDatabaseId);
 export const auth = getAuth(app);
+export const storage = getStorage(app);
+
+export async function uploadPrescriptionImage(
+  uid: string,
+  blob: Blob,
+  fileName: string,
+  onProgress?: (pct: number) => void
+): Promise<{ url: string; path: string }> {
+  const safeName = fileName.replace(/[^a-zA-Z0-9._-]/g, '_').slice(0, 64) || 'prescription.jpg';
+  const storagePath = `prescriptions/${uid}/${Date.now()}_${safeName.replace(/\.[^.]+$/, '')}.jpg`;
+  const storageRef = ref(storage, storagePath);
+
+  return new Promise((resolve, reject) => {
+    const task = uploadBytesResumable(storageRef, blob, {
+      contentType: 'image/jpeg',
+    });
+    task.on(
+      'state_changed',
+      (snapshot) => {
+        if (snapshot.totalBytes > 0 && onProgress) {
+          onProgress(Math.round((snapshot.bytesTransferred / snapshot.totalBytes) * 100));
+        }
+      },
+      (error) => reject(error),
+      async () => {
+        try {
+          const url = await getDownloadURL(task.snapshot.ref);
+          resolve({ url, path: storagePath });
+        } catch (err) {
+          reject(err);
+        }
+      }
+    );
+  });
+}
+
+export async function deletePrescriptionImage(storagePath?: string): Promise<void> {
+  if (!storagePath) return;
+  try {
+    await deleteObject(ref(storage, storagePath));
+  } catch {
+    // Ignore if already deleted or permission unavailable
+  }
+}
 
 export async function testConnection(): Promise<void> {
   try {

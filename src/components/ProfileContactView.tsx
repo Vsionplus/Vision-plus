@@ -18,6 +18,13 @@ import {
 } from 'lucide-react';
 import { useStore } from '../store/StoreContext';
 import { formatSdg, isValidSudanPhone, normalizeSudanPhone } from '../utils/format';
+import {
+  AXIS_OPTIONS,
+  CYL_OPTIONS,
+  PD_SINGLE_OPTIONS,
+  SPH_OPTIONS,
+  isNonZeroCyl,
+} from '../utils/prescription';
 import { PWAInstallButton } from './PWAInstallButton';
 
 export const ProfileView: React.FC = () => {
@@ -34,6 +41,7 @@ export const ProfileView: React.FC = () => {
     appearance,
     updateProfile,
     saveAddress,
+    setDefaultAddress,
     deleteAddress,
     savePrescription,
     deletePrescription,
@@ -52,10 +60,14 @@ export const ProfileView: React.FC = () => {
   }, [user.uid, user.name, user.phone, user.email]);
 
   const [addrLabel, setAddrLabel] = useState('');
+  const [addrRecipient, setAddrRecipient] = useState(user.name || '');
+  const [addrPhone, setAddrPhone] = useState(user.phone || '');
   const [addrState, setAddrState] = useState('khartoum');
   const [addrCity, setAddrCity] = useState('');
   const [addrArea, setAddrArea] = useState('');
   const [addrDetails, setAddrDetails] = useState('');
+  const [addrMapUrl, setAddrMapUrl] = useState('');
+  const [addrDefault, setAddrDefault] = useState(false);
 
   const [rxLabel, setRxLabel] = useState('');
   const [odSph, setOdSph] = useState('-1.00');
@@ -69,7 +81,7 @@ export const ProfileView: React.FC = () => {
   const handleSaveProfile = (e: React.FormEvent) => {
     e.preventDefault();
     if (!isValidSudanPhone(phone)) {
-      showToast(t('يرجى إدخال رقم سوداني بصيغة +249', 'Enter a valid +249 phone number'));
+      showToast(t('يرجى إدخال رقم سوداني بصيغة +249 أو 09', 'Enter a valid Sudan phone number'));
       return;
     }
     updateProfile(name.trim(), normalizeSudanPhone(phone), email.trim());
@@ -78,25 +90,40 @@ export const ProfileView: React.FC = () => {
   const handleAddAddress = (e: React.FormEvent) => {
     e.preventDefault();
     if (!addrLabel.trim() || !addrCity.trim()) return;
+    const phoneToUse = addrPhone.trim() || user.phone;
+    if (!isValidSudanPhone(phoneToUse)) {
+      showToast(t('يرجى إدخال رقم سوداني صحيح للعنوان', 'Enter a valid Sudan phone number'));
+      return;
+    }
     saveAddress({
       label: addrLabel.trim(),
+      recipientName: addrRecipient.trim() || user.name,
       stateId: addrState,
       city: addrCity.trim(),
       area: addrArea.trim(),
       details: addrDetails.trim(),
-      phone: user.phone,
+      phone: normalizeSudanPhone(phoneToUse),
+      mapUrl: addrMapUrl.trim() || undefined,
+      isDefault: addrDefault,
     });
     setAddrLabel('');
     setAddrCity('');
     setAddrArea('');
     setAddrDetails('');
+    setAddrMapUrl('');
+    setAddrDefault(false);
   };
 
   const handleAddRx = (e: React.FormEvent) => {
     e.preventDefault();
+    if (isGuest) {
+      openAuthModal('login', false);
+      return;
+    }
     if (!rxLabel.trim()) return;
     savePrescription({
       label: rxLabel.trim(),
+      kind: 'eyeglasses',
       rightEye: { sph: odSph, cyl: odCyl, axis: odAxis },
       leftEye: { sph: osSph, cyl: osCyl, axis: osAxis },
       pd,
@@ -153,8 +180,8 @@ export const ProfileView: React.FC = () => {
             </h2>
             <p className="text-xs text-stone-600 dark:text-zinc-400">
               {t(
-                'سجّل دخولك أو أنشئ حساباً جديداً الآن لحفظ سلتك ومفضلتك وإتمام الطلبات.',
-                'Sign in or register to save your cart, favorites, and complete orders.'
+                'سجّل دخولك أو أنشئ حساباً جديداً الآن لحفظ سلتك ومقاساتك وعناوينك وإتمام الطلبات.',
+                'Sign in or register to save your cart, prescriptions, addresses, and complete orders.'
               )}
             </p>
           </div>
@@ -219,17 +246,17 @@ export const ProfileView: React.FC = () => {
           <h2 className="text-base font-bold">{t('البيانات الشخصية', 'Account Details')}</h2>
           <div>
             <label className="block font-semibold mb-1">{t('الاسم', 'Name')}</label>
-            <input value={name} onChange={(e) => setName(e.target.value)} className="w-full px-3 py-2 rounded-lg border border-stone-200 dark:border-zinc-700 bg-stone-50 dark:bg-zinc-900" />
+            <input value={name} onChange={(e) => setName(e.target.value)} className="w-full min-h-[44px] px-3 py-2 rounded-lg border border-stone-200 dark:border-zinc-700 bg-stone-50 dark:bg-zinc-900 text-base" />
           </div>
           <div>
             <label className="block font-semibold mb-1">{t('الهاتف (+249)', 'Phone (+249)')}</label>
-            <input dir="ltr" value={phone} onChange={(e) => setPhone(e.target.value)} className="w-full px-3 py-2 rounded-lg border border-stone-200 dark:border-zinc-700 bg-stone-50 dark:bg-zinc-900 font-mono-num" />
+            <input dir="ltr" value={phone} onChange={(e) => setPhone(e.target.value)} className="w-full min-h-[44px] px-3 py-2 rounded-lg border border-stone-200 dark:border-zinc-700 bg-stone-50 dark:bg-zinc-900 font-mono-num text-base" />
           </div>
           <div>
             <label className="block font-semibold mb-1">{t('البريد الإلكتروني', 'Email')}</label>
-            <input dir="ltr" type="email" value={email} onChange={(e) => setEmail(e.target.value)} className="w-full px-3 py-2 rounded-lg border border-stone-200 dark:border-zinc-700 bg-stone-50 dark:bg-zinc-900" />
+            <input dir="ltr" type="email" value={email} onChange={(e) => setEmail(e.target.value)} className="w-full min-h-[44px] px-3 py-2 rounded-lg border border-stone-200 dark:border-zinc-700 bg-stone-50 dark:bg-zinc-900 text-base" />
           </div>
-          <button type="submit" style={{ backgroundColor: appearance.primaryColor }} className="w-full py-2.5 rounded-lg text-white font-bold">
+          <button type="submit" style={{ backgroundColor: appearance.primaryColor }} className="w-full min-h-[44px] py-2.5 rounded-lg text-white font-bold">
             {t('حفظ التعديلات', 'Save Changes')}
           </button>
         </form>
@@ -241,12 +268,29 @@ export const ProfileView: React.FC = () => {
               const st = settings.deliveryFees.find((s) => s.id === a.stateId);
               return (
                 <div key={a.id} className="p-3 rounded-lg bg-stone-50 dark:bg-zinc-900 border border-stone-200 dark:border-zinc-800 flex justify-between gap-2">
-                  <div>
-                    <div className="font-bold">{a.label}</div>
+                  <div className="space-y-0.5">
+                    <div className="font-bold flex items-center gap-1.5">
+                      <span>{a.recipientName || user.name} ({a.label})</span>
+                      {a.isDefault && (
+                        <span className="px-1.5 py-0.5 rounded bg-[#11223E] text-white text-[10px]">
+                          {t('افتراضي', 'Default')}
+                        </span>
+                      )}
+                    </div>
+                    <div className="font-mono-num text-[11px] text-stone-500" dir="ltr">{a.phone}</div>
                     <div className="text-stone-500 dark:text-zinc-400">
                       {locale === 'ar' ? st?.nameAr : st?.nameEn} — {a.city}, {a.area}
                     </div>
                     <div className="text-stone-500 dark:text-zinc-400">{a.details}</div>
+                    {!a.isDefault && (
+                      <button
+                        type="button"
+                        onClick={() => setDefaultAddress(a.id)}
+                        className="text-[11px] font-bold text-[#B38B2D] hover:underline pt-1"
+                      >
+                        {t('تعيين كافتراضي', 'Set Default')}
+                      </button>
+                    )}
                   </div>
                   <button type="button" onClick={() => deleteAddress(a.id)} className="text-stone-400 hover:text-rose-600 self-start">
                     <Trash2 className="w-4 h-4" />
@@ -257,8 +301,12 @@ export const ProfileView: React.FC = () => {
           </div>
 
           <form onSubmit={handleAddAddress} className="space-y-2 pt-3 border-t border-stone-100 dark:border-zinc-800">
-            <input required value={addrLabel} onChange={(e) => setAddrLabel(e.target.value)} placeholder={t('تسمية العنوان (المنزل / العمل)', 'Label (Home / Office)')} className="w-full px-3 py-2 rounded-lg border border-stone-200 dark:border-zinc-700 bg-stone-50 dark:bg-zinc-900" />
-            <select value={addrState} onChange={(e) => setAddrState(e.target.value)} className="w-full px-3 py-2 rounded-lg border border-stone-200 dark:border-zinc-700 bg-stone-50 dark:bg-zinc-900">
+            <div className="grid grid-cols-2 gap-2">
+              <input required value={addrRecipient} onChange={(e) => setAddrRecipient(e.target.value)} placeholder={t('اسم المستلم', 'Recipient')} className="px-3 py-2 rounded-lg border border-stone-200 dark:border-zinc-700 bg-stone-50 dark:bg-zinc-900 text-base" />
+              <input required value={addrLabel} onChange={(e) => setAddrLabel(e.target.value)} placeholder={t('التسمية (المنزل)', 'Label')} className="px-3 py-2 rounded-lg border border-stone-200 dark:border-zinc-700 bg-stone-50 dark:bg-zinc-900 text-base" />
+            </div>
+            <input required dir="ltr" value={addrPhone} onChange={(e) => setAddrPhone(e.target.value)} placeholder="0912345678 / +249..." className="w-full px-3 py-2 rounded-lg border border-stone-200 dark:border-zinc-700 bg-stone-50 dark:bg-zinc-900 font-mono-num text-base" />
+            <select value={addrState} onChange={(e) => setAddrState(e.target.value)} className="w-full px-3 py-2 rounded-lg border border-stone-200 dark:border-zinc-700 bg-stone-50 dark:bg-zinc-900 text-base">
               {settings.deliveryFees.map((s) => (
                 <option key={s.id} value={s.id}>
                   {locale === 'ar' ? s.nameAr : s.nameEn} ({formatSdg(s.feeSdg)})
@@ -266,11 +314,16 @@ export const ProfileView: React.FC = () => {
               ))}
             </select>
             <div className="grid grid-cols-2 gap-2">
-              <input required value={addrCity} onChange={(e) => setAddrCity(e.target.value)} placeholder={t('المدينة', 'City')} className="px-3 py-2 rounded-lg border border-stone-200 dark:border-zinc-700 bg-stone-50 dark:bg-zinc-900" />
-              <input required value={addrArea} onChange={(e) => setAddrArea(e.target.value)} placeholder={t('الحي', 'Area')} className="px-3 py-2 rounded-lg border border-stone-200 dark:border-zinc-700 bg-stone-50 dark:bg-zinc-900" />
+              <input required value={addrCity} onChange={(e) => setAddrCity(e.target.value)} placeholder={t('المدينة', 'City')} className="px-3 py-2 rounded-lg border border-stone-200 dark:border-zinc-700 bg-stone-50 dark:bg-zinc-900 text-base" />
+              <input required value={addrArea} onChange={(e) => setAddrArea(e.target.value)} placeholder={t('الحي', 'Area')} className="px-3 py-2 rounded-lg border border-stone-200 dark:border-zinc-700 bg-stone-50 dark:bg-zinc-900 text-base" />
             </div>
-            <input required value={addrDetails} onChange={(e) => setAddrDetails(e.target.value)} placeholder={t('التفاصيل وأقرب معلم', 'Details / Landmark')} className="w-full px-3 py-2 rounded-lg border border-stone-200 dark:border-zinc-700 bg-stone-50 dark:bg-zinc-900" />
-            <button type="submit" className="w-full py-2 rounded-lg bg-stone-900 dark:bg-stone-100 text-white dark:text-stone-900 font-bold inline-flex items-center justify-center gap-1">
+            <input required value={addrDetails} onChange={(e) => setAddrDetails(e.target.value)} placeholder={t('الشارع وأقرب معلم', 'Details / Landmark')} className="w-full px-3 py-2 rounded-lg border border-stone-200 dark:border-zinc-700 bg-stone-50 dark:bg-zinc-900 text-base" />
+            <input dir="ltr" type="url" value={addrMapUrl} onChange={(e) => setAddrMapUrl(e.target.value)} placeholder={t('رابط الخريطة (اختياري)', 'Map URL (optional)')} className="w-full px-3 py-2 rounded-lg border border-stone-200 dark:border-zinc-700 bg-stone-50 dark:bg-zinc-900 text-base" />
+            <label className="flex items-center gap-2 cursor-pointer font-semibold">
+              <input type="checkbox" checked={addrDefault} onChange={(e) => setAddrDefault(e.target.checked)} className="accent-[#D9B24C]" />
+              <span>{t('اجعله العنوان الافتراضي', 'Set as default')}</span>
+            </label>
+            <button type="submit" className="w-full min-h-[44px] py-2 rounded-lg bg-stone-900 dark:bg-stone-100 text-white dark:text-stone-900 font-bold inline-flex items-center justify-center gap-1">
               <Plus className="w-4 h-4" />
               {t('إضافة عنوان', 'Add Address')}
             </button>
@@ -298,29 +351,58 @@ export const ProfileView: React.FC = () => {
             ))}
           </div>
 
-          <form onSubmit={handleAddRx} className="space-y-2 pt-3 border-t border-stone-100 dark:border-zinc-800">
-            <input required value={rxLabel} onChange={(e) => setRxLabel(e.target.value)} placeholder={t('اسم الوصفة (مثلاً: كشف 2026)', 'Rx Label')} className="w-full px-3 py-2 rounded-lg border border-stone-200 dark:border-zinc-700 bg-stone-50 dark:bg-zinc-900" />
-            <div className="grid grid-cols-4 gap-1.5 items-center font-mono-num">
-              <span className="font-bold">OD</span>
-              <input value={odSph} onChange={(e) => setOdSph(e.target.value)} placeholder="SPH" className="p-1.5 rounded border border-stone-200 dark:border-zinc-700 bg-stone-50 dark:bg-zinc-900" />
-              <input value={odCyl} onChange={(e) => setOdCyl(e.target.value)} placeholder="CYL" className="p-1.5 rounded border border-stone-200 dark:border-zinc-700 bg-stone-50 dark:bg-zinc-900" />
-              <input value={odAxis} onChange={(e) => setOdAxis(e.target.value)} placeholder="AXIS" className="p-1.5 rounded border border-stone-200 dark:border-zinc-700 bg-stone-50 dark:bg-zinc-900" />
+          {isGuest ? (
+            <div className="p-3 rounded-lg bg-amber-50 dark:bg-amber-950/25 border border-amber-200 dark:border-amber-900/50 space-y-2">
+              <p className="font-bold">{t('سجّل دخولك لحفظ المقاس', 'Sign in to save prescription')}</p>
+              <button
+                type="button"
+                onClick={() => openAuthModal('login', false)}
+                style={{ backgroundColor: appearance.primaryColor }}
+                className="min-h-[40px] px-3 rounded-lg text-white font-bold inline-flex items-center gap-1"
+              >
+                <LogIn className="w-3.5 h-3.5" />
+                {t('تسجيل الدخول', 'Sign In')}
+              </button>
             </div>
-            <div className="grid grid-cols-4 gap-1.5 items-center font-mono-num">
-              <span className="font-bold">OS</span>
-              <input value={osSph} onChange={(e) => setOsSph(e.target.value)} placeholder="SPH" className="p-1.5 rounded border border-stone-200 dark:border-zinc-700 bg-stone-50 dark:bg-zinc-900" />
-              <input value={osCyl} onChange={(e) => setOsCyl(e.target.value)} placeholder="CYL" className="p-1.5 rounded border border-stone-200 dark:border-zinc-700 bg-stone-50 dark:bg-zinc-900" />
-              <input value={osAxis} onChange={(e) => setOsAxis(e.target.value)} placeholder="AXIS" className="p-1.5 rounded border border-stone-200 dark:border-zinc-700 bg-stone-50 dark:bg-zinc-900" />
-            </div>
-            <div className="flex items-center gap-2">
-              <span className="font-bold">PD (mm)</span>
-              <input value={pd} onChange={(e) => setPd(e.target.value)} className="w-20 p-1.5 rounded border border-stone-200 dark:border-zinc-700 bg-stone-50 dark:bg-zinc-900 font-mono-num" />
-            </div>
-            <button type="submit" className="w-full py-2 rounded-lg bg-stone-900 dark:bg-stone-100 text-white dark:text-stone-900 font-bold inline-flex items-center justify-center gap-1">
-              <Plus className="w-4 h-4" />
-              {t('حفظ وصفة جديدة', 'Save New Rx')}
-            </button>
-          </form>
+          ) : (
+            <form onSubmit={handleAddRx} className="space-y-2 pt-3 border-t border-stone-100 dark:border-zinc-800">
+              <input required value={rxLabel} onChange={(e) => setRxLabel(e.target.value)} placeholder={t('اسم الوصفة (مثلاً: كشف 2026)', 'Rx Label')} className="w-full px-3 py-2 rounded-lg border border-stone-200 dark:border-zinc-700 bg-stone-50 dark:bg-zinc-900 text-base" />
+              <div className="grid grid-cols-4 gap-1.5 items-center font-mono-num">
+                <span className="font-bold">OD</span>
+                <select value={odSph} onChange={(e) => setOdSph(e.target.value)} className="p-1.5 rounded border border-stone-200 dark:border-zinc-700 bg-stone-50 dark:bg-zinc-900 text-base">
+                  {SPH_OPTIONS.map((o) => <option key={o} value={o}>{o}</option>)}
+                </select>
+                <select value={odCyl} onChange={(e) => setOdCyl(e.target.value)} className="p-1.5 rounded border border-stone-200 dark:border-zinc-700 bg-stone-50 dark:bg-zinc-900 text-base">
+                  {CYL_OPTIONS.map((o) => <option key={o} value={o}>{o}</option>)}
+                </select>
+                <select disabled={!isNonZeroCyl(odCyl)} value={odAxis} onChange={(e) => setOdAxis(e.target.value)} className="p-1.5 rounded border border-stone-200 dark:border-zinc-700 bg-stone-50 dark:bg-zinc-900 text-base disabled:opacity-45">
+                  {AXIS_OPTIONS.map((o) => <option key={o} value={o}>{o}°</option>)}
+                </select>
+              </div>
+              <div className="grid grid-cols-4 gap-1.5 items-center font-mono-num">
+                <span className="font-bold">OS</span>
+                <select value={osSph} onChange={(e) => setOsSph(e.target.value)} className="p-1.5 rounded border border-stone-200 dark:border-zinc-700 bg-stone-50 dark:bg-zinc-900 text-base">
+                  {SPH_OPTIONS.map((o) => <option key={o} value={o}>{o}</option>)}
+                </select>
+                <select value={osCyl} onChange={(e) => setOsCyl(e.target.value)} className="p-1.5 rounded border border-stone-200 dark:border-zinc-700 bg-stone-50 dark:bg-zinc-900 text-base">
+                  {CYL_OPTIONS.map((o) => <option key={o} value={o}>{o}</option>)}
+                </select>
+                <select disabled={!isNonZeroCyl(osCyl)} value={osAxis} onChange={(e) => setOsAxis(e.target.value)} className="p-1.5 rounded border border-stone-200 dark:border-zinc-700 bg-stone-50 dark:bg-zinc-900 text-base disabled:opacity-45">
+                  {AXIS_OPTIONS.map((o) => <option key={o} value={o}>{o}°</option>)}
+                </select>
+              </div>
+              <div className="flex items-center gap-2">
+                <span className="font-bold">PD (mm)</span>
+                <select value={pd} onChange={(e) => setPd(e.target.value)} className="flex-1 p-1.5 rounded border border-stone-200 dark:border-zinc-700 bg-stone-50 dark:bg-zinc-900 font-mono-num text-base">
+                  {PD_SINGLE_OPTIONS.map((o) => <option key={o} value={o}>{o} mm</option>)}
+                </select>
+              </div>
+              <button type="submit" className="w-full min-h-[44px] py-2 rounded-lg bg-stone-900 dark:bg-stone-100 text-white dark:text-stone-900 font-bold inline-flex items-center justify-center gap-1">
+                <Plus className="w-4 h-4" />
+                {t('حفظ وصفة جديدة', 'Save New Rx')}
+              </button>
+            </form>
+          )}
         </div>
       </div>
     </div>

@@ -36,7 +36,10 @@
         "city": { "type": "string", "maxLength": 80 },
         "area": { "type": "string", "maxLength": 120 },
         "addressDetails": { "type": "string", "maxLength": 400 },
+        "address": { "type": "object" },
         "items": { "type": "array" },
+        "itemsSubtotalSdg": { "type": "number" },
+        "lensOptionsTotalSdg": { "type": "number" },
         "subtotalSdg": { "type": "number" },
         "discountSdg": { "type": "number" },
         "deliveryFeeSdg": { "type": "number" },
@@ -53,6 +56,47 @@
         "updatedAt": { "type": "string", "format": "date-time" }
       },
       "required": ["id", "customerUid", "customerName", "customerPhone", "stateId", "city", "area", "addressDetails", "items", "subtotalSdg", "discountSdg", "deliveryFeeSdg", "totalSdg", "paymentMethod", "status", "createdAt", "updatedAt"]
+    },
+    "SavedAddressRecord": {
+      "title": "SavedAddressRecord",
+      "description": "Saved Sudan delivery address under users/{userId}/addresses.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "uid": { "type": "string", "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "label": { "type": "string", "maxLength": 80 },
+        "recipientName": { "type": "string", "maxLength": 120 },
+        "stateId": { "type": "string", "maxLength": 64 },
+        "city": { "type": "string", "maxLength": 80 },
+        "area": { "type": "string", "maxLength": 120 },
+        "details": { "type": "string", "maxLength": 400 },
+        "phone": { "type": "string", "maxLength": 32 },
+        "mapUrl": { "type": "string", "maxLength": 500 },
+        "isDefault": { "type": "boolean" }
+      },
+      "required": ["id", "uid", "label", "stateId", "city", "area", "details", "phone"]
+    },
+    "SavedPrescriptionRecord": {
+      "title": "SavedPrescriptionRecord",
+      "description": "Saved optical prescription record under users/{userId}/prescriptions.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "uid": { "type": "string", "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "label": { "type": "string", "maxLength": 120 },
+        "kind": { "type": "string", "enum": ["eyeglasses", "contact_lenses"] },
+        "rightEye": { "type": "object" },
+        "leftEye": { "type": "object" },
+        "pd": { "type": "string", "maxLength": 32 },
+        "pdMode": { "type": "string", "enum": ["single", "dual"] },
+        "pdRight": { "type": "string", "maxLength": 32 },
+        "pdLeft": { "type": "string", "maxLength": 32 },
+        "contactRight": { "type": "object" },
+        "contactLeft": { "type": "object" },
+        "notes": { "type": "string", "maxLength": 500 },
+        "savedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["id", "uid", "label", "rightEye", "leftEye", "pd", "savedAt"]
     },
     "Product": {
       "title": "Product",
@@ -172,6 +216,14 @@
     "/users/{userId}": {
       "schema": { "$ref": "#/entities/UserProfile" },
       "description": "Customer, guest, staff, and admin user profiles, carts, favorites, addresses, and prescriptions."
+    },
+    "/users/{userId}/addresses/{addressId}": {
+      "schema": { "$ref": "#/entities/SavedAddressRecord" },
+      "description": "Customer saved delivery addresses in Sudan."
+    },
+    "/users/{userId}/prescriptions/{rxId}": {
+      "schema": { "$ref": "#/entities/SavedPrescriptionRecord" },
+      "description": "Customer saved optical prescriptions for eyeglasses or contact lenses."
     },
     "/orders/{orderId}": {
       "schema": { "$ref": "#/entities/Order" },

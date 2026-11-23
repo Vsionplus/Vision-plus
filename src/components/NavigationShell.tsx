@@ -21,7 +21,7 @@ import {
   UserPlus,
   LogOut,
 } from 'lucide-react';
-import { useStore } from '../store/StoreContext';
+import { hasLegacyBrandString, useStore } from '../store/StoreContext';
 import { formatShortDate } from '../utils/format';
 import { Footer } from './Footer';
 import { usePWAUpdate } from '../hooks/usePWA';
@@ -87,24 +87,40 @@ export const NavigationShell: React.FC<{ children: React.ReactNode }> = ({ child
             <button
               type="button"
               onClick={() => setActiveTab('home')}
-              className="flex items-center gap-2 whitespace-nowrap shrink-0 text-start min-h-[44px]"
+              className="flex items-center gap-1.5 sm:gap-2 whitespace-nowrap shrink-0 text-start min-h-[44px]"
             >
               {appearance.logoUrl ? (
                 <img
                   src={appearance.logoUrl}
-                  alt={appearance.appNameEn}
-                  className="h-8 w-8 rounded-lg object-cover border border-slate-200 dark:border-slate-700"
+                  alt={appearance.appNameEn || 'Vision Plus'}
+                  className="h-7 w-7 sm:h-8 sm:w-8 rounded-lg object-cover border border-slate-200 dark:border-slate-700 shrink-0"
                 />
               ) : null}
-              <span
-                className="text-lg sm:text-2xl font-extrabold tracking-tight text-[#11223E] dark:text-white"
-                dir="ltr"
-              >
-                <span style={{ color: appearance.secondaryColor }}>
-                  {appearance.wordmarkText.slice(0, 1)}
-                </span>
-                {appearance.wordmarkText.slice(1)}
-              </span>
+              {(() => {
+                const rawWordmark = (appearance.wordmarkText || '').trim();
+                const displayWordmark =
+                  !rawWordmark || hasLegacyBrandString(rawWordmark) ? 'Vision Plus' : rawWordmark;
+                return (
+                  <span
+                    className="text-base sm:text-xl lg:text-2xl font-extrabold tracking-tight text-[#11223E] dark:text-white whitespace-nowrap"
+                    dir="ltr"
+                  >
+                    {displayWordmark === 'Vision Plus' ? (
+                      <>
+                        Vision{' '}
+                        <span style={{ color: appearance.secondaryColor }}>Plus</span>
+                      </>
+                    ) : (
+                      <>
+                        <span style={{ color: appearance.secondaryColor }}>
+                          {displayWordmark.slice(0, 1)}
+                        </span>
+                        {displayWordmark.slice(1)}
+                      </>
+                    )}
+                  </span>
+                );
+              })()}
               <span className="hidden md:inline text-xs font-bold text-slate-500 dark:text-slate-400">
                 {locale === 'ar' ? appearance.appNameAr : appearance.appNameEn}
               </span>

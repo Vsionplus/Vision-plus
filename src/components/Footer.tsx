@@ -106,8 +106,8 @@ export const Footer: React.FC = () => {
           >
             {t('تواصل معنا', 'Contact Us')}
           </h2>
-          <p className="text-xs sm:text-sm text-slate-300">
-            {locale === 'ar' ? settings.storeNameAr : settings.storeNameEn} — {appearance.wordmarkText}
+          <p className="text-xs sm:text-sm text-slate-300 font-semibold">
+            {settings.storeNameAr || 'فيجن بلس'} - {settings.storeNameEn || 'Vision Plus'}
           </p>
         </div>
 

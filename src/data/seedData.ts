@@ -135,7 +135,7 @@ export const CATEGORIES_SEED: Category[] = [
 ];
 
 export const BRANDS_SEED: Brand[] = [
-  { id: 'alnoor', nameAr: 'فيجن بلس', nameEn: 'Vision Plus', country: 'Sudan / Italy', visible: true },
+  { id: 'vision_plus', nameAr: 'فيجن بلس', nameEn: 'Vision Plus', country: 'Sudan / Italy', visible: true },
   { id: 'auravisio', nameAr: 'أورا فيزيو', nameEn: 'Aura Visio', country: 'Germany', visible: true },
   { id: 'orion', nameAr: 'أوريون', nameEn: 'Orion Optics', country: 'Japan', visible: true },
   { id: 'solaris', nameAr: 'سولاريس', nameEn: 'Solaris', country: 'Italy', visible: true },
@@ -155,7 +155,7 @@ export const PRODUCTS_SEED: Product[] = [
       'Handcrafted matte acetate optical frame with lightweight titanium nose pads, suitable for single-vision and progressive lenses.',
     categoryId: 'frames',
     subcategoryId: 'sub_acetate',
-    brandId: 'alnoor',
+    brandId: 'vision_plus',
     priceSdg: 68500,
     oldPriceSdg: 79000,
     stock: 18,
@@ -501,7 +501,7 @@ export const PRODUCTS_SEED: Product[] = [
     descriptionEn: 'Shatter-resistant flexible TR90 reading glasses with built-in blue-light screen filter.',
     categoryId: 'reading_glasses',
     subcategoryId: 'sub_blue_screen',
-    brandId: 'alnoor',
+    brandId: 'vision_plus',
     priceSdg: 26500,
     oldPriceSdg: 31000,
     stock: 19,
@@ -629,12 +629,88 @@ export const COUPONS_SEED: Coupon[] = [
 ];
 
 export const LENS_OPTIONS_SEED: LensOptionConfig[] = [
-  { id: 'none', labelAr: 'بدون عدسات طبية (الإطار فقط)', labelEn: 'Frame Only (No Rx)', extraSdg: 0, visible: true },
-  { id: 'single_vision', labelAr: 'عدسات نظر أحادية الرؤية', labelEn: 'Single Vision Rx', extraSdg: 8000, visible: true },
-  { id: 'blue_light', labelAr: 'حماية من الضوء الأزرق للشاشات', labelEn: 'Blue-Light Filter', extraSdg: 12000, visible: true },
-  { id: 'anti_glare', labelAr: 'مضادة للانعكاس (Anti-Glare)', labelEn: 'Anti-Glare Coating', extraSdg: 10000, visible: true },
-  { id: 'photochromic', labelAr: 'فوتوكروميك (تتحول شمسية)', labelEn: 'Photochromic Transitions', extraSdg: 22000, visible: true },
-  { id: 'progressive', labelAr: 'عدسات متعددة البؤر (Progressive)', labelEn: 'Progressive Multifocal', extraSdg: 28000, visible: true },
+  {
+    id: 'none',
+    kind: 'base',
+    labelAr: 'بدون عدسات طبية (الإطار فقط)',
+    labelEn: 'Frame Only (No Lenses)',
+    extraSdg: 0,
+    visible: true,
+  },
+  // Vision Types (choose one)
+  {
+    id: 'distance',
+    kind: 'vision_type',
+    labelAr: 'نظر بعيد (أحادية الرؤية)',
+    labelEn: 'Distance Vision',
+    extraSdg: 8000,
+    visible: true,
+  },
+  {
+    id: 'near',
+    kind: 'vision_type',
+    labelAr: 'نظر قريب (للقراءة)',
+    labelEn: 'Near / Reading Vision',
+    extraSdg: 8000,
+    visible: true,
+  },
+  {
+    id: 'bifocal',
+    kind: 'vision_type',
+    labelAr: 'ثنائية البؤرة (Bifocal)',
+    labelEn: 'Bifocal (Lined)',
+    extraSdg: 18000,
+    visible: true,
+  },
+  {
+    id: 'progressive',
+    kind: 'vision_type',
+    labelAr: 'تدريجية (Progressive)',
+    labelEn: 'Progressive Multifocal',
+    extraSdg: 28000,
+    visible: true,
+  },
+  // Extra Options (can be combined)
+  {
+    id: 'photochromic',
+    kind: 'extra_option',
+    labelAr: 'فوتوكروميك: يتحول لشمسية تلقائياً',
+    labelEn: 'Photochromic (Auto-Tint)',
+    extraSdg: 22000,
+    visible: true,
+  },
+  {
+    id: 'mirror',
+    kind: 'extra_option',
+    labelAr: 'عدسة عاكسة (Mirror Lens)',
+    labelEn: 'Mirror Lens',
+    extraSdg: 14000,
+    visible: true,
+  },
+  {
+    id: 'blue_cut',
+    kind: 'extra_option',
+    labelAr: 'قاطع الضوء الأزرق (Blue-Cut)',
+    labelEn: 'Blue-Cut Protection',
+    extraSdg: 12000,
+    visible: true,
+  },
+  {
+    id: 'uv_protection',
+    kind: 'extra_option',
+    labelAr: 'حماية من الأشعة فوق البنفسجية (UV)',
+    labelEn: 'UV Protection',
+    extraSdg: 6000,
+    visible: true,
+  },
+  {
+    id: 'anti_glare',
+    kind: 'extra_option',
+    labelAr: 'مضاد للانعكاس (Anti-Glare)',
+    labelEn: 'Anti-Glare Coating',
+    extraSdg: 10000,
+    visible: true,
+  },
 ];
 
 export const CONSULT_TOPICS_SEED: ConsultTopicConfig[] = [
@@ -721,7 +797,7 @@ export const HOME_SECTIONS_SEED: HomeSectionConfig[] = [
 export const APP_APPEARANCE_SEED: AppAppearanceConfig = {
   appNameAr: 'فيجن بلس',
   appNameEn: 'Vision Plus',
-  wordmarkText: '+Vision',
+  wordmarkText: 'Vision Plus',
   logoUrl: '',
   splashImageUrl: IMG_HERO_BOUTIQUE,
   primaryColor: '#11223E',
@@ -965,6 +1041,7 @@ export const INITIAL_ORDERS_SEED: Order[] = [
         quantity: 1,
         unitPriceSdg: 68500,
         prescription: {
+          type: 'manual',
           mode: 'manual',
           rightEye: { sph: '-1.75', cyl: '-0.50', axis: '90' },
           leftEye: { sph: '-2.00', cyl: '-0.25', axis: '85' },

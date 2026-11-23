@@ -86,7 +86,7 @@ export const AdminProductsModule: React.FC = () => {
   const [descEn, setDescEn] = useState('');
   const [sku, setSku] = useState('');
   const [categoryId, setCategoryId] = useState<CategoryId>('frames');
-  const [brandId, setBrandId] = useState('alnoor');
+  const [brandId, setBrandId] = useState('vision_plus');
   const [priceSdg, setPriceSdg] = useState('45000');
   const [oldPriceSdg, setOldPriceSdg] = useState('');
   const [stock, setStock] = useState('10');
@@ -147,7 +147,7 @@ export const AdminProductsModule: React.FC = () => {
     setDescEn('');
     setSku(`VP-${Math.floor(100 + Math.random() * 900)}`);
     setCategoryId(categories[0]?.id || 'frames');
-    setBrandId(brands[0]?.id || 'alnoor');
+    setBrandId(brands[0]?.id || 'vision_plus');
     setPriceSdg('45000');
     setOldPriceSdg('');
     setStock('12');

@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import {
   ArrowUp,
   ArrowDown,
@@ -11,9 +11,12 @@ import {
   FileText,
   Settings,
 } from 'lucide-react';
-import { useStore } from '../../store/StoreContext';
-import { BannerAd, HomeSectionConfig } from '../../types';
+import { doc, getDoc } from 'firebase/firestore';
+import { db } from '../../lib/firebase';
+import { hasLegacyBrandString, normalizeStoreSettings, useStore } from '../../store/StoreContext';
+import { BannerAd, HomeSectionConfig, StoreSettings } from '../../types';
 import { IMG_HERO_BOUTIQUE } from '../../data/seedData';
+import { EXTRA_OPTION_IDS, VISION_TYPE_IDS } from '../../utils/prescription';
 import { ResilientImage } from '../ResilientImage';
 
 export const AdminHomeBuilderModule: React.FC = () => {
@@ -269,6 +272,14 @@ export const AdminContentTextsModule: React.FC = () => {
   const [newFaqQAr, setNewFaqQAr] = useState('');
   const [newFaqAAr, setNewFaqAAr] = useState('');
 
+  useEffect(() => {
+    setDraft(appTexts);
+  }, [appTexts]);
+
+  useEffect(() => {
+    setLensDraft(lensOptions);
+  }, [lensOptions]);
+
   const textFields: { key: keyof typeof draft; labelAr: string; labelEn: string; multiline?: boolean }[] = [
     { key: 'welcomeLineAr', labelAr: 'سطر الترحيب (عربي)', labelEn: 'Welcome Line (AR)' },
     { key: 'welcomeLineEn', labelAr: 'سطر الترحيب (إنجليزي)', labelEn: 'Welcome Line (EN)' },
@@ -327,28 +338,115 @@ export const AdminContentTextsModule: React.FC = () => {
         </div>
       </div>
 
-      {/* Lens Coating Options & Pricing */}
-      <div className="bg-white dark:bg-[#181B1E] border border-stone-200 dark:border-zinc-800 rounded-xl p-5 space-y-3">
-        <div className="flex items-center justify-between">
+      {/* Lens Types & Extra Coatings Pricing */}
+      <div className="bg-white dark:bg-[#181B1E] border border-stone-200 dark:border-zinc-800 rounded-xl p-5 space-y-4">
+        <div className="flex flex-wrap items-center justify-between gap-2">
           <h3 className="font-bold text-sm">{t('أسعار وخيارات العدسات الطبية (Rx)', 'Lens Options & Extra Prices (SDG)')}</h3>
-          <button type="button" onClick={() => updateLensOptions(lensDraft)} className="px-4 py-1.5 rounded-lg bg-[#11223E] text-white font-bold">
+          <button type="button" onClick={() => updateLensOptions(lensDraft)} className="min-h-[38px] px-4 py-1.5 rounded-lg bg-[#11223E] text-white font-bold">
             {t('حفظ أسعار العدسات', 'Save Lens Prices')}
           </button>
         </div>
-        <div className="grid md:grid-cols-2 gap-2.5">
-          {lensDraft.map((opt, idx) => (
-            <div key={opt.id} className="p-2.5 rounded-lg bg-stone-50 dark:bg-zinc-900 flex items-center gap-2">
-              <input value={opt.labelAr} onChange={(e) => setLensDraft(lensDraft.map((o, i) => (i === idx ? { ...o, labelAr: e.target.value } : o)))} className="flex-1 px-2 py-1 rounded border bg-white dark:bg-[#181B1E]" />
-              <input type="number" value={opt.extraSdg} onChange={(e) => setLensDraft(lensDraft.map((o, i) => (i === idx ? { ...o, extraSdg: Number(e.target.value) || 0 } : o)))} className="w-24 px-2 py-1 rounded border bg-white dark:bg-[#181B1E] font-mono-num" />
-              <button
-                type="button"
-                onClick={() => setLensDraft(lensDraft.map((o, i) => (i === idx ? { ...o, visible: !o.visible } : o)))}
-                className={`px-2 py-1 rounded font-bold ${opt.visible ? 'bg-emerald-600 text-white' : 'bg-slate-200 text-slate-600'}`}
-              >
-                {opt.visible ? t('مفعل', 'On') : t('معطل', 'Off')}
-              </button>
-            </div>
-          ))}
+
+        <div className="space-y-2">
+          <div className="font-bold text-[#11223E] dark:text-[#E2BD5B]">
+            {t('1) أنواع الرؤية (Vision Types)', '1) Vision Types')}
+          </div>
+          <div className="grid md:grid-cols-2 gap-2.5">
+            {lensDraft
+              .filter(
+                (o) =>
+                  o.id !== 'none' &&
+                  (o.kind === 'vision_type' || VISION_TYPE_IDS.includes(o.id as never))
+              )
+              .map((opt) => (
+                <div key={opt.id} className="p-2.5 rounded-lg bg-stone-50 dark:bg-zinc-900 flex items-center gap-2">
+                  <input
+                    value={opt.labelAr}
+                    onChange={(e) =>
+                      setLensDraft(
+                        lensDraft.map((o) => (o.id === opt.id ? { ...o, labelAr: e.target.value } : o))
+                      )
+                    }
+                    className="flex-1 px-2 py-1 rounded border bg-white dark:bg-[#181B1E]"
+                  />
+                  <input
+                    type="number"
+                    min={0}
+                    value={opt.extraSdg}
+                    onChange={(e) =>
+                      setLensDraft(
+                        lensDraft.map((o) =>
+                          o.id === opt.id ? { ...o, extraSdg: Math.max(0, Number(e.target.value) || 0) } : o
+                        )
+                      )
+                    }
+                    className="w-24 px-2 py-1 rounded border bg-white dark:bg-[#181B1E] font-mono-num"
+                  />
+                  <button
+                    type="button"
+                    onClick={() =>
+                      setLensDraft(
+                        lensDraft.map((o) => (o.id === opt.id ? { ...o, visible: !o.visible } : o))
+                      )
+                    }
+                    className={`px-2 py-1 rounded font-bold ${opt.visible ? 'bg-emerald-600 text-white' : 'bg-slate-200 text-slate-600'}`}
+                  >
+                    {opt.visible ? t('مفعل', 'On') : t('معطل', 'Off')}
+                  </button>
+                </div>
+              ))}
+          </div>
+        </div>
+
+        <div className="space-y-2 pt-2 border-t border-stone-100 dark:border-zinc-800">
+          <div className="font-bold text-[#11223E] dark:text-[#E2BD5B]">
+            {t('2) الخيارات الإضافية القابلة للدمج (Extra Options)', '2) Combinable Extra Options')}
+          </div>
+          <div className="grid md:grid-cols-2 gap-2.5">
+            {lensDraft
+              .filter(
+                (o) =>
+                  o.id !== 'none' &&
+                  (o.kind === 'extra_option' || EXTRA_OPTION_IDS.includes(o.id as never))
+              )
+              .map((opt) => (
+                <div key={opt.id} className="p-2.5 rounded-lg bg-stone-50 dark:bg-zinc-900 flex items-center gap-2">
+                  <input
+                    value={opt.labelAr}
+                    onChange={(e) =>
+                      setLensDraft(
+                        lensDraft.map((o) => (o.id === opt.id ? { ...o, labelAr: e.target.value } : o))
+                      )
+                    }
+                    className="flex-1 px-2 py-1 rounded border bg-white dark:bg-[#181B1E]"
+                  />
+                  <input
+                    type="number"
+                    min={0}
+                    value={opt.extraSdg}
+                    onChange={(e) =>
+                      setLensDraft(
+                        lensDraft.map((o) =>
+                          o.id === opt.id ? { ...o, extraSdg: Math.max(0, Number(e.target.value) || 0) } : o
+                        )
+                      )
+                    }
+                    className="w-24 px-2 py-1 rounded border bg-white dark:bg-[#181B1E] font-mono-num"
+                  />
+                  <button
+                    type="button"
+                    onClick={() =>
+                      setLensDraft(
+                        lensDraft.map((o) => (o.id === opt.id ? { ...o, visible: !o.visible } : o))
+                      )
+                    }
+                    className={`px-2 py-1 rounded font-bold ${opt.visible ? 'bg-emerald-600 text-white' : 'bg-slate-200 text-slate-600'}`}
+                  >
+                    {opt.visible ? t('مفعل', 'On') : t('معطل', 'Off')}
+                  </button>
+                </div>
+              ))}
+          </div>
         </div>
       </div>
 
@@ -399,6 +497,10 @@ export const AdminContentTextsModule: React.FC = () => {
 export const AdminAppearanceModule: React.FC = () => {
   const { t, appearance, updateAppearance } = useStore();
   const [draft, setDraft] = useState(appearance);
+
+  useEffect(() => {
+    setDraft(appearance);
+  }, [appearance]);
 
   return (
     <div className="bg-white dark:bg-[#181B1E] border border-stone-200 dark:border-zinc-800 rounded-xl p-5 space-y-5 text-xs">
@@ -480,8 +582,67 @@ export const AdminAppearanceModule: React.FC = () => {
 };
 
 export const AdminStoreSettingsModule: React.FC = () => {
-  const { locale, t, settings, updateSettings } = useStore();
+  const { locale, t, settings, lensOptions, updateSettings, updateLensOptions } = useStore();
   const [draft, setDraft] = useState(settings);
+  const [lensDraft, setLensDraft] = useState(lensOptions);
+  const [brandMigrated, setBrandMigrated] = useState(false);
+  const migrationRanRef = useRef(false);
+
+  useEffect(() => {
+    setDraft(settings);
+  }, [settings]);
+
+  useEffect(() => {
+    setLensDraft(lensOptions);
+  }, [lensOptions]);
+
+  // One-time Firestore migration: replace any old storeName with "فيجن بلس" / "Vision Plus"
+  useEffect(() => {
+    if (migrationRanRef.current) return;
+    migrationRanRef.current = true;
+
+    let cancelled = false;
+    const runBrandMigration = async () => {
+      try {
+        const snap = await getDoc(doc(db, 'store_config', 'settings'));
+        const source: Partial<StoreSettings> = snap.exists()
+          ? (snap.data() as Partial<StoreSettings>)
+          : settings;
+
+        const needsMigration =
+          hasLegacyBrandString(source.storeNameAr) ||
+          hasLegacyBrandString(source.storeNameEn) ||
+          hasLegacyBrandString(source.bankakAccountName) ||
+          hasLegacyBrandString(source.otherBankDetailsAr);
+
+        if (needsMigration && !cancelled) {
+          const normalized = normalizeStoreSettings({
+            ...settings,
+            ...source,
+          });
+          setDraft(normalized);
+          updateSettings(normalized);
+          setBrandMigrated(true);
+        }
+      } catch {
+        // Fallback: migrate in-memory state if needed
+        const needsLocalMigration =
+          hasLegacyBrandString(settings.storeNameAr) ||
+          hasLegacyBrandString(settings.storeNameEn);
+        if (needsLocalMigration && !cancelled) {
+          const normalized = normalizeStoreSettings(settings);
+          setDraft(normalized);
+          updateSettings(normalized);
+          setBrandMigrated(true);
+        }
+      }
+    };
+
+    void runBrandMigration();
+    return () => {
+      cancelled = true;
+    };
+  }, [settings, updateSettings]);
 
   const socialKeys = ['facebook', 'instagram', 'whatsapp', 'tiktok', 'telegram', 'snapchat', 'youtube', 'x'] as const;
 
@@ -500,9 +661,18 @@ export const AdminStoreSettingsModule: React.FC = () => {
       onSubmit={(e) => {
         e.preventDefault();
         updateSettings(draft);
+        updateLensOptions(lensDraft);
       }}
       className="bg-white dark:bg-[#181B1E] border border-stone-200 dark:border-zinc-800 rounded-xl p-5 space-y-6 text-xs"
     >
+      {brandMigrated && (
+        <div className="p-3 rounded-xl bg-emerald-50 dark:bg-emerald-950/30 border border-emerald-200 dark:border-emerald-900/50 text-emerald-800 dark:text-emerald-200 font-bold">
+          {t(
+            'تم تحديث اسم المتجر المحفوظ تلقائياً إلى "فيجن بلس / Vision Plus" وحفظه في قاعدة البيانات.',
+            'Stored storeName was automatically migrated to "فيجن بلس / Vision Plus".'
+          )}
+        </div>
+      )}
       <div className="flex flex-wrap items-center justify-between gap-2">
         <h2 className="text-base font-bold flex items-center gap-2">
           <Settings className="w-4 h-4 text-[#D9B24C]" />
@@ -725,6 +895,196 @@ export const AdminStoreSettingsModule: React.FC = () => {
         </div>
       </div>
 
+      {/* Lens Options & Extra Prices (SDG) */}
+      <div className="p-4 rounded-xl bg-stone-50 dark:bg-zinc-900 border border-stone-200 dark:border-zinc-800 space-y-4">
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <div>
+            <h3 className="text-sm font-bold">
+              {t('أسعار وخيارات العدسات الطبية (ج.س)', 'Lens Options & Extra Prices (SDG)')}
+            </h3>
+            <p className="text-[11px] text-slate-500 mt-0.5">
+              {t(
+                'حدد السعر الإضافي لكل نوع رؤية ولكل خيار إضافي بالجنيه السوداني — ينعكس فوراً في صفحة المنتج والسلة والطلبات',
+                'Set SDG extra pricing for every vision type and extra option — updates live across products, cart, and orders'
+              )}
+            </p>
+          </div>
+          <button
+            type="button"
+            onClick={() => updateLensOptions(lensDraft)}
+            className="min-h-[38px] px-3.5 py-1.5 rounded-lg bg-[#11223E] text-white font-bold"
+          >
+            {t('حفظ أسعار العدسات', 'Save Lens Prices')}
+          </button>
+        </div>
+
+        {/* 1) Vision Types */}
+        <div className="space-y-2">
+          <div className="font-extrabold text-[#11223E] dark:text-[#E2BD5B]">
+            {t('1) أنواع الرؤية (Vision Types)', '1) Vision Types')}
+          </div>
+          <div className="grid md:grid-cols-2 gap-2.5">
+            {lensDraft
+              .filter(
+                (o) =>
+                  o.id !== 'none' &&
+                  (o.kind === 'vision_type' || VISION_TYPE_IDS.includes(o.id as never))
+              )
+              .map((opt) => (
+                <div
+                  key={opt.id}
+                  className="p-2.5 rounded-lg bg-white dark:bg-[#181B1E] border border-stone-200 dark:border-zinc-800 space-y-2"
+                >
+                  <div className="flex items-center gap-2">
+                    <input
+                      value={opt.labelAr}
+                      onChange={(e) =>
+                        setLensDraft(
+                          lensDraft.map((o) =>
+                            o.id === opt.id ? { ...o, labelAr: e.target.value } : o
+                          )
+                        )
+                      }
+                      placeholder={t('الاسم (عربي)', 'Label (AR)')}
+                      className="flex-1 px-2.5 py-1.5 rounded border bg-stone-50 dark:bg-zinc-900"
+                    />
+                    <button
+                      type="button"
+                      onClick={() =>
+                        setLensDraft(
+                          lensDraft.map((o) =>
+                            o.id === opt.id ? { ...o, visible: !o.visible } : o
+                          )
+                        )
+                      }
+                      className={`px-2.5 py-1.5 rounded font-bold ${
+                        opt.visible ? 'bg-emerald-600 text-white' : 'bg-slate-200 text-slate-600'
+                      }`}
+                    >
+                      {opt.visible ? t('مفعل', 'On') : t('معطل', 'Off')}
+                    </button>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <input
+                      value={opt.labelEn}
+                      onChange={(e) =>
+                        setLensDraft(
+                          lensDraft.map((o) =>
+                            o.id === opt.id ? { ...o, labelEn: e.target.value } : o
+                          )
+                        )
+                      }
+                      placeholder={t('الاسم (إنجليزي)', 'Label (EN)')}
+                      className="flex-1 px-2.5 py-1.5 rounded border bg-stone-50 dark:bg-zinc-900"
+                    />
+                    <div className="flex items-center gap-1">
+                      <span className="text-[11px] text-slate-500">{t('السعر:', 'SDG:')}</span>
+                      <input
+                        type="number"
+                        min={0}
+                        value={opt.extraSdg}
+                        onChange={(e) =>
+                          setLensDraft(
+                            lensDraft.map((o) =>
+                              o.id === opt.id
+                                ? { ...o, extraSdg: Math.max(0, Number(e.target.value) || 0) }
+                                : o
+                            )
+                          )
+                        }
+                        className="w-24 px-2 py-1.5 rounded border bg-stone-50 dark:bg-zinc-900 font-mono-num"
+                      />
+                    </div>
+                  </div>
+                </div>
+              ))}
+          </div>
+        </div>
+
+        {/* 2) Extra Options */}
+        <div className="space-y-2 pt-2 border-t border-stone-200 dark:border-zinc-800">
+          <div className="font-extrabold text-[#11223E] dark:text-[#E2BD5B]">
+            {t('2) الخيارات الإضافية القابلة للدمج (Extra Options)', '2) Combinable Extra Options')}
+          </div>
+          <div className="grid md:grid-cols-2 gap-2.5">
+            {lensDraft
+              .filter(
+                (o) =>
+                  o.id !== 'none' &&
+                  (o.kind === 'extra_option' || EXTRA_OPTION_IDS.includes(o.id as never))
+              )
+              .map((opt) => (
+                <div
+                  key={opt.id}
+                  className="p-2.5 rounded-lg bg-white dark:bg-[#181B1E] border border-stone-200 dark:border-zinc-800 space-y-2"
+                >
+                  <div className="flex items-center gap-2">
+                    <input
+                      value={opt.labelAr}
+                      onChange={(e) =>
+                        setLensDraft(
+                          lensDraft.map((o) =>
+                            o.id === opt.id ? { ...o, labelAr: e.target.value } : o
+                          )
+                        )
+                      }
+                      placeholder={t('الاسم (عربي)', 'Label (AR)')}
+                      className="flex-1 px-2.5 py-1.5 rounded border bg-stone-50 dark:bg-zinc-900"
+                    />
+                    <button
+                      type="button"
+                      onClick={() =>
+                        setLensDraft(
+                          lensDraft.map((o) =>
+                            o.id === opt.id ? { ...o, visible: !o.visible } : o
+                          )
+                        )
+                      }
+                      className={`px-2.5 py-1.5 rounded font-bold ${
+                        opt.visible ? 'bg-emerald-600 text-white' : 'bg-slate-200 text-slate-600'
+                      }`}
+                    >
+                      {opt.visible ? t('مفعل', 'On') : t('معطل', 'Off')}
+                    </button>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <input
+                      value={opt.labelEn}
+                      onChange={(e) =>
+                        setLensDraft(
+                          lensDraft.map((o) =>
+                            o.id === opt.id ? { ...o, labelEn: e.target.value } : o
+                          )
+                        )
+                      }
+                      placeholder={t('الاسم (إنجليزي)', 'Label (EN)')}
+                      className="flex-1 px-2.5 py-1.5 rounded border bg-stone-50 dark:bg-zinc-900"
+                    />
+                    <div className="flex items-center gap-1">
+                      <span className="text-[11px] text-slate-500">{t('السعر:', 'SDG:')}</span>
+                      <input
+                        type="number"
+                        min={0}
+                        value={opt.extraSdg}
+                        onChange={(e) =>
+                          setLensDraft(
+                            lensDraft.map((o) =>
+                              o.id === opt.id
+                                ? { ...o, extraSdg: Math.max(0, Number(e.target.value) || 0) }
+                                : o
+                            )
+                          )
+                        }
+                        className="w-24 px-2 py-1.5 rounded border bg-stone-50 dark:bg-zinc-900 font-mono-num"
+                      />
+                    </div>
+                  </div>
+                </div>
+              ))}
+          </div>
+        </div>
+      </div>
+
       {/* 18 Sudan States */}
       <div>
         <h3 className="text-sm font-bold mb-3">
@@ -753,7 +1113,7 @@ export const AdminStoreSettingsModule: React.FC = () => {
       </div>
 
       <button type="submit" className="px-6 py-2.5 rounded-xl bg-[#D9B24C] text-[#11223E] font-extrabold">
-        {t('حفظ جميع إعدادات المتجر', 'Save Store Settings')}
+        {t('حفظ جميع إعدادات المتجر والعدسات', 'Save All Store & Lens Settings')}
       </button>
     </form>
   );

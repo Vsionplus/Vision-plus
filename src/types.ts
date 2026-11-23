@@ -66,6 +66,7 @@ export interface ContactLensSpecs {
   cylOptions: string[];
   axisOptions: string[];
   baseCurve: string;
+  diameter?: string;
   quantityPerBox: number;
 }
 
@@ -117,16 +118,28 @@ export interface Product {
   reviews: ProductReview[];
 }
 
+export type VisionType = 'none' | 'distance' | 'near' | 'bifocal' | 'progressive';
+
+export type ExtraLensOptionId =
+  | 'photochromic'
+  | 'mirror'
+  | 'blue_cut'
+  | 'uv_protection'
+  | 'anti_glare';
+
+export type MirrorColorId = 'silver' | 'blue' | 'gold' | 'green';
+
 export type LensOptionType =
-  | 'none'
+  | VisionType
+  | ExtraLensOptionId
   | 'single_vision'
-  | 'progressive'
-  | 'blue_light'
-  | 'anti_glare'
-  | 'photochromic';
+  | 'blue_light';
+
+export type LensOptionKind = 'base' | 'vision_type' | 'extra_option';
 
 export interface LensOptionConfig {
   id: LensOptionType;
+  kind?: LensOptionKind;
   labelAr: string;
   labelEn: string;
   extraSdg: number;
@@ -137,18 +150,54 @@ export interface EyePrescription {
   sph: string;
   cyl: string;
   axis: string;
+  add?: string;
+}
+
+export interface ContactLensEyePrescription {
+  sph: string;
+  cyl: string;
+  axis: string;
+  bc: string;
+  dia: string;
+  boxes: number;
+}
+
+export interface PrescriptionManualValues {
+  kind: 'eyeglasses' | 'contact_lenses';
+  rightEye?: EyePrescription;
+  leftEye?: EyePrescription;
+  pdMode?: 'single' | 'dual';
+  pd?: string;
+  pdRight?: string;
+  pdLeft?: string;
+  fittingHeight?: string;
+  contactRight?: ContactLensEyePrescription;
+  contactLeft?: ContactLensEyePrescription;
 }
 
 export interface PrescriptionData {
   id?: string;
   label?: string;
-  mode: 'manual' | 'image';
+  type: 'manual' | 'image' | 'later' | 'none';
+  mode?: 'manual' | 'image' | 'later' | 'none';
+  visionType?: VisionType;
+  visionTypePriceSdg?: number;
+  extraOptions?: ExtraLensOptionId[];
+  extraOptionsPricesSdg?: Record<string, number>;
+  mirrorColor?: MirrorColorId;
+  values?: PrescriptionManualValues;
   rightEye?: EyePrescription;
   leftEye?: EyePrescription;
   pd?: string;
+  pdMode?: 'single' | 'dual';
+  pdRight?: string;
+  pdLeft?: string;
+  fittingHeight?: string;
   imageUrl?: string;
+  storagePath?: string;
   lensOption: LensOptionType;
   lensExtraPriceSdg: number;
+  notes?: string;
 }
 
 export interface ContactLensSelection {
@@ -160,11 +209,18 @@ export interface ContactLensSelection {
   leftAxis?: string;
 }
 
+export interface CartSelectedOptions {
+  color?: string;
+  size?: string;
+  quantityPerBox?: number;
+}
+
 export interface CartItem {
   id: string;
   productId: string;
   variantId?: string;
   variantLabel?: string;
+  selectedOptions?: CartSelectedOptions;
   quantity: number;
   unitPriceSdg: number;
   prescription?: PrescriptionData;
@@ -184,14 +240,36 @@ export type PaymentMethod = 'cod' | 'bankak';
 
 export interface OrderItem {
   productId: string;
+  name?: string;
   titleAr: string;
   titleEn: string;
   image: string;
   variantLabel?: string;
+  options?: CartSelectedOptions;
   quantity: number;
   unitPriceSdg: number;
+  lensOption?: LensOptionType;
+  visionType?: VisionType;
+  extraOptions?: ExtraLensOptionId[];
+  mirrorColor?: MirrorColorId;
+  lensExtraPriceSdg?: number;
   prescription?: PrescriptionData;
   contactLensSelection?: ContactLensSelection;
+}
+
+export interface OrderAddressSnapshot {
+  id?: string;
+  label?: string;
+  recipientName: string;
+  phone: string;
+  stateId: string;
+  stateNameAr?: string;
+  stateNameEn?: string;
+  city: string;
+  area: string;
+  details: string;
+  mapUrl?: string;
+  isDefault?: boolean;
 }
 
 export interface Order {
@@ -203,7 +281,10 @@ export interface Order {
   city: string;
   area: string;
   addressDetails: string;
+  address?: OrderAddressSnapshot;
   items: OrderItem[];
+  itemsSubtotalSdg?: number;
+  lensOptionsTotalSdg?: number;
   subtotalSdg: number;
   discountSdg: number;
   deliveryFeeSdg: number;
@@ -445,19 +526,29 @@ export interface StoreSettings {
 export interface SavedAddress {
   id: string;
   label: string;
+  recipientName?: string;
   stateId: string;
   city: string;
   area: string;
   details: string;
   phone: string;
+  mapUrl?: string;
+  isDefault?: boolean;
 }
 
 export interface SavedPrescription {
   id: string;
   label: string;
+  kind?: 'eyeglasses' | 'contact_lenses';
   rightEye: EyePrescription;
   leftEye: EyePrescription;
   pd: string;
+  pdMode?: 'single' | 'dual';
+  pdRight?: string;
+  pdLeft?: string;
+  contactRight?: ContactLensEyePrescription;
+  contactLeft?: ContactLensEyePrescription;
+  notes?: string;
   savedAt: string;
 }
 

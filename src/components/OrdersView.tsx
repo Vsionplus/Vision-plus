@@ -3,6 +3,7 @@ import { RotateCcw, XCircle, Package } from 'lucide-react';
 import { useStore } from '../store/StoreContext';
 import { OrderStatus } from '../types';
 import { formatSdg, formatShortDate, getOrderStatusLabel } from '../utils/format';
+import { formatLensSummaryLine, hasCustomLensOrRx } from '../utils/prescription';
 import { ResilientImage } from './ResilientImage';
 
 const TIMELINE_STEPS: OrderStatus[] = [
@@ -15,8 +16,18 @@ const TIMELINE_STEPS: OrderStatus[] = [
 ];
 
 export const OrdersView: React.FC = () => {
-  const { locale, t, orders, settings, appTexts, appearance, reorder, cancelOrder, openCatalog } =
-    useStore();
+  const {
+    locale,
+    t,
+    orders,
+    settings,
+    lensOptions,
+    appTexts,
+    appearance,
+    reorder,
+    cancelOrder,
+    openCatalog,
+  } = useStore();
 
   if (orders.length === 0) {
     return (
@@ -69,7 +80,10 @@ export const OrdersView: React.FC = () => {
                   </div>
                   <p className="text-xs text-stone-500 dark:text-zinc-400 mt-1">
                     {formatShortDate(order.createdAt, locale)} ·{' '}
-                    {locale === 'ar' ? stateObj?.nameAr : stateObj?.nameEn} — {order.city} ·{' '}
+                    {locale === 'ar'
+                      ? stateObj?.nameAr || order.address?.stateNameAr
+                      : stateObj?.nameEn || order.address?.stateNameEn}{' '}
+                    — {order.city} ({order.area}) ·{' '}
                     {order.paymentMethod === 'bankak'
                       ? t('تحويل بنكك', 'Bankak Transfer')
                       : t('الدفع عند الاستلام', 'Cash on Delivery')}
@@ -129,37 +143,65 @@ export const OrdersView: React.FC = () => {
               )}
 
               <div className="space-y-2.5">
-                {order.items.map((item, idx) => (
-                  <div key={item.productId + idx} className="flex items-center gap-3 text-xs">
-                    <div className="w-14 h-12 rounded-lg overflow-hidden bg-stone-100 dark:bg-zinc-900 shrink-0">
-                      <ResilientImage
-                        src={item.image}
-                        alt={locale === 'ar' ? item.titleAr : item.titleEn}
-                        className="w-full h-full object-cover"
-                      />
-                    </div>
-                    <div className="flex-1 min-w-0">
-                      <p className="font-bold truncate">
-                        {locale === 'ar' ? item.titleAr : item.titleEn} × {item.quantity}
-                      </p>
-                      {item.prescription && (
-                        <p className="text-[11px] text-stone-500 dark:text-zinc-400">
-                          {t('وصفة طبية مرفقة:', 'Prescription attached:')}{' '}
-                          {item.prescription.lensOption}{' '}
-                          {item.prescription.rightEye
-                            ? `| OD ${item.prescription.rightEye.sph} / OS ${item.prescription.leftEye?.sph}`
-                            : ''}
+                {order.items.map((item, idx) => {
+                  const rx = item.prescription;
+                  const syntheticRx = rx || (item.lensOption && item.lensOption !== 'none'
+                    ? {
+                        type: 'none' as const,
+                        visionType: item.visionType,
+                        extraOptions: item.extraOptions,
+                        mirrorColor: item.mirrorColor,
+                        lensOption: item.lensOption,
+                        lensExtraPriceSdg: item.lensExtraPriceSdg || 0,
+                      }
+                    : undefined);
+                  const hasCustomLens = hasCustomLensOrRx(syntheticRx);
+                  const lensSummary = formatLensSummaryLine(syntheticRx, lensOptions, locale);
+                  const extraPrice = item.lensExtraPriceSdg ?? rx?.lensExtraPriceSdg ?? 0;
+                  const pdText =
+                    rx?.pdMode === 'dual' && rx?.pdRight
+                      ? `PD OD ${rx.pdRight}/${rx.pdLeft}mm`
+                      : rx?.pd
+                      ? `PD ${rx.pd}mm`
+                      : '';
+                  const fittingText = rx?.fittingHeight
+                    ? ` · ${t('ارتفاع التركيب', 'FH')} ${rx.fittingHeight}mm`
+                    : '';
+
+                  return (
+                    <div key={item.productId + idx} className="flex items-center gap-3 text-xs">
+                      <div className="w-14 h-12 rounded-lg overflow-hidden bg-stone-100 dark:bg-zinc-900 shrink-0">
+                        <ResilientImage
+                          src={item.image}
+                          alt={locale === 'ar' ? item.titleAr : item.titleEn}
+                          className="w-full h-full object-cover"
+                        />
+                      </div>
+                      <div className="flex-1 min-w-0 space-y-0.5">
+                        <p className="font-bold truncate">
+                          {locale === 'ar' ? item.titleAr : item.titleEn} × {item.quantity}
                         </p>
-                      )}
+                        {hasCustomLens && (
+                          <p className="text-[11px] text-stone-500 dark:text-zinc-400">
+                            {lensSummary ? `${lensSummary} · ` : ''}
+                            {rx?.type === 'manual' && rx.values?.kind === 'contact_lenses'
+                              ? `OD ${rx.values.contactRight?.sph || '-'} BC ${rx.values.contactRight?.bc || '-'} DIA ${rx.values.contactRight?.dia || '-'} | OS ${rx.values.contactLeft?.sph || '-'}`
+                              : rx?.type === 'manual' && rx.rightEye
+                              ? `OD ${rx.rightEye.sph}/${rx.rightEye.cyl}×${rx.rightEye.axis}°${rx.rightEye.add ? ` ADD ${rx.rightEye.add}` : ''} | OS ${rx.leftEye?.sph}/${rx.leftEye?.cyl}×${rx.leftEye?.axis}°${rx.leftEye?.add ? ` ADD ${rx.leftEye.add}` : ''}${pdText ? ` · ${pdText}` : ''}${fittingText}`
+                              : rx?.type === 'image'
+                              ? t('صورة روشتة مرفقة', 'Prescription photo attached')
+                              : rx?.type === 'later'
+                              ? t('سيتم الإرسال عبر الواتساب', 'Send via WhatsApp later')
+                              : t('مواصفات العدسات مختارة', 'Lens options selected')}
+                          </p>
+                        )}
+                      </div>
+                      <span className="font-mono-num font-bold tabular-nums">
+                        {formatSdg((item.unitPriceSdg + extraPrice) * item.quantity)}
+                      </span>
                     </div>
-                    <span className="font-mono-num font-bold tabular-nums">
-                      {formatSdg(
-                        (item.unitPriceSdg + (item.prescription?.lensExtraPriceSdg || 0)) *
-                          item.quantity
-                      )}
-                    </span>
-                  </div>
-                ))}
+                  );
+                })}
               </div>
             </article>
           );

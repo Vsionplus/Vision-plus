@@ -43,8 +43,10 @@ import {
   LensOptionConfig,
   Locale,
   Order,
+  OrderAddressSnapshot,
   OrderStatus,
   PaymentMethod,
+  PrescriptionData,
   Product,
   SavedAddress,
   SavedPrescription,
@@ -76,6 +78,7 @@ import {
   mapFirebaseAuthError,
   stripUndefined,
 } from '../lib/firebase';
+import { hasCustomLensOrRx, resolveExtraOptions, resolveVisionType } from '../utils/prescription';
 
 export type AppTab =
   | 'home'
@@ -169,6 +172,7 @@ interface PlaceOrderPayload {
   city: string;
   area: string;
   addressDetails: string;
+  address: OrderAddressSnapshot;
   paymentMethod: PaymentMethod;
   couponCode?: string;
   discountSdg: number;
@@ -231,6 +235,7 @@ interface StoreContextValue extends StoreState {
   moderateReview: (productId: string, reviewId: string, status: 'approved' | 'hidden' | 'delete') => void;
   addToCart: (item: Omit<CartItem, 'id'>) => void;
   updateCartQty: (cartItemId: string, delta: number) => void;
+  updateCartItemPrescription: (cartItemId: string, prescription?: PrescriptionData) => void;
   removeFromCart: (cartItemId: string) => void;
   placeOrder: (payload: PlaceOrderPayload) => Promise<Order | null>;
   cancelOrder: (orderId: string) => void;
@@ -246,9 +251,11 @@ interface StoreContextValue extends StoreState {
   closeConsult: (consultId: string) => void;
   updateConsultTopics: (topics: ConsultTopicConfig[]) => void;
   updateLensOptions: (options: LensOptionConfig[]) => void;
-  saveAddress: (addr: Omit<SavedAddress, 'id'>) => void;
+  saveAddress: (addr: Omit<SavedAddress, 'id'>) => SavedAddress;
+  updateAddress: (addr: SavedAddress) => void;
+  setDefaultAddress: (id: string) => void;
   deleteAddress: (id: string) => void;
-  savePrescription: (rx: Omit<SavedPrescription, 'id' | 'savedAt'>) => void;
+  savePrescription: (rx: Omit<SavedPrescription, 'id' | 'savedAt'>) => SavedPrescription;
   deletePrescription: (id: string) => void;
   upsertProduct: (product: Product) => void;
   duplicateProduct: (id: string) => void;
@@ -282,6 +289,142 @@ interface StoreContextValue extends StoreState {
 }
 
 const STORAGE_KEY = 'vision_plus_sudan_v2';
+
+const LEGACY_AR_WORD = '\u0627\u0644\u0646\u0648\u0631';
+const LEGACY_AR_FULL = `${LEGACY_AR_WORD} \u0644\u0644\u0628\u0635\u0631\u064a\u0627\u062a`;
+const LEGACY_EN_STORE_SUDAN = ['Optical', 'Store', 'Sudan'].join(' ');
+const LEGACY_EN_STORE = ['Optical', 'Store'].join(' ');
+const LEGACY_EN_SPACED = ['Al', 'Nour'].join(' ');
+const LEGACY_EN_JOINED = ['al', 'nour'].join('');
+const LEGACY_WORDMARK = `${String.fromCharCode(43)}Vision`;
+
+export function hasLegacyBrandString(value?: string | null): boolean {
+  if (!value) return false;
+  const trimmed = value.trim();
+  if (!trimmed) return false;
+  if (trimmed === LEGACY_WORDMARK) return true;
+  const lower = trimmed.toLowerCase();
+  return (
+    trimmed.includes(LEGACY_AR_FULL) ||
+    trimmed.includes(LEGACY_AR_WORD) ||
+    lower.includes(LEGACY_EN_STORE_SUDAN.toLowerCase()) ||
+    lower.includes(LEGACY_EN_STORE.toLowerCase()) ||
+    lower.includes(LEGACY_EN_SPACED.toLowerCase()) ||
+    lower.includes(LEGACY_EN_JOINED)
+  );
+}
+
+export function sanitizeBrandString(value: string | undefined, target: 'ar' | 'en', fallback?: string): string {
+  if (!value || !value.trim()) return fallback ?? '';
+  let next = value;
+  const arReplacement = 'فيجن بلس';
+  const enReplacement = 'Vision Plus';
+
+  next = next.split(LEGACY_AR_FULL).join(arReplacement);
+  next = next.split(LEGACY_AR_WORD).join(arReplacement);
+
+  const escapeRe = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const enPatterns = [LEGACY_EN_STORE_SUDAN, LEGACY_EN_STORE, LEGACY_EN_SPACED, LEGACY_EN_JOINED];
+  for (const pat of enPatterns) {
+    next = next.replace(new RegExp(escapeRe(pat), 'gi'), target === 'ar' ? arReplacement : enReplacement);
+  }
+  if (next.trim() === LEGACY_WORDMARK) {
+    next = enReplacement;
+  }
+  return next.trim() || fallback || '';
+}
+
+function normalizeAppearanceConfig(raw?: Partial<AppAppearanceConfig>): AppAppearanceConfig {
+  const merged: AppAppearanceConfig = {
+    ...APP_APPEARANCE_SEED,
+    ...(raw || {}),
+  };
+  const appNameAr = sanitizeBrandString(merged.appNameAr, 'ar', 'فيجن بلس');
+  const appNameEn = sanitizeBrandString(merged.appNameEn, 'en', 'Vision Plus');
+  const rawWm = (merged.wordmarkText || '').trim();
+  const wordmarkText =
+    !rawWm || rawWm === LEGACY_WORDMARK || hasLegacyBrandString(rawWm)
+      ? 'Vision Plus'
+      : rawWm;
+  return {
+    ...merged,
+    appNameAr: hasLegacyBrandString(appNameAr) ? 'فيجن بلس' : appNameAr,
+    appNameEn: hasLegacyBrandString(appNameEn) ? 'Vision Plus' : appNameEn,
+    wordmarkText,
+  };
+}
+
+export function normalizeStoreSettings(raw?: Partial<StoreSettings>): StoreSettings {
+  const merged: StoreSettings = {
+    ...STORE_SETTINGS_SEED,
+    ...(raw || {}),
+    requireEmailVerification: raw?.requireEmailVerification ?? true,
+    email: raw?.email ?? STORE_SETTINGS_SEED.email,
+    contactVisibility: {
+      ...STORE_SETTINGS_SEED.contactVisibility,
+      ...(raw?.contactVisibility || {}),
+    },
+    socialLinks: normalizeSocialLinks(raw?.socialLinks),
+  };
+  return {
+    ...merged,
+    storeNameAr: sanitizeBrandString(merged.storeNameAr, 'ar', 'فيجن بلس'),
+    storeNameEn: sanitizeBrandString(merged.storeNameEn, 'en', 'Vision Plus'),
+    bankakAccountName: sanitizeBrandString(
+      merged.bankakAccountName,
+      'ar',
+      STORE_SETTINGS_SEED.bankakAccountName
+    ),
+    otherBankDetailsAr: sanitizeBrandString(
+      merged.otherBankDetailsAr,
+      'ar',
+      STORE_SETTINGS_SEED.otherBankDetailsAr
+    ),
+  };
+}
+
+function normalizeAppTextsConfig(raw?: Partial<AppTextsConfig>): AppTextsConfig {
+  const merged: AppTextsConfig = {
+    ...APP_TEXTS_SEED,
+    ...(raw || {}),
+  };
+  return {
+    ...merged,
+    splashTextAr: sanitizeBrandString(merged.splashTextAr, 'ar', APP_TEXTS_SEED.splashTextAr),
+    splashTextEn: sanitizeBrandString(merged.splashTextEn, 'en', APP_TEXTS_SEED.splashTextEn),
+    welcomeLineAr: sanitizeBrandString(merged.welcomeLineAr, 'ar', APP_TEXTS_SEED.welcomeLineAr),
+    welcomeLineEn: sanitizeBrandString(merged.welcomeLineEn, 'en', APP_TEXTS_SEED.welcomeLineEn),
+    announcementTextAr: sanitizeBrandString(merged.announcementTextAr, 'ar', APP_TEXTS_SEED.announcementTextAr),
+    announcementTextEn: sanitizeBrandString(merged.announcementTextEn, 'en', APP_TEXTS_SEED.announcementTextEn),
+    consultCardDescAr: sanitizeBrandString(merged.consultCardDescAr, 'ar', APP_TEXTS_SEED.consultCardDescAr),
+    consultCardDescEn: sanitizeBrandString(merged.consultCardDescEn, 'en', APP_TEXTS_SEED.consultCardDescEn),
+    aboutUsAr: sanitizeBrandString(merged.aboutUsAr, 'ar', APP_TEXTS_SEED.aboutUsAr),
+    aboutUsEn: sanitizeBrandString(merged.aboutUsEn, 'en', APP_TEXTS_SEED.aboutUsEn),
+    privacyPolicyAr: sanitizeBrandString(merged.privacyPolicyAr, 'ar', APP_TEXTS_SEED.privacyPolicyAr),
+    privacyPolicyEn: sanitizeBrandString(merged.privacyPolicyEn, 'en', APP_TEXTS_SEED.privacyPolicyEn),
+  };
+}
+
+function normalizeBrandList(items: Brand[]): Brand[] {
+  return items.map((b) =>
+    b.id === LEGACY_EN_JOINED
+      ? {
+          ...b,
+          id: 'vision_plus',
+          nameAr: sanitizeBrandString(b.nameAr, 'ar', 'فيجن بلس'),
+          nameEn: sanitizeBrandString(b.nameEn, 'en', 'Vision Plus'),
+        }
+      : {
+          ...b,
+          nameAr: sanitizeBrandString(b.nameAr, 'ar', b.nameAr),
+          nameEn: sanitizeBrandString(b.nameEn, 'en', b.nameEn),
+        }
+  );
+}
+
+function normalizeProductList(items: Product[]): Product[] {
+  return items.map((p) => (p.brandId === LEGACY_EN_JOINED ? { ...p, brandId: 'vision_plus' } : p));
+}
 
 const StoreContext = createContext<StoreContextValue | null>(null);
 
@@ -333,16 +476,43 @@ function hashForTab(tab: AppTab): string {
   return tab === 'catalog' ? '#/categories' : `#/${tab}`;
 }
 
+function normalizeLensOptions(raw?: LensOptionConfig[]): LensOptionConfig[] {
+  if (!Array.isArray(raw) || raw.length === 0) return LENS_OPTIONS_SEED;
+  const byId = new Map<string, LensOptionConfig>();
+  raw.forEach((item) => {
+    if (item && item.id) byId.set(item.id, item);
+  });
+
+  return LENS_OPTIONS_SEED.map((seedItem) => {
+    let existing = byId.get(seedItem.id);
+    if (!existing && seedItem.id === 'distance') {
+      existing = byId.get('single_vision');
+    }
+    if (!existing && seedItem.id === 'blue_cut') {
+      existing = byId.get('blue_light');
+    }
+    if (!existing) return seedItem;
+    return {
+      ...seedItem,
+      labelAr: existing.labelAr || seedItem.labelAr,
+      labelEn: existing.labelEn || seedItem.labelEn,
+      extraSdg: typeof existing.extraSdg === 'number' ? existing.extraSdg : seedItem.extraSdg,
+      visible: typeof existing.visible === 'boolean' ? existing.visible : seedItem.visible,
+      kind: seedItem.kind,
+    };
+  });
+}
+
 function mergeCartItems(existingCart: CartItem[], incomingCart: CartItem[]): CartItem[] {
   const merged = [...existingCart];
   for (const item of incomingCart) {
-    const hasCustomSpecs = Boolean(item.prescription || item.contactLensSelection);
+    const hasCustomSpecs = Boolean(hasCustomLensOrRx(item.prescription) || item.contactLensSelection);
     const matchIdx = !hasCustomSpecs
       ? merged.findIndex(
           (c) =>
             c.productId === item.productId &&
             c.variantId === item.variantId &&
-            !c.prescription &&
+            !hasCustomLensOrRx(c.prescription) &&
             !c.contactLensSelection
         )
       : -1;
@@ -379,9 +549,9 @@ function getInitialState(): StoreState {
         pendingCheckoutReturn: false,
         user: createEmptyUser(),
         directoryUsers: parsed.directoryUsers || CUSTOMERS_AND_STAFF_SEED,
-        products: parsed.products || PRODUCTS_SEED,
+        products: normalizeProductList(parsed.products || PRODUCTS_SEED),
         categories: parsed.categories || CATEGORIES_SEED,
-        brands: parsed.brands || BRANDS_SEED,
+        brands: normalizeBrandList(parsed.brands || BRANDS_SEED),
         banners: parsed.banners || BANNERS_SEED,
         coupons: parsed.coupons || COUPONS_SEED,
         cart: Array.isArray(parsed.cart) ? parsed.cart : [],
@@ -389,21 +559,11 @@ function getInitialState(): StoreState {
         notifications: parsed.notifications || INITIAL_NOTIFICATIONS_SEED,
         consults: [],
         consultTopics: parsed.consultTopics || CONSULT_TOPICS_SEED,
-        lensOptions: parsed.lensOptions || LENS_OPTIONS_SEED,
+        lensOptions: normalizeLensOptions(parsed.lensOptions),
         homeSections: normalizeHomeSections(parsed.homeSections),
-        appTexts: { ...APP_TEXTS_SEED, ...(parsed.appTexts || {}) },
-        appearance: { ...APP_APPEARANCE_SEED, ...(parsed.appearance || {}) },
-        settings: {
-          ...STORE_SETTINGS_SEED,
-          ...(parsed.settings || {}),
-          requireEmailVerification: parsed.settings?.requireEmailVerification ?? true,
-          email: parsed.settings?.email ?? STORE_SETTINGS_SEED.email,
-          contactVisibility: {
-            ...STORE_SETTINGS_SEED.contactVisibility,
-            ...(parsed.settings?.contactVisibility || {}),
-          },
-          socialLinks: normalizeSocialLinks(parsed.settings?.socialLinks),
-        },
+        appTexts: normalizeAppTextsConfig(parsed.appTexts),
+        appearance: normalizeAppearanceConfig(parsed.appearance),
+        settings: normalizeStoreSettings(parsed.settings),
         toastMessage: null,
       };
     }
@@ -497,10 +657,10 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     root.style.setProperty('--vp-primary', state.appearance.primaryColor || '#11223E');
     root.style.setProperty('--vp-secondary', state.appearance.secondaryColor || '#D9B24C');
     document.title =
-      state.locale === 'ar'
-        ? `${state.appearance.appNameAr} — ${state.appearance.appNameEn}`
-        : `${state.appearance.appNameEn} — ${state.appearance.appNameAr}`;
-  }, [state.appearance, state.locale]);
+      state.appearance.appNameEn && !hasLegacyBrandString(state.appearance.appNameEn)
+        ? state.appearance.appNameEn
+        : 'Vision Plus';
+  }, [state.appearance]);
 
   useEffect(() => {
     try {
@@ -699,10 +859,18 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
               favoriteProductIds: Array.isArray(data.favoriteProductIds)
                 ? data.favoriteProductIds
                 : prev.user.favoriteProductIds,
-              addresses: Array.isArray(data.addresses) ? data.addresses : prev.user.addresses,
-              prescriptions: Array.isArray(data.prescriptions)
-                ? data.prescriptions
-                : prev.user.prescriptions,
+              addresses:
+                prev.user.addresses.length > 0
+                  ? prev.user.addresses
+                  : Array.isArray(data.addresses)
+                  ? data.addresses
+                  : prev.user.addresses,
+              prescriptions:
+                prev.user.prescriptions.length > 0
+                  ? prev.user.prescriptions
+                  : Array.isArray(data.prescriptions)
+                  ? data.prescriptions
+                  : prev.user.prescriptions,
             },
           }));
         },
@@ -711,6 +879,43 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         }
       )
     );
+
+    // 1b. User subcollections: addresses and prescriptions (for signed-in accounts)
+    if (!fbUser.isAnonymous) {
+      unsubs.push(
+        onSnapshot(
+          collection(db, 'users', fbUser.uid, 'addresses'),
+          (snap) => {
+            if (snap.empty) return;
+            const list = snap.docs
+              .map((d) => d.data() as SavedAddress)
+              .sort((a, b) => Number(Boolean(b.isDefault)) - Number(Boolean(a.isDefault)));
+            setState((prev) => ({
+              ...prev,
+              user: { ...prev.user, addresses: list },
+            }));
+          },
+          (err) => handleFirestoreError(err, OperationType.LIST, `users/${fbUser.uid}/addresses`)
+        )
+      );
+
+      unsubs.push(
+        onSnapshot(
+          collection(db, 'users', fbUser.uid, 'prescriptions'),
+          (snap) => {
+            if (snap.empty) return;
+            const list = snap.docs
+              .map((d) => d.data() as SavedPrescription)
+              .sort((a, b) => (b.savedAt || '').localeCompare(a.savedAt || ''));
+            setState((prev) => ({
+              ...prev,
+              user: { ...prev.user, prescriptions: list },
+            }));
+          },
+          (err) => handleFirestoreError(err, OperationType.LIST, `users/${fbUser.uid}/prescriptions`)
+        )
+      );
+    }
 
     // 2. Store public config documents (individual gets, zero blanket list)
     const configIds = [
@@ -722,6 +927,8 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       'consultTopics',
     ] as const;
 
+    const migratedConfigs = new Set<string>();
+
     configIds.forEach((configId) => {
       unsubs.push(
         onSnapshot(
@@ -729,23 +936,75 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
           (snap) => {
             if (!snap.exists()) return;
             const val = snap.data();
+
+            if (isBootstrappedOwner && !migratedConfigs.has(configId)) {
+              if (configId === 'settings') {
+                const rawSettings = val as Partial<StoreSettings>;
+                if (
+                  hasLegacyBrandString(rawSettings.storeNameAr) ||
+                  hasLegacyBrandString(rawSettings.storeNameEn) ||
+                  hasLegacyBrandString(rawSettings.bankakAccountName) ||
+                  hasLegacyBrandString(rawSettings.otherBankDetailsAr)
+                ) {
+                  migratedConfigs.add(configId);
+                  const cleaned = normalizeStoreSettings(rawSettings);
+                  void setDoc(doc(db, 'store_config', 'settings'), stripUndefined({ id: 'settings', ...cleaned })).catch(
+                    () => undefined
+                  );
+                }
+              } else if (configId === 'appearance') {
+                const rawApp = val as Partial<AppAppearanceConfig>;
+                if (
+                  hasLegacyBrandString(rawApp.appNameAr) ||
+                  hasLegacyBrandString(rawApp.appNameEn) ||
+                  hasLegacyBrandString(rawApp.wordmarkText)
+                ) {
+                  migratedConfigs.add(configId);
+                  const cleaned = normalizeAppearanceConfig(rawApp);
+                  void setDoc(doc(db, 'store_config', 'appearance'), stripUndefined({ id: 'appearance', ...cleaned })).catch(
+                    () => undefined
+                  );
+                }
+              } else if (configId === 'texts') {
+                const rawTexts = val as Partial<AppTextsConfig>;
+                if (
+                  hasLegacyBrandString(rawTexts.welcomeLineAr) ||
+                  hasLegacyBrandString(rawTexts.welcomeLineEn) ||
+                  hasLegacyBrandString(rawTexts.aboutUsAr) ||
+                  hasLegacyBrandString(rawTexts.aboutUsEn) ||
+                  hasLegacyBrandString(rawTexts.privacyPolicyAr) ||
+                  hasLegacyBrandString(rawTexts.privacyPolicyEn)
+                ) {
+                  migratedConfigs.add(configId);
+                  const cleaned = normalizeAppTextsConfig(rawTexts);
+                  void setDoc(doc(db, 'store_config', 'texts'), stripUndefined({ id: 'texts', ...cleaned })).catch(
+                    () => undefined
+                  );
+                }
+              }
+            }
+
             setState((prev) => {
               const next = { ...prev };
               if (configId === 'settings') {
-                next.settings = {
+                next.settings = normalizeStoreSettings({
                   ...prev.settings,
-                  ...val,
-                  requireEmailVerification: val.requireEmailVerification ?? true,
-                  socialLinks: normalizeSocialLinks(val.socialLinks),
-                } as StoreSettings;
+                  ...(val as Partial<StoreSettings>),
+                });
               } else if (configId === 'appearance') {
-                next.appearance = { ...prev.appearance, ...val } as AppAppearanceConfig;
+                next.appearance = normalizeAppearanceConfig({
+                  ...prev.appearance,
+                  ...(val as Partial<AppAppearanceConfig>),
+                });
               } else if (configId === 'texts') {
-                next.appTexts = { ...prev.appTexts, ...val } as AppTextsConfig;
+                next.appTexts = normalizeAppTextsConfig({
+                  ...prev.appTexts,
+                  ...(val as Partial<AppTextsConfig>),
+                });
               } else if (configId === 'homeSections' && Array.isArray(val.items)) {
                 next.homeSections = normalizeHomeSections(val.items as HomeSectionConfig[]);
               } else if (configId === 'lensOptions' && Array.isArray(val.items)) {
-                next.lensOptions = val.items as LensOptionConfig[];
+                next.lensOptions = normalizeLensOptions(val.items as LensOptionConfig[]);
               } else if (configId === 'consultTopics' && Array.isArray(val.items)) {
                 next.consultTopics = val.items as ConsultTopicConfig[];
               }
@@ -765,7 +1024,7 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         productsQ,
         (snap) => {
           if (snap.empty) return;
-          const items = snap.docs.map((d) => d.data() as Product);
+          const items = normalizeProductList(snap.docs.map((d) => d.data() as Product));
           setState((prev) => ({ ...prev, products: items }));
         },
         (err) => handleFirestoreError(err, OperationType.LIST, 'products')
@@ -795,7 +1054,7 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         brandsQ,
         (snap) => {
           if (snap.empty) return;
-          const items = snap.docs.map((d) => d.data() as Brand);
+          const items = normalizeBrandList(snap.docs.map((d) => d.data() as Brand));
           setState((prev) => ({ ...prev, brands: items }));
         },
         (err) => handleFirestoreError(err, OperationType.LIST, 'brands')
@@ -1360,13 +1619,15 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     },
     addToCart: (item) => {
       const prevCart = stateRef.current.cart;
-      const hasCustomSpecs = Boolean(item.prescription || item.contactLensSelection);
+      const hasCustomSpecs = Boolean(
+        hasCustomLensOrRx(item.prescription) || item.contactLensSelection
+      );
       const existingIndex = !hasCustomSpecs
         ? prevCart.findIndex(
             (c) =>
               c.productId === item.productId &&
               c.variantId === item.variantId &&
-              !c.prescription &&
+              !hasCustomLensOrRx(c.prescription) &&
               !c.contactLensSelection
           )
         : -1;
@@ -1377,7 +1638,10 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
             )
           : [
               ...prevCart,
-              { ...item, id: `ci_${Date.now()}_${Math.random().toString(36).slice(2, 6)}` },
+              stripUndefined({
+                ...item,
+                id: `ci_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+              }),
             ];
       setState((prev) => ({ ...prev, cart: nextCart }));
       if (auth.currentUser) {
@@ -1393,6 +1657,27 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       if (auth.currentUser) {
         void syncUserDocFields(auth.currentUser.uid, { cart: nextCart });
       }
+    },
+    updateCartItemPrescription: (cartItemId, prescription) => {
+      const hasRxOrLens = hasCustomLensOrRx(prescription);
+      const nextCart = stateRef.current.cart.map((c) => {
+        if (c.id !== cartItemId) return c;
+        if (!hasRxOrLens) {
+          const rest = { ...c };
+          delete rest.prescription;
+          return rest;
+        }
+        return stripUndefined({ ...c, prescription });
+      });
+      setState((prev) => ({ ...prev, cart: nextCart }));
+      if (auth.currentUser) {
+        void syncUserDocFields(auth.currentUser.uid, { cart: nextCart });
+      }
+      showToast(
+        hasRxOrLens
+          ? t('تم تحديث خيارات العدسات ومقاس النظر', 'Lens options & prescription updated')
+          : t('تم حذف مقاس النظر وخيارات العدسات', 'Prescription & lens options removed')
+      );
     },
     removeFromCart: (cartItemId) => {
       const nextCart = stateRef.current.cart.filter((c) => c.id !== cartItemId);
@@ -1427,11 +1712,16 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       // Refresh ID token so request.auth.token.email_verified is true in Firestore Rules
       await current.getIdToken(true);
 
-      const subtotalSdg = stateRef.current.cart.reduce(
-        (sum, item) =>
-          sum + (item.unitPriceSdg + (item.prescription?.lensExtraPriceSdg || 0)) * item.quantity,
+      const itemsSubtotalSdg = stateRef.current.cart.reduce(
+        (sum, item) => sum + item.unitPriceSdg * item.quantity,
         0
       );
+      const lensOptionsTotalSdg = stateRef.current.cart.reduce(
+        (sum, item) => sum + (item.prescription?.lensExtraPriceSdg || 0) * item.quantity,
+        0
+      );
+      const subtotalSdg = itemsSubtotalSdg + lensOptionsTotalSdg;
+
       if (state.settings.minimumOrderSdg > 0 && subtotalSdg < state.settings.minimumOrderSdg) {
         showToast(
           t(
@@ -1450,14 +1740,23 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
 
       const items = stateRef.current.cart.map((ci) => {
         const prod = stateRef.current.products.find((p) => p.id === ci.productId);
+        const resolvedVision = resolveVisionType(ci.prescription);
+        const resolvedExtras = resolveExtraOptions(ci.prescription);
         return {
           productId: ci.productId,
+          name: prod?.titleAr || prod?.titleEn || 'منتج بصري',
           titleAr: prod?.titleAr || 'منتج بصري',
           titleEn: prod?.titleEn || 'Optical Item',
           image: prod?.images[0] || '',
           variantLabel: ci.variantLabel,
+          options: ci.selectedOptions,
           quantity: ci.quantity,
           unitPriceSdg: ci.unitPriceSdg,
+          lensOption: ci.prescription?.lensOption || resolvedVision || 'none',
+          visionType: resolvedVision,
+          extraOptions: resolvedExtras.length > 0 ? resolvedExtras : undefined,
+          mirrorColor: resolvedExtras.includes('mirror') ? ci.prescription?.mirrorColor : undefined,
+          lensExtraPriceSdg: ci.prescription?.lensExtraPriceSdg || 0,
           prescription: ci.prescription,
           contactLensSelection: ci.contactLensSelection,
         };
@@ -1472,7 +1771,10 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         city: payload.city,
         area: payload.area,
         addressDetails: payload.addressDetails,
+        address: payload.address,
         items,
+        itemsSubtotalSdg,
+        lensOptionsTotalSdg,
         subtotalSdg,
         discountSdg: payload.discountSdg,
         deliveryFeeSdg: payload.deliveryFeeSdg,
@@ -1553,15 +1855,18 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     reorder: (orderId) => {
       const order = state.orders.find((o) => o.id === orderId);
       if (!order) return;
-      const itemsToAdd: CartItem[] = order.items.map((item, idx) => ({
-        id: `ci_re_${Date.now()}_${idx}`,
-        productId: item.productId,
-        variantLabel: item.variantLabel,
-        quantity: item.quantity,
-        unitPriceSdg: item.unitPriceSdg,
-        prescription: item.prescription,
-        contactLensSelection: item.contactLensSelection,
-      }));
+      const itemsToAdd: CartItem[] = order.items.map((item, idx) =>
+        stripUndefined({
+          id: `ci_re_${Date.now()}_${idx}`,
+          productId: item.productId,
+          variantLabel: item.variantLabel,
+          selectedOptions: item.options,
+          quantity: item.quantity,
+          unitPriceSdg: item.unitPriceSdg,
+          prescription: item.prescription,
+          contactLensSelection: item.contactLensSelection,
+        })
+      );
       const nextCart = [...stateRef.current.cart, ...itemsToAdd];
       setState((prev) => ({
         ...prev,
@@ -1820,18 +2125,114 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       showToast(t('تم تحديث خيارات العدسات والأسعار', 'Lens options updated'));
     },
     saveAddress: (addr) => {
-      const nextAddresses = [
-        ...stateRef.current.user.addresses,
-        { ...addr, id: `addr_${Date.now()}` },
-      ];
+      const id = `addr_${Date.now()}`;
+      const isDefault = Boolean(addr.isDefault) || stateRef.current.user.addresses.length === 0;
+      const created: SavedAddress = stripUndefined({ ...addr, id, isDefault });
+      const prevCleared = isDefault
+        ? stateRef.current.user.addresses.map((a) => ({ ...a, isDefault: false }))
+        : stateRef.current.user.addresses;
+      const nextAddresses = isDefault ? [created, ...prevCleared] : [...prevCleared, created];
       setState((prev) => ({
         ...prev,
         user: { ...prev.user, addresses: nextAddresses },
       }));
-      if (auth.currentUser) {
-        void syncUserDocFields(auth.currentUser.uid, { addresses: nextAddresses });
+      const current = auth.currentUser;
+      if (current && !current.isAnonymous) {
+        if (isDefault) {
+          prevCleared.forEach((a) => {
+            void setDoc(
+              doc(db, 'users', current.uid, 'addresses', a.id),
+              stripUndefined({ ...a, uid: current.uid, updatedAtServer: serverTimestamp() }),
+              { merge: true }
+            ).catch((err) =>
+              handleFirestoreError(err, OperationType.WRITE, `users/${current.uid}/addresses/${a.id}`)
+            );
+          });
+        }
+        void setDoc(
+          doc(db, 'users', current.uid, 'addresses', id),
+          stripUndefined({
+            ...created,
+            uid: current.uid,
+            createdAtServer: serverTimestamp(),
+            updatedAtServer: serverTimestamp(),
+          })
+        ).catch((err) =>
+          handleFirestoreError(err, OperationType.CREATE, `users/${current.uid}/addresses/${id}`)
+        );
+        void syncUserDocFields(current.uid, { addresses: nextAddresses });
       }
-      showToast(t('تم حفظ العنوان', 'Address saved'));
+      showToast(t('تم حفظ العنوان بنجاح', 'Address saved'));
+      return created;
+    },
+    updateAddress: (addr) => {
+      const prevAddresses = stateRef.current.user.addresses;
+      const nextAddresses = prevAddresses.map((a) => {
+        if (a.id === addr.id) return stripUndefined(addr);
+        return addr.isDefault ? { ...a, isDefault: false } : a;
+      });
+      setState((prev) => ({
+        ...prev,
+        user: { ...prev.user, addresses: nextAddresses },
+      }));
+      const current = auth.currentUser;
+      if (current && !current.isAnonymous) {
+        if (addr.isDefault) {
+          prevAddresses
+            .filter((a) => a.id !== addr.id && a.isDefault)
+            .forEach((a) => {
+              void setDoc(
+                doc(db, 'users', current.uid, 'addresses', a.id),
+                stripUndefined({
+                  ...a,
+                  isDefault: false,
+                  uid: current.uid,
+                  updatedAtServer: serverTimestamp(),
+                }),
+                { merge: true }
+              ).catch((err) =>
+                handleFirestoreError(err, OperationType.WRITE, `users/${current.uid}/addresses/${a.id}`)
+              );
+            });
+        }
+        void setDoc(
+          doc(db, 'users', current.uid, 'addresses', addr.id),
+          stripUndefined({
+            ...addr,
+            uid: current.uid,
+            updatedAtServer: serverTimestamp(),
+          }),
+          { merge: true }
+        ).catch((err) =>
+          handleFirestoreError(err, OperationType.WRITE, `users/${current.uid}/addresses/${addr.id}`)
+        );
+        void syncUserDocFields(current.uid, { addresses: nextAddresses });
+      }
+      showToast(t('تم تحديث العنوان', 'Address updated'));
+    },
+    setDefaultAddress: (id) => {
+      const nextAddresses = stateRef.current.user.addresses.map((a) => ({
+        ...a,
+        isDefault: a.id === id,
+      }));
+      setState((prev) => ({
+        ...prev,
+        user: { ...prev.user, addresses: nextAddresses },
+      }));
+      const current = auth.currentUser;
+      if (current && !current.isAnonymous) {
+        nextAddresses.forEach((a) => {
+          void setDoc(
+            doc(db, 'users', current.uid, 'addresses', a.id),
+            stripUndefined({ ...a, uid: current.uid, updatedAtServer: serverTimestamp() }),
+            { merge: true }
+          ).catch((err) =>
+            handleFirestoreError(err, OperationType.WRITE, `users/${current.uid}/addresses/${a.id}`)
+          );
+        });
+        void syncUserDocFields(current.uid, { addresses: nextAddresses });
+      }
+      showToast(t('تم تعيين العنوان الافتراضي', 'Default address updated'));
     },
     deleteAddress: (id) => {
       const nextAddresses = stateRef.current.user.addresses.filter((a) => a.id !== id);
@@ -1839,23 +2240,43 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         ...prev,
         user: { ...prev.user, addresses: nextAddresses },
       }));
-      if (auth.currentUser) {
-        void syncUserDocFields(auth.currentUser.uid, { addresses: nextAddresses });
+      const current = auth.currentUser;
+      if (current && !current.isAnonymous) {
+        void deleteDoc(doc(db, 'users', current.uid, 'addresses', id)).catch((err) =>
+          handleFirestoreError(err, OperationType.DELETE, `users/${current.uid}/addresses/${id}`)
+        );
+        void syncUserDocFields(current.uid, { addresses: nextAddresses });
       }
     },
     savePrescription: (rx) => {
-      const nextRx = [
-        { ...rx, id: `rx_${Date.now()}`, savedAt: new Date().toISOString() },
-        ...stateRef.current.user.prescriptions,
-      ];
+      const id = `rx_${Date.now()}`;
+      const created: SavedPrescription = stripUndefined({
+        ...rx,
+        id,
+        savedAt: new Date().toISOString(),
+      });
+      const nextRx = [created, ...stateRef.current.user.prescriptions];
       setState((prev) => ({
         ...prev,
         user: { ...prev.user, prescriptions: nextRx },
       }));
-      if (auth.currentUser) {
-        void syncUserDocFields(auth.currentUser.uid, { prescriptions: nextRx });
+      const current = auth.currentUser;
+      if (current && !current.isAnonymous) {
+        void setDoc(
+          doc(db, 'users', current.uid, 'prescriptions', id),
+          stripUndefined({
+            ...created,
+            uid: current.uid,
+            createdAtServer: serverTimestamp(),
+            updatedAtServer: serverTimestamp(),
+          })
+        ).catch((err) =>
+          handleFirestoreError(err, OperationType.CREATE, `users/${current.uid}/prescriptions/${id}`)
+        );
+        void syncUserDocFields(current.uid, { prescriptions: nextRx });
       }
       showToast(t('تم حفظ الوصفة الطبية في ملفك', 'Prescription saved to profile'));
+      return created;
     },
     deletePrescription: (id) => {
       const nextRx = stateRef.current.user.prescriptions.filter((p) => p.id !== id);
@@ -1863,8 +2284,12 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         ...prev,
         user: { ...prev.user, prescriptions: nextRx },
       }));
-      if (auth.currentUser) {
-        void syncUserDocFields(auth.currentUser.uid, { prescriptions: nextRx });
+      const current = auth.currentUser;
+      if (current && !current.isAnonymous) {
+        void deleteDoc(doc(db, 'users', current.uid, 'prescriptions', id)).catch((err) =>
+          handleFirestoreError(err, OperationType.DELETE, `users/${current.uid}/prescriptions/${id}`)
+        );
+        void syncUserDocFields(current.uid, { prescriptions: nextRx });
       }
     },
     upsertProduct: (product) => {

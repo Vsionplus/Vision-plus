@@ -56,16 +56,11 @@ export const ProductCard: React.FC<ProductCardProps> = ({ product }) => {
           ? defaultVariant.colorNameAr
           : defaultVariant.colorNameEn
         : undefined,
+      selectedOptions: defaultVariant
+        ? { color: locale === 'ar' ? defaultVariant.colorNameAr : defaultVariant.colorNameEn }
+        : undefined,
       quantity: 1,
       unitPriceSdg: product.priceSdg,
-      ...(product.contactLensSpecs
-        ? {
-            contactLensSelection: {
-              rightSph: product.contactLensSpecs.sphOptions[0] || '-1.00',
-              leftSph: product.contactLensSpecs.sphOptions[0] || '-1.00',
-            },
-          }
-        : {}),
     });
   };
 
