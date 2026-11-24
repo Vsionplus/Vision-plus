@@ -301,7 +301,10 @@ export default defineConfig(() => {
           ],
         },
         devOptions: {
-          enabled: process.env.DISABLE_HMR !== 'true',
+          // Disabled in dev because vite-plugin-pwa's registerDevSW calls import.meta.hot.send(),
+          // which throws when HMR WebSocket transport is disabled or unavailable in preview.
+          // Production builds (vite build) still generate the full service worker and manifest.
+          enabled: false,
           type: 'module',
         },
       }),

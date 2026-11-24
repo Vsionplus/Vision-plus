@@ -232,6 +232,8 @@ export function mapFirebaseAuthError(error: unknown, locale: Locale = 'ar'): str
   switch (code) {
     case 'auth/invalid-email':
       return ar('صيغة البريد الإلكتروني غير صحيحة.', 'Invalid email address format.');
+    case 'auth/missing-email':
+      return ar('يرجى إدخال البريد الإلكتروني أولاً.', 'Please enter your email address first.');
     case 'auth/user-disabled':
       return ar('تم تعطيل هذا الحساب. يرجى التواصل مع إدارة المتجر.', 'This account has been disabled.');
     case 'auth/user-not-found':

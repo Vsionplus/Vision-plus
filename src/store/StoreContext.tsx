@@ -7,6 +7,7 @@ import {
   onAuthStateChanged,
   reauthenticateWithCredential,
   sendEmailVerification,
+  sendPasswordResetEmail,
   signInAnonymously,
   signInWithEmailAndPassword,
   signOut,
@@ -117,7 +118,7 @@ export type AuthScreenMode = 'none' | 'entry' | 'verify_email';
 
 export interface AuthModalState {
   open: boolean;
-  view: 'choice' | 'login' | 'register';
+  view: 'choice' | 'login' | 'register' | 'reset';
   checkoutNotice: boolean;
 }
 
@@ -242,12 +243,13 @@ interface StoreContextValue extends StoreState {
   openAuthEntry: () => void;
   openVerifyEmailScreen: () => void;
   closeVerifyEmailScreen: () => void;
-  openAuthModal: (view?: 'choice' | 'login' | 'register', checkoutNotice?: boolean) => void;
+  openAuthModal: (view?: 'choice' | 'login' | 'register' | 'reset', checkoutNotice?: boolean) => void;
   closeAuthModal: () => void;
   continueAsGuest: () => Promise<void>;
   loginWithEmail: (email: string, password: string) => Promise<void>;
   loginAdminWithEmail: (email: string, password: string) => Promise<void>;
   registerWithEmail: (payload: RegisterPayload) => Promise<void>;
+  sendPasswordReset: (email: string) => Promise<void>;
   refreshEmailVerification: (silent?: boolean) => Promise<boolean>;
   resendVerificationEmail: () => Promise<void>;
   changeVerificationEmail: (
@@ -1322,6 +1324,32 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   // Auth Methods
   const continueAsGuest = useCallback(async () => {
     try {
+      const current = auth.currentUser;
+      if (current?.isAnonymous) {
+        await ensureUserDocument(current);
+        setState((prev) => ({
+          ...prev,
+          activeTab: 'home',
+          authScreenMode: 'none',
+          authModal: { open: false, view: 'choice', checkoutNotice: false },
+        }));
+        showToast(t('أنت تتصفح الآن كضيف', 'You are browsing as Guest'));
+        return;
+      }
+
+      if (current && !current.isAnonymous) {
+        await signOut(auth);
+        setState((prev) => ({
+          ...prev,
+          cart: [],
+          orders: [],
+          consults: [],
+          directoryUsers: [],
+          pendingCheckoutReturn: false,
+          adminRoute: 'store',
+        }));
+      }
+
       const cred = await signInAnonymously(auth);
       await ensureUserDocument(cred.user);
       setState((prev) => ({
@@ -1531,6 +1559,32 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
           guestCart.length > 0
             ? t('تم تسجيل الدخول ودمج سلة المشتريات بنجاح', 'Signed in & cart merged')
             : t('تم تسجيل الدخول بنجاح', 'Signed in successfully')
+        );
+      } catch (error) {
+        throw new Error(mapFirebaseAuthError(error, stateRef.current.locale));
+      }
+    },
+    [showToast, t]
+  );
+
+  const sendPasswordReset = useCallback(
+    async (email: string) => {
+      const cleanEmail = email.trim();
+      if (!cleanEmail || !cleanEmail.includes('@')) {
+        throw new Error(
+          stateRef.current.locale === 'ar'
+            ? 'يرجى إدخال بريد إلكتروني صحيح.'
+            : 'Please enter a valid email address.'
+        );
+      }
+      try {
+        auth.languageCode = stateRef.current.locale;
+        await sendPasswordResetEmail(auth, cleanEmail);
+        showToast(
+          t(
+            'تم إرسال رابط استعادة كلمة المرور إلى بريدك الإلكتروني',
+            'Password reset link sent to your email'
+          )
         );
       } catch (error) {
         throw new Error(mapFirebaseAuthError(error, stateRef.current.locale));
@@ -1881,6 +1935,7 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     loginWithEmail,
     loginAdminWithEmail,
     registerWithEmail,
+    sendPasswordReset,
     refreshEmailVerification,
     resendVerificationEmail,
     changeVerificationEmail,

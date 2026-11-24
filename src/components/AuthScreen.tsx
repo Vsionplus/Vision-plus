@@ -1,17 +1,20 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import {
   Mail,
   Lock,
   User,
   Phone,
   LogIn,
+  LogOut,
   UserPlus,
   UserCheck,
+  KeyRound,
   Eye,
   EyeOff,
   ArrowRight,
   ArrowLeft,
   ShieldCheck,
+  CheckCircle2,
   X,
   AlertCircle,
 } from 'lucide-react';
@@ -19,7 +22,7 @@ import { useStore } from '../store/StoreContext';
 
 interface AuthScreenProps {
   mode?: 'page' | 'modal';
-  initialView?: 'choice' | 'login' | 'register';
+  initialView?: 'choice' | 'login' | 'register' | 'reset';
   checkoutNotice?: boolean;
   onClose?: () => void;
 }
@@ -34,13 +37,17 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({
     locale,
     t,
     appearance,
+    user,
+    firebaseUser,
+    isGuest,
     loginWithEmail,
     registerWithEmail,
     continueAsGuest,
-    isGuest,
+    sendPasswordReset,
+    logout,
   } = useStore();
 
-  const [view, setView] = useState<'choice' | 'login' | 'register'>(initialView);
+  const [view, setView] = useState<'choice' | 'login' | 'register' | 'reset'>(initialView);
   const [name, setName] = useState('');
   const [phone, setPhone] = useState('+249');
   const [email, setEmail] = useState('');
@@ -49,10 +56,41 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({
   const [showPassword, setShowPassword] = useState(false);
   const [loading, setLoading] = useState(false);
   const [guestLoading, setGuestLoading] = useState(false);
+  const [resetLoading, setResetLoading] = useState(false);
+  const [resetCooldown, setResetCooldown] = useState(0);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
+  const [resetSuccessMsg, setResetSuccessMsg] = useState<string | null>(null);
   const [showSwitchToLoginHint, setShowSwitchToLoginHint] = useState(false);
 
+  useEffect(() => {
+    setView(initialView);
+    setErrorMsg(null);
+    setResetSuccessMsg(null);
+    setShowSwitchToLoginHint(false);
+    if (initialView === 'reset' && user.email) {
+      setEmail((prev) => prev || user.email);
+    }
+  }, [initialView, user.email]);
+
+  useEffect(() => {
+    if (resetCooldown <= 0) return;
+    const timer = window.setInterval(() => {
+      setResetCooldown((sec) => (sec > 1 ? sec - 1 : 0));
+    }, 1000);
+    return () => window.clearInterval(timer);
+  }, [resetCooldown]);
+
   const BackIcon = locale === 'ar' ? ArrowRight : ArrowLeft;
+
+  const switchView = (nextView: 'choice' | 'login' | 'register' | 'reset') => {
+    setErrorMsg(null);
+    setResetSuccessMsg(null);
+    setShowSwitchToLoginHint(false);
+    if (nextView === 'reset' && user.email) {
+      setEmail((prev) => prev || user.email);
+    }
+    setView(nextView);
+  };
 
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -117,6 +155,11 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({
 
   const handleGuest = async () => {
     setErrorMsg(null);
+    setResetSuccessMsg(null);
+    if (mode === 'modal' && isGuest && onClose) {
+      onClose();
+      return;
+    }
     setGuestLoading(true);
     try {
       await continueAsGuest();
@@ -124,6 +167,38 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({
       setErrorMsg(err instanceof Error ? err.message : t('تعذر الدخول كضيف.', 'Guest sign-in failed.'));
     } finally {
       setGuestLoading(false);
+    }
+  };
+
+  const handlePasswordReset = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setErrorMsg(null);
+    setResetSuccessMsg(null);
+
+    const targetEmail = email.trim();
+    if (!targetEmail || !targetEmail.includes('@')) {
+      setErrorMsg(t('يرجى إدخال بريد إلكتروني صحيح.', 'Please enter a valid email address.'));
+      return;
+    }
+
+    setResetLoading(true);
+    try {
+      await sendPasswordReset(targetEmail);
+      setResetCooldown(60);
+      setResetSuccessMsg(
+        t(
+          `تم إرسال رابط استعادة كلمة المرور إلى (${targetEmail}). يرجى فحص البريد الوارد والرسائل غير المرغوب فيها.`,
+          `A password reset link has been sent to (${targetEmail}). Please check your inbox and spam folder.`
+        )
+      );
+    } catch (err) {
+      setErrorMsg(
+        err instanceof Error
+          ? err.message
+          : t('تعذر إرسال رابط استعادة كلمة المرور.', 'Could not send reset link.')
+      );
+    } finally {
+      setResetLoading(false);
     }
   };
 
@@ -166,7 +241,7 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({
               {locale === 'ar' ? appearance.appNameAr : appearance.appNameEn}
             </div>
             <div className="text-xs text-slate-300">
-              {locale === 'ar' ? appearance.appNameEn : appearance.appNameAr}
+              {t('تسجيل الدخول للعميل', 'Customer Account Portal')}
             </div>
           </div>
         </div>
@@ -175,9 +250,11 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({
           {checkoutNotice
             ? t('سجّل دخولك أو أنشئ حساباً لإتمام الشراء', 'Sign in or register to complete your purchase')
             : view === 'login'
-            ? t('تسجيل الدخول', 'Sign In')
+            ? t('تسجيل الدخول للعميل', 'Customer Sign In')
             : view === 'register'
-            ? t('إنشاء حساب جديد', 'Create New Account')
+            ? t('تسجيل حساب جديد', 'Create New Account')
+            : view === 'reset'
+            ? t('استعادة كلمة المرور', 'Reset Password')
             : t('مرحباً بك في متجر فيجن بلس', 'Welcome to Vision Plus')}
         </h1>
         <p className="mt-1 text-xs text-slate-300 leading-relaxed">
@@ -185,6 +262,11 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({
             ? t(
                 'سيتم الحفاظ على جميع المنتجات في سلة المشتريات والمفضلة تلقائياً.',
                 'All items in your cart and favorites will be preserved.'
+              )
+            : view === 'reset'
+            ? t(
+                'أدخل بريدك الإلكتروني وسنرسل لك رابطاً لإعادة تعيين كلمة المرور.',
+                'Enter your email address and we will send you a password reset link.'
               )
             : view === 'choice'
             ? t(
@@ -211,11 +293,7 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({
             {showSwitchToLoginHint && (
               <button
                 type="button"
-                onClick={() => {
-                  setErrorMsg(null);
-                  setShowSwitchToLoginHint(false);
-                  setView('login');
-                }}
+                onClick={() => switchView('login')}
                 className="min-h-[44px] w-full px-3 py-2 rounded-lg bg-rose-600 hover:bg-rose-700 text-white font-bold text-xs transition-colors"
               >
                 {t('الانتقال إلى تسجيل الدخول', 'Switch to Sign In')}
@@ -224,15 +302,22 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({
           </div>
         )}
 
+        {resetSuccessMsg && (
+          <div
+            role="status"
+            className="p-3.5 rounded-xl bg-emerald-50 dark:bg-emerald-950/30 border border-emerald-200 dark:border-emerald-900/60 text-emerald-800 dark:text-emerald-200 text-xs flex items-start gap-2"
+          >
+            <CheckCircle2 className="w-4 h-4 shrink-0 mt-0.5 text-emerald-600 dark:text-emerald-400" />
+            <span className="leading-relaxed font-semibold">{resetSuccessMsg}</span>
+          </div>
+        )}
+
         {/* Step 1: Entry / Modal Choice */}
         {view === 'choice' && (
           <div className="space-y-3">
             <button
               type="button"
-              onClick={() => {
-                setErrorMsg(null);
-                setView('login');
-              }}
+              onClick={() => switchView('login')}
               style={{ backgroundColor: appearance.primaryColor }}
               className="w-full min-h-[48px] px-5 py-3 rounded-2xl text-white font-extrabold text-sm flex items-center justify-center gap-2.5 hover:opacity-95 transition-opacity"
             >
@@ -242,10 +327,7 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({
 
             <button
               type="button"
-              onClick={() => {
-                setErrorMsg(null);
-                setView('register');
-              }}
+              onClick={() => switchView('register')}
               style={{
                 backgroundColor: appearance.secondaryColor,
                 color: appearance.primaryColor,
@@ -253,17 +335,17 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({
               className="w-full min-h-[48px] px-5 py-3 rounded-2xl font-extrabold text-sm flex items-center justify-center gap-2.5 hover:opacity-95 transition-opacity"
             >
               <UserPlus className="w-5 h-5" />
-              <span>{t('إنشاء حساب جديد', 'Create New Account')}</span>
+              <span>{t('تسجيل حساب جديد', 'Create New Account')}</span>
             </button>
 
-            {mode === 'page' && !isGuest && !checkoutNotice && (
+            {!checkoutNotice && (
               <button
                 type="button"
                 disabled={guestLoading}
                 onClick={handleGuest}
-                className="w-full min-h-[44px] px-5 py-2.5 rounded-2xl border border-slate-200 dark:border-slate-700/80 bg-transparent hover:bg-slate-50 dark:hover:bg-slate-800/50 text-slate-600 dark:text-slate-300 font-semibold text-xs sm:text-sm flex items-center justify-center gap-2 transition-colors disabled:opacity-60"
+                className="w-full min-h-[46px] px-5 py-2.5 rounded-2xl border border-slate-200 dark:border-slate-700/80 bg-transparent hover:bg-slate-50 dark:hover:bg-slate-800/50 text-slate-700 dark:text-slate-200 font-bold text-xs sm:text-sm flex items-center justify-center gap-2 transition-colors disabled:opacity-60"
               >
-                <UserCheck className="w-4 h-4 shrink-0 text-slate-400 dark:text-slate-400" />
+                <UserCheck className="w-4 h-4 shrink-0 text-slate-500 dark:text-slate-400" />
                 <span>
                   {guestLoading
                     ? t('جارٍ الدخول كضيف...', 'Entering as Guest...')
@@ -272,13 +354,37 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({
               </button>
             )}
 
+            <div className="flex flex-wrap items-center justify-center gap-2 pt-1">
+              <button
+                type="button"
+                onClick={() => switchView('reset')}
+                className="min-h-[44px] px-3 py-2 rounded-xl text-xs font-bold text-[#B38B2D] dark:text-[#E2BD5B] hover:bg-amber-50 dark:hover:bg-amber-950/30 inline-flex items-center gap-1.5 transition-colors"
+              >
+                <KeyRound className="w-4 h-4" />
+                <span>{t('نسيت كلمة المرور؟', 'Forgot Password?')}</span>
+              </button>
+
+              {firebaseUser && (
+                <button
+                  type="button"
+                  onClick={() => void logout()}
+                  className="min-h-[44px] px-3 py-2 rounded-xl text-xs font-bold text-rose-600 dark:text-rose-400 hover:bg-rose-50 dark:hover:bg-rose-950/30 inline-flex items-center gap-1.5 transition-colors"
+                >
+                  <LogOut className="w-4 h-4" />
+                  <span>{t('تسجيل الخروج', 'Sign Out')}</span>
+                </button>
+              )}
+            </div>
+
             {mode === 'modal' && onClose && (
               <button
                 type="button"
                 onClick={onClose}
                 className="w-full min-h-[44px] px-4 py-2 rounded-xl text-xs font-semibold text-slate-500 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors"
               >
-                {t('العودة إلى سلة المشتريات', 'Back to Cart')}
+                {checkoutNotice
+                  ? t('العودة إلى سلة المشتريات', 'Back to Cart')
+                  : t('إغلاق ومتابعة التصفح', 'Close & Continue')}
               </button>
             )}
 
@@ -325,9 +431,18 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({
             </div>
 
             <div>
-              <label className="block text-xs font-bold mb-1.5">
-                {t('كلمة المرور', 'Password')}
-              </label>
+              <div className="flex items-center justify-between gap-2 mb-1.5">
+                <label className="block text-xs font-bold">
+                  {t('كلمة المرور', 'Password')}
+                </label>
+                <button
+                  type="button"
+                  onClick={() => switchView('reset')}
+                  className="text-xs font-bold text-[#B38B2D] dark:text-[#E2BD5B] hover:underline py-1"
+                >
+                  {t('نسيت كلمة المرور؟', 'Forgot password?')}
+                </button>
+              </div>
               <div className="relative">
                 <Lock className="w-4 h-4 text-slate-400 absolute top-1/2 -translate-y-1/2 start-3.5" />
                 <input
@@ -364,10 +479,7 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({
             <div className="flex flex-wrap items-center justify-between gap-2 pt-2 border-t border-slate-100 dark:border-slate-800 text-xs">
               <button
                 type="button"
-                onClick={() => {
-                  setErrorMsg(null);
-                  setView('choice');
-                }}
+                onClick={() => switchView('choice')}
                 className="min-h-[44px] px-2 inline-flex items-center gap-1.5 text-slate-500 hover:text-[#11223E] dark:hover:text-white font-semibold"
               >
                 <BackIcon className="w-4 h-4" />
@@ -376,13 +488,10 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({
 
               <button
                 type="button"
-                onClick={() => {
-                  setErrorMsg(null);
-                  setView('register');
-                }}
+                onClick={() => switchView('register')}
                 className="min-h-[44px] px-2 font-bold text-[#B38B2D] dark:text-[#E2BD5B] hover:underline"
               >
-                {t('ليس لديك حساب؟ أنشئ حساباً جديداً', 'Create new account')}
+                {t('تسجيل حساب جديد', 'Create new account')}
               </button>
             </div>
           </form>
@@ -507,17 +616,14 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({
             >
               <UserPlus className="w-4 h-4" />
               <span>
-                {loading ? t('جارٍ إنشاء الحساب...', 'Creating account...') : t('إنشاء حساب جديد', 'Create Account')}
+                {loading ? t('جارٍ إنشاء الحساب...', 'Creating account...') : t('تسجيل حساب جديد', 'Create Account')}
               </span>
             </button>
 
             <div className="flex flex-wrap items-center justify-between gap-2 pt-2 border-t border-slate-100 dark:border-slate-800 text-xs">
               <button
                 type="button"
-                onClick={() => {
-                  setErrorMsg(null);
-                  setView('choice');
-                }}
+                onClick={() => switchView('choice')}
                 className="min-h-[44px] px-2 inline-flex items-center gap-1.5 text-slate-500 hover:text-[#11223E] dark:hover:text-white font-semibold"
               >
                 <BackIcon className="w-4 h-4" />
@@ -526,13 +632,72 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({
 
               <button
                 type="button"
-                onClick={() => {
-                  setErrorMsg(null);
-                  setView('login');
-                }}
+                onClick={() => switchView('login')}
                 className="min-h-[44px] px-2 font-bold text-[#B38B2D] dark:text-[#E2BD5B] hover:underline"
               >
                 {t('لديك حساب بالفعل؟ تسجيل الدخول', 'Already registered? Sign In')}
+              </button>
+            </div>
+          </form>
+        )}
+
+        {/* Step 2C: Forgot Password Form */}
+        {view === 'reset' && (
+          <form onSubmit={handlePasswordReset} className="space-y-4 text-sm">
+            <div>
+              <label className="block text-xs font-bold mb-1.5">
+                {t('البريد الإلكتروني المسجل', 'Registered Email Address')}
+              </label>
+              <div className="relative">
+                <Mail className="w-4 h-4 text-slate-400 absolute top-1/2 -translate-y-1/2 start-3.5" />
+                <input
+                  required
+                  type="email"
+                  dir="ltr"
+                  autoComplete="email"
+                  value={email}
+                  onChange={(e) => setEmail(e.target.value)}
+                  placeholder="name@example.com"
+                  className="w-full min-h-[46px] ps-10 pe-3.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-[#0D131F] text-sm focus:outline-none focus:ring-2 focus:ring-[var(--vp-secondary)]"
+                />
+              </div>
+            </div>
+
+            <button
+              type="submit"
+              disabled={resetLoading || resetCooldown > 0}
+              style={{ backgroundColor: appearance.primaryColor }}
+              className="w-full min-h-[48px] px-5 py-3 rounded-2xl text-white font-extrabold text-sm flex items-center justify-center gap-2 hover:opacity-95 disabled:opacity-60 transition-opacity"
+            >
+              <KeyRound className="w-4 h-4" />
+              <span>
+                {resetLoading
+                  ? t('جارٍ إرسال الرابط...', 'Sending reset link...')
+                  : resetCooldown > 0
+                  ? t(
+                      `إعادة الإرسال بعد ${resetCooldown} ثانية`,
+                      `Resend available in ${resetCooldown}s`
+                    )
+                  : t('إرسال رابط استعادة كلمة المرور', 'Send Password Reset Link')}
+              </span>
+            </button>
+
+            <div className="flex flex-wrap items-center justify-between gap-2 pt-2 border-t border-slate-100 dark:border-slate-800 text-xs">
+              <button
+                type="button"
+                onClick={() => switchView('choice')}
+                className="min-h-[44px] px-2 inline-flex items-center gap-1.5 text-slate-500 hover:text-[#11223E] dark:hover:text-white font-semibold"
+              >
+                <BackIcon className="w-4 h-4" />
+                <span>{t('الرجوع للخيارات', 'Back')}</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => switchView('login')}
+                className="min-h-[44px] px-2 font-bold text-[#B38B2D] dark:text-[#E2BD5B] hover:underline"
+              >
+                {t('العودة لتسجيل الدخول', 'Back to Sign In')}
               </button>
             </div>
           </form>

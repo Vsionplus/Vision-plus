@@ -18,6 +18,9 @@ import {
   RefreshCw,
   LogIn,
   LogOut,
+  UserPlus,
+  KeyRound,
+  UserCheck,
 } from 'lucide-react';
 import { hasLegacyBrandString, useStore } from '../store/StoreContext';
 import { formatShortDate } from '../utils/format';
@@ -36,6 +39,7 @@ export const NavigationShell: React.FC<{ children: React.ReactNode }> = ({ child
     user,
     isGuest,
     openAuthModal,
+    continueAsGuest,
     logout,
     settings,
     appearance,
@@ -205,26 +209,67 @@ export const NavigationShell: React.FC<{ children: React.ReactNode }> = ({ child
           {/* Utility Sub-Bar */}
           <div className="bg-slate-50 dark:bg-[#0F1624] border-t border-slate-200/70 dark:border-slate-800/80">
             <div className="max-w-7xl mx-auto px-3 sm:px-6 py-1.5 flex items-center justify-between gap-2 overflow-x-auto text-xs">
-              <div className="flex items-center gap-2 shrink-0">
+              <div className="flex items-center gap-1.5 shrink-0">
                 {isGuest ? (
-                  <button
-                    type="button"
-                    onClick={() => openAuthModal('login', false)}
-                    className="px-2.5 py-1 rounded-lg bg-[#11223E] text-white font-semibold flex items-center gap-1.5 whitespace-nowrap"
-                  >
-                    <LogIn className="w-3.5 h-3.5" />
-                    {t('تسجيل الدخول', 'Sign In')}
-                  </button>
+                  <>
+                    <button
+                      type="button"
+                      onClick={() => openAuthModal('login', false)}
+                      className="px-2.5 py-1 rounded-lg bg-[#11223E] text-white font-semibold flex items-center gap-1.5 whitespace-nowrap"
+                    >
+                      <LogIn className="w-3.5 h-3.5" />
+                      {t('تسجيل الدخول', 'Sign In')}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => openAuthModal('register', false)}
+                      style={{
+                        backgroundColor: appearance.secondaryColor,
+                        color: appearance.primaryColor,
+                      }}
+                      className="px-2.5 py-1 rounded-lg font-bold flex items-center gap-1 whitespace-nowrap"
+                    >
+                      <UserPlus className="w-3.5 h-3.5" />
+                      {t('تسجيل حساب جديد', 'Register')}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => openAuthModal('reset', false)}
+                      className="px-2.5 py-1 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-[#1A253A] text-[#B38B2D] dark:text-[#E2BD5B] font-semibold flex items-center gap-1 whitespace-nowrap"
+                    >
+                      <KeyRound className="w-3.5 h-3.5" />
+                      {t('نسيت كلمة المرور؟', 'Forgot Password?')}
+                    </button>
+                  </>
                 ) : (
-                  <button
-                    type="button"
-                    onClick={() => void logout()}
-                    className="px-2.5 py-1 rounded-lg bg-slate-200/80 dark:bg-slate-800 text-[#11223E] dark:text-slate-200 font-semibold flex items-center gap-1.5 whitespace-nowrap"
-                  >
-                    <LogOut className="w-3.5 h-3.5" />
-                    {t('تسجيل الخروج', 'Sign Out')}
-                  </button>
+                  <>
+                    <button
+                      type="button"
+                      onClick={() => openAuthModal('reset', false)}
+                      className="px-2.5 py-1 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-[#1A253A] text-[#B38B2D] dark:text-[#E2BD5B] font-semibold flex items-center gap-1 whitespace-nowrap"
+                    >
+                      <KeyRound className="w-3.5 h-3.5" />
+                      {t('نسيت كلمة المرور؟', 'Reset Password')}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => void continueAsGuest()}
+                      className="px-2.5 py-1 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-[#1A253A] text-slate-700 dark:text-slate-200 font-semibold flex items-center gap-1 whitespace-nowrap"
+                    >
+                      <UserCheck className="w-3.5 h-3.5" />
+                      {t('الدخول كضيف', 'Guest')}
+                    </button>
+                  </>
                 )}
+
+                <button
+                  type="button"
+                  onClick={() => void logout()}
+                  className="px-2.5 py-1 rounded-lg bg-slate-200/80 dark:bg-slate-800 text-[#11223E] dark:text-slate-200 font-semibold flex items-center gap-1.5 whitespace-nowrap"
+                >
+                  <LogOut className="w-3.5 h-3.5" />
+                  {t('تسجيل الخروج', 'Sign Out')}
+                </button>
               </div>
 
               <div className="flex items-center gap-2 shrink-0">
