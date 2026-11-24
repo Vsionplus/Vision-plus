@@ -16,6 +16,7 @@ import {
 import {
   collection,
   deleteDoc,
+  deleteField,
   doc,
   getDoc,
   getDocFromServer,
@@ -23,6 +24,7 @@ import {
   limit,
   onSnapshot,
   query,
+  runTransaction,
   serverTimestamp,
   setDoc,
   updateDoc,
@@ -35,6 +37,7 @@ import {
   AppUser,
   BannerAd,
   Brand,
+  CancelRequest,
   CartItem,
   Category,
   CategoryId,
@@ -97,8 +100,7 @@ export type AppTab =
   | 'consult'
   | 'profile'
   | 'favorites'
-  | 'contact'
-  | 'admin';
+  | 'contact';
 
 export type AdminRouteMode = 'store' | 'admin_login' | 'admin_panel';
 
@@ -262,7 +264,10 @@ interface StoreContextValue extends StoreState {
   updateCartItemPrescription: (cartItemId: string, prescription?: PrescriptionData) => void;
   removeFromCart: (cartItemId: string) => void;
   placeOrder: (payload: PlaceOrderPayload) => Promise<Order | null>;
-  cancelOrder: (orderId: string) => void;
+  requestOrderCancellation: (orderId: string, reason: string, note?: string) => Promise<void>;
+  approveOrderCancellation: (orderId: string, adminNote?: string) => Promise<void>;
+  rejectOrderCancellation: (orderId: string, adminNote: string) => Promise<void>;
+  toggleOrderRefunded: (orderId: string, refunded: boolean) => Promise<void>;
   reorder: (orderId: string) => void;
   updateOrderStatus: (orderId: string, status: OrderStatus) => void;
   approveBankTransfer: (orderId: string) => void;
@@ -544,8 +549,6 @@ export function resolveAdminModuleFromLocation(): StaffPermission | null {
 
 function resolveTabFromHash(): AppTab {
   if (typeof window === 'undefined') return 'home';
-  const adminRoute = resolveAdminRouteFromLocation();
-  if (adminRoute === 'admin_panel') return 'admin';
   const raw = window.location.hash.replace(/^#\/?/, '').split('?')[0].toLowerCase();
   if (raw === 'categories' || raw === 'catalog') return 'catalog';
   if (raw === 'cart') return 'cart';
@@ -555,6 +558,31 @@ function resolveTabFromHash(): AppTab {
   if (raw === 'favorites') return 'favorites';
   if (raw === 'contact') return 'contact';
   return 'home';
+}
+
+function getReadBroadcastKey(uid: string): string {
+  return `vp_read_broadcasts_${uid}`;
+}
+
+function readBroadcastIds(uid: string): Set<string> {
+  try {
+    const raw = localStorage.getItem(getReadBroadcastKey(uid));
+    if (!raw) return new Set();
+    const parsed = JSON.parse(raw);
+    return new Set(Array.isArray(parsed) ? parsed : []);
+  } catch {
+    return new Set();
+  }
+}
+
+function saveBroadcastReadId(uid: string, ids: string[]): void {
+  try {
+    const existing = readBroadcastIds(uid);
+    ids.forEach((id) => existing.add(id));
+    localStorage.setItem(getReadBroadcastKey(uid), JSON.stringify(Array.from(existing).slice(-200)));
+  } catch {
+    // Ignore storage quota issues
+  }
 }
 
 function hashForTab(tab: AppTab): string {
@@ -1243,7 +1271,35 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       )
     );
 
-    // 5. Admin-only customers & staff directory
+    // 5. Notifications (broadcast 'all' + customer-targeted for signed-in users, or all for verified admin)
+    const notifQ = isVerifiedAdmin
+      ? collection(db, 'notifications')
+      : !fbUser.isAnonymous
+      ? query(collection(db, 'notifications'), where('customerUid', 'in', ['all', fbUser.uid]))
+      : query(collection(db, 'notifications'), where('customerUid', '==', 'all'));
+    unsubs.push(
+      onSnapshot(
+        notifQ,
+        (snap) => {
+          const readSet = readBroadcastIds(fbUser.uid);
+          const remote = snap.docs
+            .map((d) => {
+              const data = d.data() as AppNotification;
+              if (data.customerUid === 'all' && readSet.has(data.id)) {
+                return { ...data, isRead: true };
+              }
+              return data;
+            })
+            .sort((a, b) => (b.createdAt || '').localeCompare(a.createdAt || ''));
+          if (remote.length > 0) {
+            setState((prev) => ({ ...prev, notifications: remote }));
+          }
+        },
+        (err) => handleFirestoreError(err, OperationType.LIST, 'notifications')
+      )
+    );
+
+    // 6. Admin-only customers & staff directory
     if (isVerifiedAdmin) {
       unsubs.push(
         onSnapshot(
@@ -1568,7 +1624,7 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
           authScreenMode: 'none',
           authModal: { open: false, view: 'choice', checkoutNotice: false },
           adminRoute: 'admin_panel',
-          activeTab: 'admin',
+          activeTab: 'home',
         }));
 
         showToast(t('مرحباً بك في لوحة التحكم', 'Welcome to Admin Panel'));
@@ -1696,7 +1752,7 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     setState((prev) => ({
       ...prev,
       adminRoute: 'admin_panel',
-      activeTab: 'admin',
+      activeTab: 'home',
       selectedProductId: null,
     }));
   }, []);
@@ -1778,10 +1834,6 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     setTheme: (theme) => setState((prev) => ({ ...prev, theme })),
     setActiveTab: (activeTab) => {
       window.scrollTo({ top: 0, behavior: 'smooth' });
-      if (activeTab === 'admin') {
-        navigateToAdminPanel();
-        return;
-      }
       if (stateRef.current.adminRoute !== 'store' && typeof window !== 'undefined') {
         window.history.replaceState(null, '', `/${hashForTab(activeTab)}`);
       }
@@ -2134,25 +2186,341 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       showToast(t(`تم إنشاء الطلب #${orderId} بنجاح`, `Order #${orderId} placed`));
       return newOrder;
     },
-    cancelOrder: (orderId) => {
+    requestOrderCancellation: async (orderId, reason, note) => {
       const current = auth.currentUser;
       if (!current || current.isAnonymous) {
         showToast(t('سجّل دخولك لاستخدام هذه الميزة', 'Sign in to use this feature'));
         return;
       }
+      const order = stateRef.current.orders.find((o) => o.id === orderId);
+      if (!order || order.customerUid !== current.uid) return;
+      const allowedStatuses: OrderStatus[] = [
+        'pending',
+        'awaiting_payment_verification',
+        'confirmed',
+        'preparing',
+      ];
+      if (!allowedStatuses.includes(order.status) || order.cancelRequest?.status === 'pending') {
+        return;
+      }
+      const cleanReason = reason.trim();
+      if (!cleanReason) return;
+      const nowIso = new Date().toISOString();
+      const cancelReq: CancelRequest = stripUndefined({
+        status: 'pending',
+        reason: cleanReason,
+        note: note?.trim() || undefined,
+        requestedAt: nowIso,
+        requestedBy: current.uid,
+      });
+      const nextHistory = [...(order.cancelRequestHistory || []), cancelReq];
+
+      setState((prev) => ({
+        ...prev,
+        orders: prev.orders.map((o) =>
+          o.id === orderId
+            ? {
+                ...o,
+                cancelRequest: cancelReq,
+                cancelRequestHistory: nextHistory,
+                updatedAt: nowIso,
+              }
+            : o
+        ),
+      }));
+
+      try {
+        await updateDoc(
+          doc(db, 'orders', orderId),
+          stripUndefined({
+            cancelRequest: cancelReq,
+            cancelRequestHistory: nextHistory,
+            updatedAt: nowIso,
+            updatedAtServer: serverTimestamp(),
+          })
+        );
+        showToast(
+          t(
+            'تم إرسال طلب الإلغاء وهو الآن قيد المراجعة',
+            'Cancellation request sent and under review'
+          )
+        );
+      } catch (err) {
+        handleFirestoreError(err, OperationType.UPDATE, `orders/${orderId}`);
+      }
+    },
+    approveOrderCancellation: async (orderId, adminNote) => {
+      const current = auth.currentUser;
+      if (!current) return;
+      const nowIso = new Date().toISOString();
+      const cleanAdminNote = adminNote?.trim() || undefined;
+
+      let customerUid = '';
+      let wasVerifiedBankak = false;
+      let approvedReq: CancelRequest | undefined;
+      let nextHistory: CancelRequest[] = [];
+      const updatedProductsMap = new Map<string, { stock: number; isOutOfStock: boolean; variants: Product['variants'] }>();
+
+      try {
+        await runTransaction(db, async (tx) => {
+          const orderRef = doc(db, 'orders', orderId);
+          const orderSnap = await tx.get(orderRef);
+          if (!orderSnap.exists()) {
+            throw new Error('Order not found');
+          }
+          const orderData = orderSnap.data() as Order;
+          customerUid = orderData.customerUid;
+
+          const uniqueProductIds = Array.from(
+            new Set(orderData.items.map((it) => it.productId).filter(Boolean))
+          );
+          const productDocs = new Map<string, Product>();
+          for (const pid of uniqueProductIds) {
+            const pSnap = await tx.get(doc(db, 'products', pid));
+            if (pSnap.exists()) {
+              productDocs.set(pid, pSnap.data() as Product);
+            }
+          }
+
+          wasVerifiedBankak =
+            orderData.paymentMethod === 'bankak' &&
+            (orderData.bankTransferVerified === true ||
+              orderData.status === 'confirmed' ||
+              orderData.status === 'preparing');
+
+          const baseReq: CancelRequest = orderData.cancelRequest || {
+            status: 'pending',
+            reason: 'إلغاء إداري',
+            requestedAt: nowIso,
+            requestedBy: orderData.customerUid,
+          };
+
+          approvedReq = stripUndefined({
+            ...baseReq,
+            status: 'approved',
+            reviewedAt: nowIso,
+            reviewedBy: current.uid,
+            adminNote: cleanAdminNote,
+          });
+
+          const existingHistory = Array.isArray(orderData.cancelRequestHistory)
+            ? [...orderData.cancelRequestHistory]
+            : [];
+          const pendingIdx = existingHistory.findIndex((h) => h.status === 'pending');
+          if (pendingIdx >= 0) {
+            existingHistory[pendingIdx] = approvedReq;
+            nextHistory = existingHistory;
+          } else {
+            nextHistory = [...existingHistory, approvedReq];
+          }
+
+          for (const pid of uniqueProductIds) {
+            const pData = productDocs.get(pid);
+            if (!pData) continue;
+            const matchingItems = orderData.items.filter((it) => it.productId === pid);
+            const totalQty = matchingItems.reduce((sum, it) => sum + (it.quantity || 0), 0);
+            const nextStock = Math.max(0, (pData.stock || 0) + totalQty);
+            const nextVariants = (pData.variants || []).map((v) => {
+              const variantQty = matchingItems
+                .filter(
+                  (it) =>
+                    it.variantLabel &&
+                    (it.variantLabel === v.colorNameAr || it.variantLabel === v.colorNameEn)
+                )
+                .reduce((s, it) => s + (it.quantity || 0), 0);
+              return variantQty > 0 ? { ...v, stock: Math.max(0, (v.stock || 0) + variantQty) } : v;
+            });
+            updatedProductsMap.set(pid, {
+              stock: nextStock,
+              isOutOfStock: nextStock <= 0,
+              variants: nextVariants,
+            });
+            tx.update(
+              doc(db, 'products', pid),
+              stripUndefined({
+                stock: nextStock,
+                isOutOfStock: nextStock <= 0,
+                variants: nextVariants,
+              })
+            );
+          }
+
+          tx.update(
+            orderRef,
+            stripUndefined({
+              status: 'cancelled',
+              cancelRequest: approvedReq,
+              cancelRequestHistory: nextHistory,
+              refundRequired: wasVerifiedBankak,
+              updatedAt: nowIso,
+              updatedAtServer: serverTimestamp(),
+            })
+          );
+        });
+      } catch (err) {
+        handleFirestoreError(err, OperationType.WRITE, `orders/${orderId}`);
+      }
+
+      const notif: AppNotification = {
+        id: `n_${Date.now()}`,
+        customerUid,
+        titleAr: `تمت الموافقة على إلغاء الطلب #${orderId}`,
+        titleEn: `Cancellation Approved for #${orderId}`,
+        bodyAr: wasVerifiedBankak
+          ? 'تم إلغاء الطلب وإعادة المخزون. سيتم إرجاع المبلغ لحسابك عبر بنكك.'
+          : cleanAdminNote || 'تم إلغاء طلبك بنجاح بناءً على طلبك.',
+        bodyEn: wasVerifiedBankak
+          ? 'Order cancelled and Bankak refund initiated.'
+          : cleanAdminNote || 'Your order cancellation request was approved.',
+        isRead: false,
+        createdAt: nowIso,
+        deepLinkType: 'order',
+        deepLinkId: orderId,
+      };
+
+      setState((prev) => ({
+        ...prev,
+        orders: prev.orders.map((o) =>
+          o.id === orderId
+            ? {
+                ...o,
+                status: 'cancelled',
+                cancelRequest: approvedReq,
+                cancelRequestHistory: nextHistory,
+                refundRequired: wasVerifiedBankak,
+                updatedAt: nowIso,
+              }
+            : o
+        ),
+        products: prev.products.map((p) => {
+          const patched = updatedProductsMap.get(p.id);
+          return patched ? { ...p, ...patched } : p;
+        }),
+        notifications: [notif, ...prev.notifications],
+      }));
+
+      if (customerUid) {
+        void setDoc(doc(db, 'notifications', notif.id), stripUndefined(notif)).catch((err) =>
+          handleFirestoreError(err, OperationType.CREATE, `notifications/${notif.id}`)
+        );
+      }
+
+      showToast(
+        t(
+          'تمت الموافقة على الإلغاء وإعادة المخزون وإشعار العميل',
+          'Cancellation approved, stock restored & customer notified'
+        )
+      );
+    },
+    rejectOrderCancellation: async (orderId, adminNote) => {
+      const current = auth.currentUser;
+      const cleanNote = adminNote.trim();
+      if (!current || !cleanNote) return;
+      const order = stateRef.current.orders.find((o) => o.id === orderId);
+      if (!order || !order.cancelRequest) return;
+      const nowIso = new Date().toISOString();
+
+      const rejectedReq: CancelRequest = stripUndefined({
+        ...order.cancelRequest,
+        status: 'rejected',
+        reviewedAt: nowIso,
+        reviewedBy: current.uid,
+        adminNote: cleanNote,
+      });
+
+      const existingHistory = Array.isArray(order.cancelRequestHistory)
+        ? [...order.cancelRequestHistory]
+        : [];
+      const pendingIdx = existingHistory.findIndex((h) => h.status === 'pending');
+      const nextHistory =
+        pendingIdx >= 0
+          ? existingHistory.map((h, i) => (i === pendingIdx ? rejectedReq : h))
+          : [...existingHistory, rejectedReq];
+
+      const notif: AppNotification = {
+        id: `n_${Date.now()}`,
+        customerUid: order.customerUid,
+        titleAr: `تم رفض طلب إلغاء الطلب #${orderId}`,
+        titleEn: `Cancellation Request Rejected for #${orderId}`,
+        bodyAr: `السبب: ${cleanNote}`,
+        bodyEn: `Reason: ${cleanNote}`,
+        isRead: false,
+        createdAt: nowIso,
+        deepLinkType: 'order',
+        deepLinkId: orderId,
+      };
+
+      setState((prev) => ({
+        ...prev,
+        orders: prev.orders.map((o) =>
+          o.id === orderId
+            ? {
+                ...o,
+                cancelRequest: rejectedReq,
+                cancelRequestHistory: nextHistory,
+                updatedAt: nowIso,
+              }
+            : o
+        ),
+        notifications: [notif, ...prev.notifications],
+      }));
+
+      try {
+        await updateDoc(
+          doc(db, 'orders', orderId),
+          stripUndefined({
+            cancelRequest: rejectedReq,
+            cancelRequestHistory: nextHistory,
+            updatedAt: nowIso,
+            updatedAtServer: serverTimestamp(),
+          })
+        );
+      } catch (err) {
+        handleFirestoreError(err, OperationType.UPDATE, `orders/${orderId}`);
+      }
+
+      if (order.customerUid) {
+        void setDoc(doc(db, 'notifications', notif.id), stripUndefined(notif)).catch((err) =>
+          handleFirestoreError(err, OperationType.CREATE, `notifications/${notif.id}`)
+        );
+      }
+
+      showToast(t('تم رفض طلب الإلغاء وإشعار العميل', 'Cancellation request rejected & customer notified'));
+    },
+    toggleOrderRefunded: async (orderId, refunded) => {
+      const current = auth.currentUser;
+      if (!current) return;
       const nowIso = new Date().toISOString();
       setState((prev) => ({
         ...prev,
         orders: prev.orders.map((o) =>
-          o.id === orderId ? { ...o, status: 'cancelled', updatedAt: nowIso } : o
+          o.id === orderId
+            ? {
+                ...o,
+                refunded,
+                refundedAt: refunded ? nowIso : undefined,
+                refundedBy: refunded ? current.uid : undefined,
+                updatedAt: nowIso,
+              }
+            : o
         ),
       }));
-      void updateDoc(doc(db, 'orders', orderId), {
-        status: 'cancelled',
-        updatedAt: nowIso,
-        updatedAtServer: serverTimestamp(),
-      }).catch((err) => handleFirestoreError(err, OperationType.UPDATE, `orders/${orderId}`));
-      showToast(t('تم إلغاء الطلب', 'Order cancelled'));
+      try {
+        await updateDoc(doc(db, 'orders', orderId), {
+          refunded,
+          refundedAt: refunded ? nowIso : deleteField(),
+          refundedBy: refunded ? current.uid : deleteField(),
+          updatedAt: nowIso,
+          updatedAtServer: serverTimestamp(),
+        });
+        showToast(
+          refunded
+            ? t('تم تأكيد إرجاع المبلغ للعميل', 'Refund marked as completed')
+            : t('تم إلغاء علامة الاسترجاع', 'Refund status cleared')
+        );
+      } catch (err) {
+        handleFirestoreError(err, OperationType.UPDATE, `orders/${orderId}`);
+      }
     },
     reorder: (orderId) => {
       const current = auth.currentUser;
@@ -2185,8 +2553,10 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     },
     updateOrderStatus: (orderId, status) => {
       const nowIso = new Date().toISOString();
+      const targetOrder = stateRef.current.orders.find((o) => o.id === orderId);
       const notif: AppNotification = {
         id: `n_${Date.now()}`,
+        customerUid: targetOrder?.customerUid || 'all',
         titleAr: `تحديث حالة الطلب #${orderId}`,
         titleEn: `Order #${orderId} Updated`,
         bodyAr: `أصبحت حالة طلبك الآن: ${status}`,
@@ -2206,12 +2576,19 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         updatedAt: nowIso,
         updatedAtServer: serverTimestamp(),
       }).catch((err) => handleFirestoreError(err, OperationType.UPDATE, `orders/${orderId}`));
+      if (targetOrder?.customerUid) {
+        void setDoc(doc(db, 'notifications', notif.id), stripUndefined(notif)).catch((err) =>
+          handleFirestoreError(err, OperationType.CREATE, `notifications/${notif.id}`)
+        );
+      }
       showToast(t('تم تحديث حالة الطلب وإشعار العميل', 'Order status updated'));
     },
     approveBankTransfer: (orderId) => {
       const nowIso = new Date().toISOString();
+      const targetOrder = stateRef.current.orders.find((o) => o.id === orderId);
       const notif: AppNotification = {
         id: `n_${Date.now()}`,
+        customerUid: targetOrder?.customerUid || 'all',
         titleAr: `تم اعتماد تحويل بنكك للطلب #${orderId}`,
         titleEn: `Bankak Transfer Approved for #${orderId}`,
         bodyAr: 'تم تأكيد استلام المبلغ بنجاح، وطلبك الآن في مرحلة التجهيز.',
@@ -2224,21 +2601,31 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       setState((prev) => ({
         ...prev,
         orders: prev.orders.map((o) =>
-          o.id === orderId ? { ...o, status: 'confirmed', updatedAt: nowIso } : o
+          o.id === orderId
+            ? { ...o, status: 'confirmed', bankTransferVerified: true, updatedAt: nowIso }
+            : o
         ),
         notifications: [notif, ...prev.notifications],
       }));
       void updateDoc(doc(db, 'orders', orderId), {
         status: 'confirmed',
+        bankTransferVerified: true,
         updatedAt: nowIso,
         updatedAtServer: serverTimestamp(),
       }).catch((err) => handleFirestoreError(err, OperationType.UPDATE, `orders/${orderId}`));
+      if (targetOrder?.customerUid) {
+        void setDoc(doc(db, 'notifications', notif.id), stripUndefined(notif)).catch((err) =>
+          handleFirestoreError(err, OperationType.CREATE, `notifications/${notif.id}`)
+        );
+      }
       showToast(t('تم اعتماد الدفع عبر بنكك وتأكيد الطلب', 'Bankak transfer approved'));
     },
     rejectBankTransfer: (orderId) => {
       const nowIso = new Date().toISOString();
+      const targetOrder = stateRef.current.orders.find((o) => o.id === orderId);
       const notif: AppNotification = {
         id: `n_${Date.now()}`,
+        customerUid: targetOrder?.customerUid || 'all',
         titleAr: `تعذر التحقق من إيصال الطلب #${orderId}`,
         titleEn: `Transfer Verification Failed for #${orderId}`,
         bodyAr: 'يرجى التواصل مع خدمة العملاء أو إعادة إرسال إيصال التحويل الصحيح.',
@@ -2251,28 +2638,62 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       setState((prev) => ({
         ...prev,
         orders: prev.orders.map((o) =>
-          o.id === orderId ? { ...o, status: 'cancelled', updatedAt: nowIso } : o
+          o.id === orderId
+            ? { ...o, status: 'cancelled', bankTransferVerified: false, updatedAt: nowIso }
+            : o
         ),
         notifications: [notif, ...prev.notifications],
       }));
       void updateDoc(doc(db, 'orders', orderId), {
         status: 'cancelled',
+        bankTransferVerified: false,
         updatedAt: nowIso,
         updatedAtServer: serverTimestamp(),
       }).catch((err) => handleFirestoreError(err, OperationType.UPDATE, `orders/${orderId}`));
+      if (targetOrder?.customerUid) {
+        void setDoc(doc(db, 'notifications', notif.id), stripUndefined(notif)).catch((err) =>
+          handleFirestoreError(err, OperationType.CREATE, `notifications/${notif.id}`)
+        );
+      }
       showToast(t('تم رفض الإيصال وإشعار العميل', 'Transfer rejected'));
     },
     markNotificationRead: (id) => {
+      const current = auth.currentUser;
+      const target = stateRef.current.notifications.find((n) => n.id === id);
       setState((prev) => ({
         ...prev,
         notifications: prev.notifications.map((n) => (n.id === id ? { ...n, isRead: true } : n)),
       }));
+      if (current && target) {
+        if (target.customerUid === 'all' || !target.customerUid) {
+          saveBroadcastReadId(current.uid, [id]);
+        } else if (target.customerUid === current.uid && !current.isAnonymous) {
+          void updateDoc(doc(db, 'notifications', id), { isRead: true }).catch(() => undefined);
+        }
+      }
     },
     markAllNotificationsRead: () => {
+      const current = auth.currentUser;
+      const currentNotifs = stateRef.current.notifications;
       setState((prev) => ({
         ...prev,
         notifications: prev.notifications.map((n) => ({ ...n, isRead: true })),
       }));
+      if (current) {
+        const broadcastIds = currentNotifs
+          .filter((n) => n.customerUid === 'all' || !n.customerUid)
+          .map((n) => n.id);
+        if (broadcastIds.length > 0) {
+          saveBroadcastReadId(current.uid, broadcastIds);
+        }
+        if (!current.isAnonymous) {
+          currentNotifs
+            .filter((n) => !n.isRead && n.customerUid === current.uid)
+            .forEach((n) => {
+              void updateDoc(doc(db, 'notifications', n.id), { isRead: true }).catch(() => undefined);
+            });
+        }
+      }
     },
     sendBroadcastNotification: (payload) => {
       const notif: AppNotification = {
@@ -2341,25 +2762,27 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     },
     replyConsult: (consultId, text, sender) => {
       const now = new Date().toISOString();
+      const targetConsult = stateRef.current.consults.find((c) => c.id === consultId);
+      const notifId = `n_${Date.now()}`;
+      const opticianNotif: AppNotification | null =
+        sender === 'optician' && targetConsult
+          ? {
+              id: notifId,
+              customerUid: targetConsult.customerUid,
+              titleAr: 'رد جديد من أخصائي البصريات',
+              titleEn: 'New Optician Reply',
+              bodyAr: text.slice(0, 90),
+              bodyEn: text.slice(0, 90),
+              isRead: false,
+              createdAt: now,
+              deepLinkType: 'consult',
+              deepLinkId: consultId,
+            }
+          : null;
+
       let updatedConsult: ConsultRequest | undefined;
       setState((prev) => {
-        const nextNotifs =
-          sender === 'optician'
-            ? [
-                {
-                  id: `n_${Date.now()}`,
-                  titleAr: 'رد جديد من أخصائي البصريات',
-                  titleEn: 'New Optician Reply',
-                  bodyAr: text.slice(0, 90),
-                  bodyEn: text.slice(0, 90),
-                  isRead: false,
-                  createdAt: now,
-                  deepLinkType: 'consult' as const,
-                  deepLinkId: consultId,
-                },
-                ...prev.notifications,
-              ]
-            : prev.notifications;
+        const nextNotifs = opticianNotif ? [opticianNotif, ...prev.notifications] : prev.notifications;
         const nextConsults = prev.consults.map((c) => {
           if (c.id !== consultId) return c;
           updatedConsult = {
@@ -2400,6 +2823,11 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
             updatedAtServer: serverTimestamp(),
           })
         ).catch((err) => handleFirestoreError(err, OperationType.UPDATE, `consults/${consultId}`));
+      }
+      if (opticianNotif && opticianNotif.customerUid && auth.currentUser) {
+        void setDoc(doc(db, 'notifications', opticianNotif.id), stripUndefined(opticianNotif)).catch((err) =>
+          handleFirestoreError(err, OperationType.CREATE, `notifications/${opticianNotif.id}`)
+        );
       }
       if (sender === 'optician') {
         showToast(t('تم إرسال الرد وإشعار العميل', 'Reply sent & customer notified'));

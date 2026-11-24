@@ -1,7 +1,17 @@
-import React from 'react';
-import { RotateCcw, XCircle, Package, Lock, LogIn } from 'lucide-react';
+import React, { useState } from 'react';
+import {
+  RotateCcw,
+  XCircle,
+  Package,
+  Lock,
+  LogIn,
+  Clock,
+  CheckCircle2,
+  MessageCircle,
+  X,
+} from 'lucide-react';
 import { useStore } from '../store/StoreContext';
-import { OrderStatus } from '../types';
+import { Order, OrderStatus } from '../types';
 import { formatSdg, formatShortDate, getOrderStatusLabel } from '../utils/format';
 import { formatLensSummaryLine, hasCustomLensOrRx } from '../utils/prescription';
 import { ResilientImage } from './ResilientImage';
@@ -13,6 +23,21 @@ const TIMELINE_STEPS: OrderStatus[] = [
   'preparing',
   'shipped',
   'delivered',
+];
+
+const CANCELLABLE_STATUSES: OrderStatus[] = [
+  'pending',
+  'awaiting_payment_verification',
+  'confirmed',
+  'preparing',
+];
+
+const CANCEL_REASONS = [
+  { ar: 'غيّرت رأيي', en: 'Changed my mind' },
+  { ar: 'طلبت بالخطأ', en: 'Ordered by mistake' },
+  { ar: 'تأخر التوصيل', en: 'Delivery delay' },
+  { ar: 'وجدت سعراً أفضل', en: 'Found a better price' },
+  { ar: 'أخرى', en: 'Other' },
 ];
 
 export const OrdersView: React.FC = () => {
@@ -27,9 +52,39 @@ export const OrdersView: React.FC = () => {
     appTexts,
     appearance,
     reorder,
-    cancelOrder,
+    requestOrderCancellation,
     openCatalog,
   } = useStore();
+
+  const [cancelTargetOrder, setCancelTargetOrder] = useState<Order | null>(null);
+  const [selectedReason, setSelectedReason] = useState(CANCEL_REASONS[0].ar);
+  const [cancelNote, setCancelNote] = useState('');
+  const [submittingCancel, setSubmittingCancel] = useState(false);
+
+  const whatsappDigits = (settings.whatsapp || '').replace(/[^\d]/g, '');
+
+  const openCancelDialog = (order: Order) => {
+    setCancelTargetOrder(order);
+    setSelectedReason(CANCEL_REASONS[0].ar);
+    setCancelNote('');
+  };
+
+  const handleSubmitCancelRequest = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!cancelTargetOrder || !selectedReason.trim() || submittingCancel) return;
+    setSubmittingCancel(true);
+    try {
+      await requestOrderCancellation(
+        cancelTargetOrder.id,
+        selectedReason,
+        cancelNote.trim() || undefined
+      );
+      setCancelTargetOrder(null);
+      setCancelNote('');
+    } finally {
+      setSubmittingCancel(false);
+    }
+  };
 
   if (isGuest) {
     return (
@@ -95,8 +150,13 @@ export const OrdersView: React.FC = () => {
         {orders.map((order) => {
           const stateObj = settings.deliveryFees.find((s) => s.id === order.stateId);
           const stepIndex = TIMELINE_STEPS.indexOf(order.status);
-          const canCancel =
-            order.status === 'pending' || order.status === 'awaiting_payment_verification';
+          const isCancellableStatus = CANCELLABLE_STATUSES.includes(order.status);
+          const isPostShipped = order.status === 'shipped' || order.status === 'delivered';
+          const cancelReq = order.cancelRequest;
+          const isCancelPending = cancelReq?.status === 'pending';
+          const isCancelRejected = cancelReq?.status === 'rejected';
+          const isCancelApproved =
+            order.status === 'cancelled' && cancelReq?.status === 'approved';
 
           return (
             <article
@@ -105,12 +165,24 @@ export const OrdersView: React.FC = () => {
             >
               <div className="flex flex-wrap items-center justify-between gap-3 border-b border-stone-100 dark:border-zinc-800 pb-4">
                 <div>
-                  <div className="flex items-center gap-2 text-sm font-bold">
+                  <div className="flex flex-wrap items-center gap-2 text-sm font-bold">
                     <span className="font-mono-num">{order.id}</span>
                     <span aria-hidden="true">·</span>
                     <span className="text-[#B38B2D] dark:text-[#E2BD5B]">
                       {getOrderStatusLabel(order.status, locale)}
                     </span>
+                    {isCancelPending && (
+                      <span className="px-2.5 py-0.5 rounded-lg bg-amber-100 dark:bg-amber-950/40 border border-amber-300 dark:border-amber-800 text-amber-800 dark:text-amber-300 text-xs font-extrabold inline-flex items-center gap-1">
+                        <Clock className="w-3.5 h-3.5" />
+                        {t('طلب الإلغاء قيد المراجعة', 'Cancellation Under Review')}
+                      </span>
+                    )}
+                    {isCancelApproved && (
+                      <span className="px-2.5 py-0.5 rounded-lg bg-rose-100 dark:bg-rose-950/40 border border-rose-300 dark:border-rose-800 text-rose-700 dark:text-rose-300 text-xs font-extrabold inline-flex items-center gap-1">
+                        <CheckCircle2 className="w-3.5 h-3.5" />
+                        {t('تمت الموافقة على الإلغاء', 'Cancellation Approved')}
+                      </span>
+                    )}
                   </div>
                   <p className="text-xs text-stone-500 dark:text-zinc-400 mt-1">
                     {formatShortDate(order.createdAt, locale)} ·{' '}
@@ -128,28 +200,95 @@ export const OrdersView: React.FC = () => {
                   <div className="font-mono-num text-lg font-extrabold tabular-nums">
                     {formatSdg(order.totalSdg)}
                   </div>
-                  <div className="flex items-center gap-2 mt-2">
+                  <div className="flex flex-wrap items-center justify-end gap-2 mt-2">
                     <button
                       type="button"
                       onClick={() => reorder(order.id)}
-                      className="px-3 py-1.5 rounded-lg border border-stone-200 dark:border-zinc-700 text-xs font-semibold hover:bg-stone-50 dark:hover:bg-zinc-800 inline-flex items-center gap-1.5"
+                      className="min-h-[44px] px-3.5 py-2 rounded-xl border border-stone-200 dark:border-zinc-700 text-xs font-semibold hover:bg-stone-50 dark:hover:bg-zinc-800 inline-flex items-center gap-1.5"
                     >
                       <RotateCcw className="w-3.5 h-3.5" />
                       {t('إعادة الطلب', 'Reorder')}
                     </button>
-                    {canCancel && (
-                      <button
-                        type="button"
-                        onClick={() => cancelOrder(order.id)}
-                        className="px-3 py-1.5 rounded-lg border border-rose-200 dark:border-rose-900/50 text-rose-700 dark:text-rose-400 text-xs font-semibold hover:bg-rose-50 dark:hover:bg-rose-950/30 inline-flex items-center gap-1.5"
-                      >
-                        <XCircle className="w-3.5 h-3.5" />
-                        {t('إلغاء', 'Cancel')}
-                      </button>
+
+                    {isCancellableStatus && (
+                      isCancelPending ? (
+                        <button
+                          type="button"
+                          disabled
+                          className="min-h-[44px] px-3.5 py-2 rounded-xl border border-amber-300 dark:border-amber-800 bg-amber-50 dark:bg-amber-950/25 text-amber-800 dark:text-amber-300 text-xs font-bold inline-flex items-center gap-1.5 opacity-80 cursor-not-allowed"
+                        >
+                          <Clock className="w-3.5 h-3.5" />
+                          {t('طلب الإلغاء قيد المراجعة', 'Cancellation Pending')}
+                        </button>
+                      ) : (
+                        <button
+                          type="button"
+                          onClick={() => openCancelDialog(order)}
+                          className="min-h-[44px] px-3.5 py-2 rounded-xl border border-rose-200 dark:border-rose-900/50 text-rose-700 dark:text-rose-400 text-xs font-bold hover:bg-rose-50 dark:hover:bg-rose-950/30 inline-flex items-center gap-1.5"
+                        >
+                          <XCircle className="w-3.5 h-3.5" />
+                          {t('طلب إلغاء الطلب', 'Request Cancellation')}
+                        </button>
+                      )
                     )}
                   </div>
                 </div>
               </div>
+
+              {/* Post-shipped cancellation guidance */}
+              {isPostShipped && (
+                <div className="p-3.5 rounded-xl bg-slate-50 dark:bg-zinc-900 border border-slate-200 dark:border-zinc-800 flex flex-wrap items-center justify-between gap-3 text-xs">
+                  <span className="font-bold text-slate-700 dark:text-slate-300">
+                    {t('للإلغاء بعد الشحن تواصل معنا', 'To cancel after shipping, please contact us')}
+                  </span>
+                  {whatsappDigits && (
+                    <a
+                      href={`https://wa.me/${whatsappDigits}?text=${encodeURIComponent(
+                        t(
+                          `مرحباً، أود الاستفسار عن إلغاء/تعديل الطلب رقم ${order.id}`,
+                          `Hello, I would like to inquire about order ${order.id}`
+                        )
+                      )}`}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="min-h-[44px] px-4 py-2 rounded-xl bg-[#16A34A] hover:bg-[#15803D] text-white font-bold inline-flex items-center gap-1.5"
+                    >
+                      <MessageCircle className="w-4 h-4" />
+                      <span>{t('تواصل عبر واتساب', 'Contact via WhatsApp')}</span>
+                    </a>
+                  )}
+                </div>
+              )}
+
+              {/* Cancellation request status banners */}
+              {isCancelPending && cancelReq && (
+                <div className="p-3.5 rounded-xl bg-amber-50 dark:bg-amber-950/20 border border-amber-200 dark:border-amber-900/50 text-amber-900 dark:text-amber-200 text-xs space-y-1">
+                  <div className="font-extrabold flex items-center gap-1.5">
+                    <Clock className="w-4 h-4 shrink-0" />
+                    <span>{t('طلب الإلغاء قيد المراجعة', 'Cancellation Request Under Review')}</span>
+                  </div>
+                  <p>
+                    <strong>{t('السبب:', 'Reason:')}</strong> {cancelReq.reason}
+                    {cancelReq.note ? ` — ${cancelReq.note}` : ''}
+                  </p>
+                </div>
+              )}
+
+              {isCancelRejected && order.status !== 'cancelled' && cancelReq && (
+                <div className="p-3.5 rounded-xl bg-rose-50 dark:bg-rose-950/20 border border-rose-200 dark:border-rose-900/50 text-rose-800 dark:text-rose-200 text-xs space-y-1">
+                  <div className="font-extrabold">
+                    {t('تم رفض طلب الإلغاء', 'Cancellation Request Rejected')}
+                  </div>
+                  {cancelReq.adminNote && (
+                    <p>
+                      <strong>{t('سبب الرفض:', 'Admin reason:')}</strong> {cancelReq.adminNote}
+                    </p>
+                  )}
+                  <p className="text-[11px] opacity-85">
+                    {t('يستمر تجهيز طلبك بشكل طبيعي.', 'Your order continues processing normally.')}
+                  </p>
+                </div>
+              )}
 
               {order.status !== 'cancelled' ? (
                 <div className="grid grid-cols-2 sm:grid-cols-6 gap-2 text-[11px]">
@@ -171,24 +310,35 @@ export const OrdersView: React.FC = () => {
                   })}
                 </div>
               ) : (
-                <div className="p-3 rounded-lg bg-rose-50 dark:bg-rose-950/20 text-rose-700 dark:text-rose-400 text-xs font-semibold">
-                  {t('تم إلغاء هذا الطلب', 'This order was cancelled')}
+                <div className="p-3.5 rounded-xl bg-rose-50 dark:bg-rose-950/20 border border-rose-200 dark:border-rose-900/50 text-rose-700 dark:text-rose-300 text-xs space-y-1">
+                  <div className="font-extrabold">
+                    {isCancelApproved
+                      ? t('تمت الموافقة على الإلغاء', 'Cancellation Approved')
+                      : t('تم إلغاء هذا الطلب', 'This order was cancelled')}
+                  </div>
+                  {cancelReq?.adminNote && (
+                    <p>
+                      <strong>{t('ملاحظة الإدارة:', 'Admin note:')}</strong> {cancelReq.adminNote}
+                    </p>
+                  )}
                 </div>
               )}
 
               <div className="space-y-2.5">
                 {order.items.map((item, idx) => {
                   const rx = item.prescription;
-                  const syntheticRx = rx || (item.lensOption && item.lensOption !== 'none'
-                    ? {
-                        type: 'none' as const,
-                        visionType: item.visionType,
-                        extraOptions: item.extraOptions,
-                        mirrorColor: item.mirrorColor,
-                        lensOption: item.lensOption,
-                        lensExtraPriceSdg: item.lensExtraPriceSdg || 0,
-                      }
-                    : undefined);
+                  const syntheticRx =
+                    rx ||
+                    (item.lensOption && item.lensOption !== 'none'
+                      ? {
+                          type: 'none' as const,
+                          visionType: item.visionType,
+                          extraOptions: item.extraOptions,
+                          mirrorColor: item.mirrorColor,
+                          lensOption: item.lensOption,
+                          lensExtraPriceSdg: item.lensExtraPriceSdg || 0,
+                        }
+                      : undefined);
                   const hasCustomLens = hasCustomLensOrRx(syntheticRx);
                   const lensSummary = formatLensSummaryLine(syntheticRx, lensOptions, locale);
                   const extraPrice = item.lensExtraPriceSdg ?? rx?.lensExtraPriceSdg ?? 0;
@@ -241,6 +391,89 @@ export const OrdersView: React.FC = () => {
           );
         })}
       </div>
+
+      {/* Cancellation Request Modal Dialog */}
+      {cancelTargetOrder && (
+        <div className="fixed inset-0 z-[70] bg-black/55 backdrop-blur-xs flex items-center justify-center p-4">
+          <form
+            onSubmit={handleSubmitCancelRequest}
+            className="bg-white dark:bg-[#181B1E] border border-stone-200 dark:border-zinc-800 rounded-2xl max-w-md w-full p-5 sm:p-6 space-y-4 shadow-2xl text-xs"
+          >
+            <div className="flex items-center justify-between border-b border-stone-100 dark:border-zinc-800 pb-3">
+              <div>
+                <h2 className="text-base font-extrabold text-[#11223E] dark:text-white">
+                  {t('طلب إلغاء الطلب', 'Request Order Cancellation')}
+                </h2>
+                <p className="text-[11px] text-slate-500 font-mono-num mt-0.5">
+                  #{cancelTargetOrder.id}
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setCancelTargetOrder(null)}
+                aria-label={t('إغلاق', 'Close')}
+                className="min-h-[44px] min-w-[44px] flex items-center justify-center rounded-xl hover:bg-slate-100 dark:hover:bg-zinc-800"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <div className="space-y-1.5">
+              <label className="block font-bold">
+                {t('سبب طلب الإلغاء *', 'Cancellation Reason *')}
+              </label>
+              <select
+                required
+                value={selectedReason}
+                onChange={(e) => setSelectedReason(e.target.value)}
+                className="w-full min-h-[44px] px-3 py-2 rounded-xl border border-stone-200 dark:border-zinc-700 bg-stone-50 dark:bg-zinc-900 text-sm"
+              >
+                {CANCEL_REASONS.map((r) => (
+                  <option key={r.ar} value={r.ar}>
+                    {locale === 'ar' ? r.ar : r.en}
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            <div className="space-y-1.5">
+              <label className="block font-bold">
+                {t('ملاحظة إضافية (اختياري)', 'Additional Note (optional)')}
+              </label>
+              <textarea
+                rows={3}
+                maxLength={500}
+                value={cancelNote}
+                onChange={(e) => setCancelNote(e.target.value)}
+                placeholder={t(
+                  'أضف أي تفاصيل تساعد الإدارة في مراجعة طلبك...',
+                  'Add any extra details for our team...'
+                )}
+                className="w-full px-3 py-2 rounded-xl border border-stone-200 dark:border-zinc-700 bg-stone-50 dark:bg-zinc-900 text-sm"
+              />
+            </div>
+
+            <div className="flex items-center justify-end gap-2 pt-2">
+              <button
+                type="button"
+                onClick={() => setCancelTargetOrder(null)}
+                className="min-h-[44px] px-4 py-2 rounded-xl border border-stone-200 dark:border-zinc-700 font-bold"
+              >
+                {t('تراجع', 'Back')}
+              </button>
+              <button
+                type="submit"
+                disabled={submittingCancel || !selectedReason.trim()}
+                className="min-h-[44px] px-5 py-2 rounded-xl bg-rose-600 hover:bg-rose-700 text-white font-extrabold disabled:opacity-50"
+              >
+                {submittingCancel
+                  ? t('جارٍ الإرسال...', 'Submitting...')
+                  : t('إرسال طلب الإلغاء', 'Submit Cancellation Request')}
+              </button>
+            </div>
+          </form>
+        </div>
+      )}
     </div>
   );
 };

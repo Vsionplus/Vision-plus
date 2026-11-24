@@ -20,38 +20,7 @@ import { formatSdg } from '../../utils/format';
 import { IMG_FRAME } from '../../data/seedData';
 import { ResilientImage } from '../ResilientImage';
 import { useAdminSecurity } from './AdminGuard';
-
-async function compressImageFile(file: File): Promise<string> {
-  return new Promise((resolve) => {
-    const reader = new FileReader();
-    reader.onload = () => {
-      const dataUrl = typeof reader.result === 'string' ? reader.result : '';
-      const img = new Image();
-      img.onload = () => {
-        const canvas = document.createElement('canvas');
-        const maxDim = 900;
-        let { width, height } = img;
-        if (width > maxDim || height > maxDim) {
-          if (width > height) {
-            height = Math.round((height * maxDim) / width);
-            width = maxDim;
-          } else {
-            width = Math.round((width * maxDim) / height);
-            height = maxDim;
-          }
-        }
-        canvas.width = width;
-        canvas.height = height;
-        const ctx = canvas.getContext('2d');
-        ctx?.drawImage(img, 0, 0, width, height);
-        resolve(canvas.toDataURL('image/jpeg', 0.82));
-      };
-      img.onerror = () => resolve(dataUrl);
-      img.src = dataUrl;
-    };
-    reader.readAsDataURL(file);
-  });
-}
+import { uploadAdminImage } from '../../lib/firebase';
 
 export const AdminProductsModule: React.FC = () => {
   const {
@@ -207,16 +176,18 @@ export const AdminProductsModule: React.FC = () => {
   const handleUploadMultipleImages = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const files = Array.from(e.target.files || []);
     if (files.length === 0) return;
-    setUploadPct(15);
-    const compressed: string[] = [];
+    setUploadPct(5);
+    const uploadedUrls: string[] = [];
     for (let i = 0; i < files.length; i++) {
-      const url = await compressImageFile(files[i]);
-      if (url) compressed.push(url);
-      setUploadPct(Math.round(((i + 1) / files.length) * 100));
+      const url = await uploadAdminImage('products', files[i], (filePct) => {
+        const overall = Math.round(((i + filePct / 100) / files.length) * 100);
+        setUploadPct(Math.max(5, Math.min(100, overall)));
+      });
+      if (url) uploadedUrls.push(url);
     }
-    setImages((prev) => [...prev, ...compressed]);
+    setImages((prev) => [...prev, ...uploadedUrls]);
     window.setTimeout(() => setUploadPct(null), 500);
-    showToast(t(`تم ضغط ورفع ${compressed.length} صورة`, `${compressed.length} images compressed & ready`));
+    showToast(t(`تم رفع ${uploadedUrls.length} صورة بنجاح`, `${uploadedUrls.length} images uploaded`));
   };
 
   const moveImage = (idx: number, dir: -1 | 1) => {
@@ -611,8 +582,8 @@ export const AdminProductsModule: React.FC = () => {
                       onChange={async (ev) => {
                         const f = ev.target.files?.[0];
                         if (!f) return;
-                        const compressed = await compressImageFile(f);
-                        setVariants(variants.map((it, i) => (i === idx ? { ...it, imageUrl: compressed } : it)));
+                        const uploaded = await uploadAdminImage('products', f);
+                        setVariants(variants.map((it, i) => (i === idx ? { ...it, imageUrl: uploaded } : it)));
                       }}
                     />
                   </label>
@@ -848,7 +819,7 @@ export const AdminCategoriesBrandsModule: React.FC = () => {
                 className="hidden"
                 onChange={async (e) => {
                   const f = e.target.files?.[0];
-                  if (f) setCatImage(await compressImageFile(f));
+                  if (f) setCatImage(await uploadAdminImage('categories', f));
                 }}
               />
             </label>

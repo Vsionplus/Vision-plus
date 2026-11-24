@@ -20,6 +20,7 @@ import {
   X,
   LogOut,
   ArrowRight,
+  Menu,
 } from 'lucide-react';
 import { resolveAdminModuleFromLocation, useStore } from '../store/StoreContext';
 import { useAdminSecurity } from './admin/AdminGuard';
@@ -62,6 +63,7 @@ export const AdminDashboardView: React.FC = () => {
   });
   const [period, setPeriod] = useState<'today' | 'week' | 'month'>('month');
   const [invoiceOrder, setInvoiceOrder] = useState<Order | null>(null);
+  const [mobileNavOpen, setMobileNavOpen] = useState(false);
 
   const navItems: { id: StaffPermission; icon: React.ComponentType<{ className?: string }>; ar: string; en: string }[] = [
     { id: 'dashboard', icon: BarChart3, ar: 'لوحة الإحصائيات', en: 'Dashboard' },
@@ -90,6 +92,7 @@ export const AdminDashboardView: React.FC = () => {
 
   const handleSelectModule = (id: StaffPermission) => {
     setActiveModule(id);
+    setMobileNavOpen(false);
     if (typeof window !== 'undefined') {
       const targetUrl = id === 'dashboard' ? '/vp-admin' : `/vp-admin/${id}`;
       window.history.replaceState(null, '', targetUrl);
@@ -106,6 +109,7 @@ export const AdminDashboardView: React.FC = () => {
     const periodOrders = nonCancelled.filter((o) => new Date(o.createdAt).getTime() >= cutoff);
     const revenueSdg = periodOrders.reduce((s, o) => s + o.totalSdg, 0);
     const pendingBankak = orders.filter((o) => o.status === 'awaiting_payment_verification').length;
+    const pendingCancelRequests = orders.filter((o) => o.cancelRequest?.status === 'pending').length;
     const lowStock = products.filter((p) => !p.isDeleted && p.stock <= 5);
 
     const productSales = new Map<string, { title: string; qty: number; sdg: number }>();
@@ -132,6 +136,7 @@ export const AdminDashboardView: React.FC = () => {
       revenueSdg,
       ordersCount: periodOrders.length,
       pendingBankak,
+      pendingCancelRequests,
       lowStock,
       topProducts,
     };
@@ -195,11 +200,21 @@ export const AdminDashboardView: React.FC = () => {
     <div className="max-w-7xl mx-auto px-4 sm:px-6 pt-6">
       {/* Top Admin Session Bar */}
       <div className="mb-4 bg-white dark:bg-[#131C2E] border border-slate-200 dark:border-slate-800 rounded-2xl px-4 py-3 flex flex-wrap items-center justify-between gap-3">
-        <div>
-          <h1 className="text-base font-extrabold">{t('لوحة تحكم الإدارة', 'Admin Control Panel')}</h1>
-          <p className="text-[11px] text-slate-500">
-            {locale === 'ar' ? settings.storeNameAr : settings.storeNameEn} · {user.email}
-          </p>
+        <div className="flex items-center gap-2.5">
+          <button
+            type="button"
+            onClick={() => setMobileNavOpen(true)}
+            aria-label={t('فتح قائمة الإدارة', 'Open Admin Menu')}
+            className="lg:hidden min-h-[44px] min-w-[44px] rounded-xl border border-slate-200 dark:border-slate-700 flex items-center justify-center hover:bg-slate-50 dark:hover:bg-slate-800"
+          >
+            <Menu className="w-5 h-5" />
+          </button>
+          <div>
+            <h1 className="text-base font-extrabold">{t('لوحة تحكم الإدارة', 'Admin Control Panel')}</h1>
+            <p className="text-[11px] text-slate-500">
+              {locale === 'ar' ? settings.storeNameAr : settings.storeNameEn} · {user.email}
+            </p>
+          </div>
         </div>
         <div className="flex flex-wrap items-center gap-2">
           <button
@@ -221,10 +236,66 @@ export const AdminDashboardView: React.FC = () => {
         </div>
       </div>
 
+      {/* Mobile Slide-in Navigation Drawer */}
+      {mobileNavOpen && (
+        <div className="lg:hidden fixed inset-0 z-[70] bg-black/55 backdrop-blur-xs flex">
+          <div className="w-72 max-w-[85vw] bg-white dark:bg-[#131C2E] h-full p-4 flex flex-col gap-1.5 overflow-y-auto border-e border-slate-200 dark:border-slate-800 shadow-2xl">
+            <div className="flex items-center justify-between pb-3 mb-2 border-b border-slate-100 dark:border-slate-800">
+              <div>
+                <h2 className="text-sm font-extrabold">{t('أقسام الإدارة', 'Admin Modules')}</h2>
+                <p className="text-[11px] text-slate-500">
+                  {user.role === 'staff' ? t('صلاحية موظف: الطلبات فقط', 'Staff: Orders Only') : t('مدير عام', 'Full Admin')}
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setMobileNavOpen(false)}
+                aria-label={t('إغلاق القائمة', 'Close Menu')}
+                className="min-h-[44px] min-w-[44px] rounded-xl flex items-center justify-center hover:bg-slate-100 dark:hover:bg-slate-800"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+            {allowedNav.map((item) => {
+              const Icon = item.icon;
+              const active = activeModule === item.id;
+              return (
+                <button
+                  key={item.id}
+                  type="button"
+                  onClick={() => handleSelectModule(item.id)}
+                  className={`min-h-[44px] px-3 py-2.5 rounded-xl text-xs font-bold flex items-center justify-between gap-2 text-start ${
+                    active
+                      ? 'bg-[#11223E] text-white dark:bg-[#D9B24C] dark:text-[#11223E]'
+                      : 'text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800'
+                  }`}
+                >
+                  <span className="flex items-center gap-2">
+                    <Icon className="w-4 h-4 shrink-0" />
+                    <span>{t(item.ar, item.en)}</span>
+                  </span>
+                  {item.id === 'orders' && analytics.pendingCancelRequests > 0 && (
+                    <span className="px-1.5 py-0.5 rounded-full bg-rose-600 text-white text-[10px] font-extrabold tabular-nums">
+                      {analytics.pendingCancelRequests}
+                    </span>
+                  )}
+                </button>
+              );
+            })}
+          </div>
+          <button
+            type="button"
+            aria-label={t('إغلاق', 'Close backdrop')}
+            onClick={() => setMobileNavOpen(false)}
+            className="flex-1 h-full"
+          />
+        </div>
+      )}
+
       <div className="grid lg:grid-cols-12 gap-6 items-start">
-        {/* Sidebar Navigation */}
-        <aside className="lg:col-span-3 bg-white dark:bg-[#131C2E] border border-slate-200 dark:border-slate-800 rounded-2xl p-3 flex lg:flex-col gap-1 overflow-x-auto">
-          <div className="hidden lg:block px-3 py-2 border-b border-slate-100 dark:border-slate-800 mb-1">
+        {/* Desktop Sidebar Navigation */}
+        <aside className="hidden lg:flex lg:col-span-3 bg-white dark:bg-[#131C2E] border border-slate-200 dark:border-slate-800 rounded-2xl p-3 flex-col gap-1">
+          <div className="px-3 py-2 border-b border-slate-100 dark:border-slate-800 mb-1">
             <h2 className="text-sm font-extrabold">{t('أقسام الإدارة', 'Admin Modules')}</h2>
             <p className="text-[11px] text-slate-500">
               {user.role === 'staff' ? t('صلاحية موظف: الطلبات فقط', 'Staff: Orders Only') : t('مدير عام', 'Full Admin')}
@@ -238,18 +309,25 @@ export const AdminDashboardView: React.FC = () => {
                 key={item.id}
                 type="button"
                 onClick={() => handleSelectModule(item.id)}
-                className={`min-h-[44px] px-3 py-2.5 rounded-xl text-xs font-bold flex items-center gap-2 whitespace-nowrap transition-colors text-start ${
+                className={`min-h-[44px] px-3 py-2.5 rounded-xl text-xs font-bold flex items-center justify-between gap-2 whitespace-nowrap transition-colors text-start ${
                   active
                     ? 'bg-[#11223E] text-white dark:bg-[#D9B24C] dark:text-[#11223E]'
                     : 'text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800'
                 }`}
               >
-                <Icon className="w-4 h-4 shrink-0" />
-                <span>{t(item.ar, item.en)}</span>
+                <span className="flex items-center gap-2">
+                  <Icon className="w-4 h-4 shrink-0" />
+                  <span>{t(item.ar, item.en)}</span>
+                </span>
+                {item.id === 'orders' && analytics.pendingCancelRequests > 0 && (
+                  <span className="px-1.5 py-0.5 rounded-full bg-rose-600 text-white text-[10px] font-extrabold tabular-nums">
+                    {analytics.pendingCancelRequests}
+                  </span>
+                )}
               </button>
             );
           })}
-          <div className="hidden lg:flex flex-col gap-1.5 pt-3 mt-2 border-t border-slate-100 dark:border-slate-800">
+          <div className="flex flex-col gap-1.5 pt-3 mt-2 border-t border-slate-100 dark:border-slate-800">
             <button
               type="button"
               onClick={requestAdminLogout}
@@ -283,7 +361,7 @@ export const AdminDashboardView: React.FC = () => {
                 </div>
               </div>
 
-              <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+              <div className="grid grid-cols-2 lg:grid-cols-5 gap-4">
                 <div className="bg-white dark:bg-[#181B1E] border border-stone-200 dark:border-zinc-800 rounded-xl p-4">
                   <span className="text-xs text-slate-500">{t('مبيعات الفترة (ج.س)', 'Period Sales')}</span>
                   <div className="font-mono-num text-xl font-extrabold text-[#11223E] dark:text-[#E2BD5B] mt-1 tabular-nums">
@@ -302,6 +380,16 @@ export const AdminDashboardView: React.FC = () => {
                     {analytics.pendingBankak}
                   </div>
                 </div>
+                <button
+                  type="button"
+                  onClick={() => handleSelectModule('orders')}
+                  className="bg-white dark:bg-[#181B1E] border border-stone-200 dark:border-zinc-800 rounded-xl p-4 text-start hover:border-rose-400 transition-colors"
+                >
+                  <span className="text-xs text-slate-500">{t('طلبات إلغاء معلقة', 'Pending Cancellations')}</span>
+                  <div className="font-mono-num text-xl font-extrabold text-rose-600 mt-1 tabular-nums">
+                    {analytics.pendingCancelRequests}
+                  </div>
+                </button>
                 <div className="bg-white dark:bg-[#181B1E] border border-stone-200 dark:border-zinc-800 rounded-xl p-4">
                   <span className="text-xs text-slate-500">{t('نواقص المخزون', 'Low Stock')}</span>
                   <div className="font-mono-num text-xl font-extrabold text-rose-600 mt-1 tabular-nums">

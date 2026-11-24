@@ -235,6 +235,20 @@ service cloud.firestore {
         && data.updatedAtServer is timestamp;
     }
 
+    function isValidCancelRequestMap(req) {
+      return req is map
+        && req.keys().hasAll(['status', 'reason', 'requestedAt', 'requestedBy'])
+        && req.keys().hasOnly(['status', 'reason', 'note', 'requestedAt', 'requestedBy', 'reviewedAt', 'reviewedBy', 'adminNote'])
+        && req.status is string && req.status in ['pending', 'approved', 'rejected']
+        && req.reason is string && req.reason.size() >= 1 && req.reason.size() <= 120
+        && (!('note' in req) || (req.note is string && req.note.size() <= 500))
+        && req.requestedAt is string && req.requestedAt.size() <= 64
+        && isValidId(req.requestedBy)
+        && (!('reviewedAt' in req) || (req.reviewedAt is string && req.reviewedAt.size() <= 64))
+        && (!('reviewedBy' in req) || isValidId(req.reviewedBy))
+        && (!('adminNote' in req) || (req.adminNote is string && req.adminNote.size() <= 500));
+    }
+
     function isValidOrder(data) {
       return data.keys().hasAll([
           'id',
@@ -278,7 +292,14 @@ service cloud.firestore {
           'paymentMethod',
           'bankTransferReference',
           'bankTransferReceiptUrl',
+          'bankTransferVerified',
           'status',
+          'cancelRequest',
+          'cancelRequestHistory',
+          'refundRequired',
+          'refunded',
+          'refundedAt',
+          'refundedBy',
           'createdAt',
           'updatedAt',
           'createdAtServer',
@@ -304,7 +325,14 @@ service cloud.firestore {
         && data.paymentMethod is string && data.paymentMethod in ['cod', 'bankak']
         && (!('bankTransferReference' in data) || (data.bankTransferReference is string && data.bankTransferReference.size() <= 120))
         && (!('bankTransferReceiptUrl' in data) || (data.bankTransferReceiptUrl is string && data.bankTransferReceiptUrl.size() <= 800000))
+        && (!('bankTransferVerified' in data) || data.bankTransferVerified is bool)
         && data.status is string && data.status in ['pending', 'awaiting_payment_verification', 'confirmed', 'preparing', 'shipped', 'delivered', 'cancelled']
+        && (!('cancelRequest' in data) || isValidCancelRequestMap(data.cancelRequest))
+        && (!('cancelRequestHistory' in data) || (data.cancelRequestHistory is list && data.cancelRequestHistory.size() <= 20 && (data.cancelRequestHistory.size() == 0 || data.cancelRequestHistory[0] is map)))
+        && (!('refundRequired' in data) || data.refundRequired is bool)
+        && (!('refunded' in data) || data.refunded is bool)
+        && (!('refundedAt' in data) || (data.refundedAt is string && data.refundedAt.size() <= 64))
+        && (!('refundedBy' in data) || (data.refundedBy is string && data.refundedBy.size() <= 128))
         && data.createdAt is string && data.createdAt.size() <= 64
         && data.updatedAt is string && data.updatedAt.size() <= 64
         && data.createdAtServer is timestamp
@@ -675,6 +703,11 @@ service cloud.firestore {
         && incoming().id == orderId
         && incoming().customerUid == request.auth.uid
         && incoming().status in ['pending', 'awaiting_payment_verification']
+        && !('bankTransferVerified' in incoming())
+        && !('cancelRequest' in incoming())
+        && !('cancelRequestHistory' in incoming())
+        && !('refundRequired' in incoming())
+        && !('refunded' in incoming())
         && incoming().createdAtServer == request.time
         && incoming().updatedAtServer == request.time;
       allow update: if isActiveNonAnonAccount()
@@ -686,13 +719,33 @@ service cloud.firestore {
         && incoming().createdAtServer == existing().createdAtServer
         && incoming().updatedAtServer == request.time
         && (
-          ((isAdmin() || isStaff()) && incoming().diff(existing()).affectedKeys().hasOnly(['status', 'updatedAt', 'updatedAtServer']))
+          ((isAdmin() || isStaff()) && incoming().diff(existing()).affectedKeys().hasOnly([
+            'status',
+            'bankTransferVerified',
+            'cancelRequest',
+            'cancelRequestHistory',
+            'refundRequired',
+            'refunded',
+            'refundedAt',
+            'refundedBy',
+            'updatedAt',
+            'updatedAtServer'
+          ]))
           || (
             isEmailVerified()
             && existing().customerUid == request.auth.uid
-            && existing().status in ['pending', 'awaiting_payment_verification']
-            && incoming().status == 'cancelled'
-            && incoming().diff(existing()).affectedKeys().hasOnly(['status', 'updatedAt', 'updatedAtServer'])
+            && existing().status in ['pending', 'awaiting_payment_verification', 'confirmed', 'preparing']
+            && (!('cancelRequest' in existing()) || existing().cancelRequest.status != 'pending')
+            && incoming().status == existing().status
+            && incoming().cancelRequest is map
+            && incoming().cancelRequest.status == 'pending'
+            && incoming().cancelRequest.requestedBy == request.auth.uid
+            && incoming().diff(existing()).affectedKeys().hasOnly([
+              'cancelRequest',
+              'cancelRequestHistory',
+              'updatedAt',
+              'updatedAtServer'
+            ])
           )
         );
       allow delete: if isAdmin() && isValidId(orderId);
@@ -730,43 +783,45 @@ service cloud.firestore {
     }
 
     match /products/{productId} {
-      allow get: if isSignedIn() && isValidId(productId) && (existing().visible == true || isAdmin());
+      allow get: if isSignedIn() && isValidId(productId) && (existing().visible == true || isAdmin() || isStaff());
       allow list: if isSignedIn() && (resource.data.visible == true || isAdmin());
       allow create: if isAdmin() && isValidId(productId) && isValidProduct(incoming()) && incoming().id == productId;
-      allow update: if isAdmin()
-        && isValidId(productId)
+      allow update: if isValidId(productId)
         && isValidProduct(incoming())
         && incoming().id == existing().id
-        && incoming().diff(existing()).affectedKeys().hasOnly([
-          'sku',
-          'titleAr',
-          'titleEn',
-          'descriptionAr',
-          'descriptionEn',
-          'categoryId',
-          'subcategoryId',
-          'brandId',
-          'priceSdg',
-          'oldPriceSdg',
-          'stock',
-          'images',
-          'gender',
-          'frameShape',
-          'material',
-          'variants',
-          'contactLensSpecs',
-          'lensSolutionSpecs',
-          'tags',
-          'visible',
-          'isFeatured',
-          'isNewArrival',
-          'isOnOffer',
-          'isOutOfStock',
-          'isDeleted',
-          'requiresPrescriptionOption',
-          'rating',
-          'reviews'
-        ]);
+        && (
+          (isAdmin() && incoming().diff(existing()).affectedKeys().hasOnly([
+            'sku',
+            'titleAr',
+            'titleEn',
+            'descriptionAr',
+            'descriptionEn',
+            'categoryId',
+            'subcategoryId',
+            'brandId',
+            'priceSdg',
+            'oldPriceSdg',
+            'stock',
+            'images',
+            'gender',
+            'frameShape',
+            'material',
+            'variants',
+            'contactLensSpecs',
+            'lensSolutionSpecs',
+            'tags',
+            'visible',
+            'isFeatured',
+            'isNewArrival',
+            'isOnOffer',
+            'isOutOfStock',
+            'isDeleted',
+            'requiresPrescriptionOption',
+            'rating',
+            'reviews'
+          ]))
+          || (isStaff() && incoming().diff(existing()).affectedKeys().hasOnly(['stock', 'isOutOfStock', 'variants']))
+        );
       allow delete: if isAdmin() && isValidId(productId);
     }
 
@@ -819,14 +874,23 @@ service cloud.firestore {
     }
 
     match /notifications/{notificationId} {
-      allow get: if isSignedIn() && isValidId(notificationId) && (existing().customerUid == 'all' || existing().customerUid == request.auth.uid || isAdmin());
-      allow list: if isSignedIn() && (resource.data.customerUid == 'all' || resource.data.customerUid == request.auth.uid || isAdmin());
-      allow create: if isAdmin() && isValidId(notificationId) && isValidNotification(incoming()) && incoming().id == notificationId;
-      allow update: if isAdmin()
-        && isValidId(notificationId)
+      allow get: if isSignedIn() && isValidId(notificationId) && (existing().customerUid == 'all' || existing().customerUid == request.auth.uid || isAdmin() || isStaff());
+      allow list: if isSignedIn() && (resource.data.customerUid == 'all' || resource.data.customerUid == request.auth.uid || isAdmin() || isStaff());
+      allow create: if (isAdmin() || isStaff()) && isValidId(notificationId) && isValidNotification(incoming()) && incoming().id == notificationId;
+      allow update: if isValidId(notificationId)
         && isValidNotification(incoming())
         && incoming().id == existing().id
-        && incoming().diff(existing()).affectedKeys().hasOnly(['titleAr', 'titleEn', 'bodyAr', 'bodyEn', 'imageUrl', 'segment', 'deepLinkType', 'deepLinkId', 'isRead']);
+        && incoming().customerUid == existing().customerUid
+        && incoming().createdAt == existing().createdAt
+        && (
+          (isAdmin() && incoming().diff(existing()).affectedKeys().hasOnly(['titleAr', 'titleEn', 'bodyAr', 'bodyEn', 'imageUrl', 'segment', 'deepLinkType', 'deepLinkId', 'isRead']))
+          || (
+            isActiveNonAnonAccount()
+            && existing().customerUid == request.auth.uid
+            && incoming().diff(existing()).affectedKeys().hasOnly(['isRead'])
+            && incoming().isRead == true
+          )
+        );
       allow delete: if isAdmin() && isValidId(notificationId);
     }
 

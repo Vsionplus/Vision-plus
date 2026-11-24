@@ -7,7 +7,6 @@ import {
   Trash2,
   ExternalLink,
   MessageCircle,
-  ShieldCheck,
   HelpCircle,
   FileText,
   LogIn,
@@ -46,7 +45,6 @@ export const ProfileView: React.FC = () => {
     savePrescription,
     deletePrescription,
     setActiveTab,
-    navigateToAdminPanel,
     showToast,
   } = useStore();
 
@@ -143,17 +141,6 @@ export const ProfileView: React.FC = () => {
         </div>
         <div className="flex flex-wrap items-center gap-2">
           <PWAInstallButton variant="profile" />
-          {user.role === 'admin' && (
-            <button
-              type="button"
-              onClick={() => navigateToAdminPanel('dashboard')}
-              style={{ backgroundColor: appearance.secondaryColor, color: appearance.primaryColor }}
-              className="min-h-[44px] px-3.5 py-2 rounded-lg text-xs font-extrabold inline-flex items-center gap-1.5"
-            >
-              <ShieldCheck className="w-4 h-4" />
-              {t('لوحة التحكم', 'Control Panel')}
-            </button>
-          )}
           <button
             type="button"
             onClick={() => setActiveTab('favorites')}

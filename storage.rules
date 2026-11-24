@@ -5,20 +5,68 @@ service firebase.storage {
       allow read, write: if false;
     }
 
-    match /prescriptions/{uid}/{fileName} {
-      allow read: if request.auth != null && (
-        request.auth.uid == uid
-        || (
-          request.auth.token.email_verified == true
-          && request.auth.token.email == 'visionplusvisionstore@gmail.com'
-        )
-      );
-      allow create, update: if request.auth != null
-        && request.auth.uid == uid
-        && request.resource != null
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isActiveUser() {
+      return isSignedIn()
+        && request.auth.token.firebase.sign_in_provider != 'anonymous';
+    }
+
+    function isAdmin() {
+      return isActiveUser()
+        && firestore.exists(/databases/ai-studio-opticalstoresuda-121babbb-98d8-4f5d-84f0-b24354715fd0/documents/users/$(request.auth.uid))
+        && firestore.get(/databases/ai-studio-opticalstoresuda-121babbb-98d8-4f5d-84f0-b24354715fd0/documents/users/$(request.auth.uid)).data.role == 'admin'
+        && firestore.get(/databases/ai-studio-opticalstoresuda-121babbb-98d8-4f5d-84f0-b24354715fd0/documents/users/$(request.auth.uid)).data.isBlocked != true;
+    }
+
+    function isValidImageUpload() {
+      return request.resource != null
         && request.resource.size <= 5 * 1024 * 1024
         && request.resource.contentType.matches('image/.*');
-      allow delete: if request.auth != null && request.auth.uid == uid;
+    }
+
+    match /prescriptions/{uid}/{fileName} {
+      allow read: if isSignedIn() && (request.auth.uid == uid || isAdmin());
+      allow create, update: if isSignedIn() && request.auth.uid == uid && isValidImageUpload();
+      allow delete: if isSignedIn() && (request.auth.uid == uid || isAdmin());
+    }
+
+    match /receipts/{uid}/{fileName} {
+      allow read: if isSignedIn() && (request.auth.uid == uid || isAdmin());
+      allow create, update: if isActiveUser() && request.auth.uid == uid && isValidImageUpload();
+      allow delete: if isSignedIn() && (request.auth.uid == uid || isAdmin());
+    }
+
+    match /products/{fileName} {
+      allow read: if true;
+      allow create, update: if isAdmin() && isValidImageUpload();
+      allow delete: if isAdmin();
+    }
+
+    match /banners/{fileName} {
+      allow read: if true;
+      allow create, update: if isAdmin() && isValidImageUpload();
+      allow delete: if isAdmin();
+    }
+
+    match /branding/{fileName} {
+      allow read: if true;
+      allow create, update: if isAdmin() && isValidImageUpload();
+      allow delete: if isAdmin();
+    }
+
+    match /categories/{fileName} {
+      allow read: if true;
+      allow create, update: if isAdmin() && isValidImageUpload();
+      allow delete: if isAdmin();
+    }
+
+    match /notifications/{fileName} {
+      allow read: if true;
+      allow create, update: if isAdmin() && isValidImageUpload();
+      allow delete: if isAdmin();
     }
   }
 }

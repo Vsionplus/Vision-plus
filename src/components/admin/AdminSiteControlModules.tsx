@@ -12,7 +12,7 @@ import {
   Settings,
 } from 'lucide-react';
 import { doc, getDoc } from 'firebase/firestore';
-import { db } from '../../lib/firebase';
+import { db, uploadAdminImage } from '../../lib/firebase';
 import { hasLegacyBrandString, normalizeStoreSettings, useStore } from '../../store/StoreContext';
 import { BannerAd, HomeSectionConfig, StoreSettings } from '../../types';
 import { IMG_HERO_BOUTIQUE } from '../../data/seedData';
@@ -115,7 +115,10 @@ export const AdminHomeBuilderModule: React.FC = () => {
 };
 
 export const AdminBannersModule: React.FC = () => {
-  const { locale, t, banners, categories, products, upsertBanner, deleteBanner } = useStore();
+  const { locale, t, banners, categories, products, upsertBanner, deleteBanner, showToast } = useStore();
+  const [editingBannerId, setEditingBannerId] = useState<string | null>(null);
+  const [confirmDeleteBannerId, setConfirmDeleteBannerId] = useState<string | null>(null);
+  const [uploadPct, setUploadPct] = useState<number | null>(null);
   const [titleAr, setTitleAr] = useState('');
   const [titleEn, setTitleEn] = useState('');
   const [subAr, setSubAr] = useState('');
@@ -128,11 +131,27 @@ export const AdminBannersModule: React.FC = () => {
   const [endDate, setEndDate] = useState('2027-12-31');
   const [order, setOrder] = useState('1');
 
+  const resetForm = () => {
+    setEditingBannerId(null);
+    setTitleAr('');
+    setTitleEn('');
+    setSubAr('');
+    setCtaAr('تسوق الآن');
+    setPlacement('home_top');
+    setTargetType('category');
+    setTargetValue('frames');
+    setImage(IMG_HERO_BOUTIQUE);
+    setStartDate('2026-01-01');
+    setEndDate('2027-12-31');
+    setOrder('1');
+  };
+
   const handleSave = (e: React.FormEvent) => {
     e.preventDefault();
     if (!titleAr.trim()) return;
+    const existing = banners.find((b) => b.id === editingBannerId);
     upsertBanner({
-      id: `b_${Date.now()}`,
+      id: existing ? existing.id : `b_${Date.now()}`,
       titleAr: titleAr.trim(),
       titleEn: titleEn.trim() || titleAr.trim(),
       subtitleAr: subAr.trim(),
@@ -144,22 +163,29 @@ export const AdminBannersModule: React.FC = () => {
       targetType,
       targetValue,
       order: Number(order) || 1,
-      isActive: true,
+      isActive: existing ? existing.isActive : true,
       startDate,
       endDate,
     });
-    setTitleAr('');
-    setTitleEn('');
-    setSubAr('');
+    resetForm();
   };
 
   return (
     <div className="grid lg:grid-cols-12 gap-6 items-start text-xs">
       <form onSubmit={handleSave} className="lg:col-span-6 bg-white dark:bg-[#181B1E] border border-stone-200 dark:border-zinc-800 rounded-xl p-5 space-y-3">
-        <h2 className="text-base font-bold flex items-center gap-2">
-          <ImageIcon className="w-4 h-4 text-[#D9B24C]" />
-          {t('إضافة بانر إعلاني + معاينة مباشرة', 'Add Banner + Live Preview')}
-        </h2>
+        <div className="flex items-center justify-between gap-2">
+          <h2 className="text-base font-bold flex items-center gap-2">
+            <ImageIcon className="w-4 h-4 text-[#D9B24C]" />
+            {editingBannerId
+              ? t('تعديل البانر الإعلاني + معاينة مباشرة', 'Edit Banner + Live Preview')
+              : t('إضافة بانر إعلاني + معاينة مباشرة', 'Add Banner + Live Preview')}
+          </h2>
+          {editingBannerId && (
+            <button type="button" onClick={resetForm} className="text-rose-600 font-bold">
+              {t('إلغاء التعديل', 'Cancel Edit')}
+            </button>
+          )}
+        </div>
 
         {/* Live Banner Preview */}
         <div className="relative h-36 rounded-2xl overflow-hidden bg-[#11223E]">
@@ -212,56 +238,151 @@ export const AdminBannersModule: React.FC = () => {
           <input type="number" value={order} onChange={(e) => setOrder(e.target.value)} placeholder={t('الترتيب', 'Order')} className="px-2.5 py-2 rounded-lg border bg-stone-50 dark:bg-zinc-900 font-mono-num" />
         </div>
 
+        {uploadPct !== null && (
+          <div className="w-full h-2 rounded-full bg-slate-200 overflow-hidden">
+            <div className="h-full bg-[#D9B24C] transition-all" style={{ width: `${uploadPct}%` }} />
+          </div>
+        )}
+
         <div className="flex items-center justify-between pt-2">
-          <label className="px-3 py-2 rounded-lg border font-bold cursor-pointer inline-flex items-center gap-1.5">
+          <label className="min-h-[44px] px-3 py-2 rounded-lg border font-bold cursor-pointer inline-flex items-center gap-1.5">
             <Upload className="w-3.5 h-3.5" />
             {t('رفع صورة البانر', 'Upload Banner Image')}
             <input
               type="file"
               accept="image/*"
               className="hidden"
-              onChange={(e) => {
+              onChange={async (e) => {
                 const f = e.target.files?.[0];
                 if (!f) return;
-                const r = new FileReader();
-                r.onload = () => typeof r.result === 'string' && setImage(r.result);
-                r.readAsDataURL(f);
+                setUploadPct(10);
+                const url = await uploadAdminImage('banners', f, (pct) => setUploadPct(Math.max(10, pct)));
+                setImage(url);
+                window.setTimeout(() => setUploadPct(null), 500);
+                showToast(t('تم رفع صورة البانر', 'Banner image uploaded'));
               }}
             />
           </label>
-          <button type="submit" className="px-5 py-2 rounded-xl bg-[#D9B24C] text-[#11223E] font-extrabold">
-            {t('حفظ البانر', 'Save Banner')}
+          <button type="submit" className="min-h-[44px] px-5 py-2 rounded-xl bg-[#D9B24C] text-[#11223E] font-extrabold">
+            {editingBannerId ? t('تحديث البانر', 'Update Banner') : t('حفظ البانر', 'Save Banner')}
           </button>
         </div>
       </form>
 
       <div className="lg:col-span-6 space-y-3">
-        {banners.map((b) => (
-          <div key={b.id} className="bg-white dark:bg-[#181B1E] border border-stone-200 dark:border-zinc-800 rounded-xl p-3 flex items-center justify-between gap-3">
-            <div className="flex items-center gap-3 min-w-0">
-              <img src={b.image} alt="" className="w-16 h-12 rounded-lg object-cover shrink-0" />
-              <div className="min-w-0">
-                <div className="font-bold truncate">{locale === 'ar' ? b.titleAr : b.titleEn}</div>
-                <div className="text-[11px] text-slate-500 font-mono-num">
-                  {b.placement} · #{b.order} · {b.startDate} → {b.endDate}
+        {banners
+          .slice()
+          .sort((a, b) => a.order - b.order)
+          .map((b, idx, sortedArr) => {
+            const moveBanner = (dir: -1 | 1) => {
+              const target = idx + dir;
+              if (target < 0 || target >= sortedArr.length) return;
+              const swapWith = sortedArr[target];
+              upsertBanner({ ...b, order: swapWith.order });
+              upsertBanner({ ...swapWith, order: b.order });
+            };
+            return (
+              <div key={b.id} className="bg-white dark:bg-[#181B1E] border border-stone-200 dark:border-zinc-800 rounded-xl p-3 flex flex-wrap items-center justify-between gap-3">
+                <div className="flex items-center gap-3 min-w-0">
+                  <img src={b.image} alt="" className="w-16 h-12 rounded-lg object-cover shrink-0" />
+                  <div className="min-w-0">
+                    <div className="font-bold truncate">{locale === 'ar' ? b.titleAr : b.titleEn}</div>
+                    <div className="text-[11px] text-slate-500 font-mono-num">
+                      {b.placement} · #{b.order} · {b.startDate} → {b.endDate}
+                    </div>
+                  </div>
+                </div>
+                <div className="flex items-center gap-1.5 shrink-0">
+                  <button
+                    type="button"
+                    disabled={idx === 0}
+                    onClick={() => moveBanner(-1)}
+                    aria-label={t('تحريك لأعلى', 'Move up')}
+                    className="min-h-[36px] min-w-[36px] flex items-center justify-center rounded-lg border disabled:opacity-30"
+                  >
+                    <ArrowUp className="w-3.5 h-3.5" />
+                  </button>
+                  <button
+                    type="button"
+                    disabled={idx === sortedArr.length - 1}
+                    onClick={() => moveBanner(1)}
+                    aria-label={t('تحريك لأسفل', 'Move down')}
+                    className="min-h-[36px] min-w-[36px] flex items-center justify-center rounded-lg border disabled:opacity-30"
+                  >
+                    <ArrowDown className="w-3.5 h-3.5" />
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => upsertBanner({ ...b, isActive: !b.isActive })}
+                    className={`min-h-[36px] px-2.5 py-1 rounded-lg font-bold ${b.isActive ? 'bg-emerald-600 text-white' : 'bg-slate-200 text-slate-600'}`}
+                  >
+                    {b.isActive ? t('نشط', 'Active') : t('متوقف', 'Paused')}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setEditingBannerId(b.id);
+                      setTitleAr(b.titleAr);
+                      setTitleEn(b.titleEn);
+                      setSubAr(b.subtitleAr);
+                      setCtaAr(b.ctaAr);
+                      setPlacement(b.placement);
+                      setTargetType(b.targetType);
+                      setTargetValue(b.targetValue);
+                      setImage(b.image);
+                      setStartDate(b.startDate);
+                      setEndDate(b.endDate);
+                      setOrder(String(b.order));
+                    }}
+                    className="min-h-[36px] px-2.5 py-1 rounded-lg border font-bold"
+                  >
+                    {t('تعديل', 'Edit')}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setConfirmDeleteBannerId(b.id)}
+                    className="min-h-[36px] min-w-[36px] flex items-center justify-center text-rose-600"
+                  >
+                    <Trash2 className="w-4 h-4" />
+                  </button>
                 </div>
               </div>
-            </div>
-            <div className="flex items-center gap-2 shrink-0">
+            );
+          })}
+      </div>
+
+      {confirmDeleteBannerId && (
+        <div className="fixed inset-0 z-50 bg-black/50 flex items-center justify-center p-4">
+          <div className="bg-white dark:bg-[#181B1E] rounded-2xl max-w-sm w-full p-5 space-y-4 border border-stone-200 dark:border-zinc-800 shadow-xl">
+            <h3 className="font-bold text-sm text-rose-600">
+              {t('تأكيد حذف البانر', 'Confirm Delete Banner')}
+            </h3>
+            <p className="text-slate-600 dark:text-slate-400">
+              {t('هل أنت متأكد من حذف هذا البانر الإعلاني نهائياً؟', 'Are you sure you want to permanently delete this banner?')}
+            </p>
+            <div className="flex justify-end gap-2">
               <button
                 type="button"
-                onClick={() => upsertBanner({ ...b, isActive: !b.isActive })}
-                className={`px-2.5 py-1 rounded-lg font-bold ${b.isActive ? 'bg-emerald-600 text-white' : 'bg-slate-200 text-slate-600'}`}
+                onClick={() => setConfirmDeleteBannerId(null)}
+                className="min-h-[40px] px-3.5 py-1.5 rounded-lg border font-bold"
               >
-                {b.isActive ? t('نشط', 'Active') : t('متوقف', 'Paused')}
+                {t('إلغاء', 'Cancel')}
               </button>
-              <button type="button" onClick={() => deleteBanner(b.id)} className="text-rose-600 p-1">
-                <Trash2 className="w-4 h-4" />
+              <button
+                type="button"
+                onClick={() => {
+                  deleteBanner(confirmDeleteBannerId);
+                  if (editingBannerId === confirmDeleteBannerId) resetForm();
+                  setConfirmDeleteBannerId(null);
+                }}
+                className="min-h-[40px] px-4 py-1.5 rounded-lg bg-rose-600 text-white font-bold"
+              >
+                {t('حذف', 'Delete')}
               </button>
             </div>
           </div>
-        ))}
-      </div>
+        </div>
+      )}
     </div>
   );
 };
@@ -496,8 +617,9 @@ export const AdminContentTextsModule: React.FC = () => {
 };
 
 export const AdminAppearanceModule: React.FC = () => {
-  const { t, appearance, updateAppearance } = useStore();
+  const { t, appearance, updateAppearance, showToast } = useStore();
   const [draft, setDraft] = useState(appearance);
+  const [logoUploadPct, setLogoUploadPct] = useState<number | null>(null);
 
   useEffect(() => {
     setDraft(appearance);
@@ -555,20 +677,28 @@ export const AdminAppearanceModule: React.FC = () => {
         </div>
       </div>
 
+      {logoUploadPct !== null && (
+        <div className="w-full h-2 rounded-full bg-slate-200 overflow-hidden">
+          <div className="h-full bg-[#D9B24C] transition-all" style={{ width: `${logoUploadPct}%` }} />
+        </div>
+      )}
+
       <div className="flex flex-wrap gap-4 items-center">
-        <label className="px-3 py-2 rounded-lg border cursor-pointer font-semibold inline-flex items-center gap-1.5">
+        <label className="min-h-[44px] px-3 py-2 rounded-lg border cursor-pointer font-semibold inline-flex items-center gap-1.5">
           <Upload className="w-4 h-4" />
           {t('رفع شعار المتجر (Logo)', 'Upload App Logo')}
           <input
             type="file"
             accept="image/*"
             className="hidden"
-            onChange={(e) => {
+            onChange={async (e) => {
               const f = e.target.files?.[0];
               if (!f) return;
-              const r = new FileReader();
-              r.onload = () => typeof r.result === 'string' && setDraft({ ...draft, logoUrl: r.result });
-              r.readAsDataURL(f);
+              setLogoUploadPct(15);
+              const url = await uploadAdminImage('branding', f, (pct) => setLogoUploadPct(Math.max(15, pct)));
+              setDraft({ ...draft, logoUrl: url });
+              window.setTimeout(() => setLogoUploadPct(null), 500);
+              showToast(t('تم رفع الشعار بنجاح', 'Logo uploaded'));
             }}
           />
         </label>

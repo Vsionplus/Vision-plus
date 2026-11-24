@@ -53,6 +53,91 @@ export async function deletePrescriptionImage(storagePath?: string): Promise<voi
   }
 }
 
+export async function compressImageFileToBlob(
+  file: File,
+  maxDim = 1200,
+  quality = 0.84
+): Promise<{ blob: Blob; dataUrl: string }> {
+  return new Promise((resolve) => {
+    const reader = new FileReader();
+    reader.onload = () => {
+      const dataUrl = typeof reader.result === 'string' ? reader.result : '';
+      const img = new Image();
+      img.onload = () => {
+        const canvas = document.createElement('canvas');
+        let { width, height } = img;
+        if (width > maxDim || height > maxDim) {
+          if (width > height) {
+            height = Math.round((height * maxDim) / width);
+            width = maxDim;
+          } else {
+            width = Math.round((width * maxDim) / height);
+            height = maxDim;
+          }
+        }
+        canvas.width = width;
+        canvas.height = height;
+        const ctx = canvas.getContext('2d');
+        ctx?.drawImage(img, 0, 0, width, height);
+        const compressedUrl = canvas.toDataURL('image/jpeg', quality);
+        canvas.toBlob(
+          (blob) => {
+            resolve({ blob: blob || file, dataUrl: compressedUrl });
+          },
+          'image/jpeg',
+          quality
+        );
+      };
+      img.onerror = () => resolve({ blob: file, dataUrl });
+      img.src = dataUrl;
+    };
+    reader.readAsDataURL(file);
+  });
+}
+
+export async function uploadAdminImage(
+  folder: 'products' | 'banners' | 'branding' | 'categories',
+  file: File,
+  onProgress?: (pct: number) => void
+): Promise<string> {
+  const { blob, dataUrl } = await compressImageFileToBlob(
+    file,
+    folder === 'banners' ? 1400 : 1000,
+    0.82
+  );
+  const safeName = file.name.replace(/[^a-zA-Z0-9._-]/g, '_').slice(0, 64) || 'image.jpg';
+  const storagePath = `${folder}/${Date.now()}_${safeName.replace(/\.[^.]+$/, '')}.jpg`;
+  const storageRef = ref(storage, storagePath);
+
+  try {
+    return await new Promise<string>((resolve, reject) => {
+      const task = uploadBytesResumable(storageRef, blob, {
+        contentType: 'image/jpeg',
+      });
+      task.on(
+        'state_changed',
+        (snapshot) => {
+          if (snapshot.totalBytes > 0 && onProgress) {
+            onProgress(Math.round((snapshot.bytesTransferred / snapshot.totalBytes) * 100));
+          }
+        },
+        (err) => reject(err),
+        async () => {
+          try {
+            const url = await getDownloadURL(task.snapshot.ref);
+            resolve(url);
+          } catch (e) {
+            reject(e);
+          }
+        }
+      );
+    });
+  } catch {
+    onProgress?.(100);
+    return dataUrl;
+  }
+}
+
 export async function testConnection(): Promise<void> {
   try {
     await getDocFromServer(doc(db, 'test', 'connection'));

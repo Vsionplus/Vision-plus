@@ -71,7 +71,7 @@ export const NavigationShell: React.FC<{ children: React.ReactNode }> = ({ child
     openCatalog('all', headerSearch.trim());
   };
 
-  const showMaintenanceWall = settings.maintenanceMode && activeTab !== 'admin';
+  const showMaintenanceWall = settings.maintenanceMode;
   const cartBadgeText = cartCount > 9 ? '9+' : String(cartCount);
 
   return (
@@ -274,7 +274,7 @@ export const NavigationShell: React.FC<{ children: React.ReactNode }> = ({ child
         </header>
 
         {/* Gentle Guest Banner */}
-        {isGuest && activeTab !== 'admin' && !showMaintenanceWall && (
+        {isGuest && !showMaintenanceWall && (
           <div className="bg-amber-50 dark:bg-amber-950/30 border-b border-amber-200 dark:border-amber-900/50">
             <div className="max-w-7xl mx-auto px-3 sm:px-6 py-1.5 flex flex-wrap items-center justify-between gap-2 text-xs">
               <span className="font-bold text-[#11223E] dark:text-amber-200">
@@ -295,7 +295,7 @@ export const NavigationShell: React.FC<{ children: React.ReactNode }> = ({ child
 
         {/* Scrollable Main Content with safe bottom clearance for fixed mobile bar */}
         <main className="flex-1 pb-[calc(64px+env(safe-area-inset-bottom))] md:pb-12">
-          {user.isBlocked && activeTab !== 'admin' ? (
+          {user.isBlocked ? (
             <div className="max-w-xl mx-auto px-4 py-20 text-center space-y-4">
               <h1 className="text-xl font-extrabold text-rose-600">
                 {t('تم تقييد هذا الحساب مؤقتاً', 'Account Temporarily Restricted')}
@@ -326,8 +326,7 @@ export const NavigationShell: React.FC<{ children: React.ReactNode }> = ({ child
       </div>
 
       {/* Floating WhatsApp Button positioned safely above the fixed bottom bar (z-40 < z-50) */}
-      {activeTab !== 'admin' &&
-        !showMaintenanceWall &&
+      {!showMaintenanceWall &&
         settings.contactVisibility.whatsapp &&
         settings.whatsapp.trim() && (
           <a
@@ -456,6 +455,13 @@ export const NavigationShell: React.FC<{ children: React.ReactNode }> = ({ child
                         </span>
                       )}
                     </div>
+                    {n.imageUrl && (
+                      <img
+                        src={n.imageUrl}
+                        alt=""
+                        className="w-full h-28 object-cover rounded-lg mb-2 border border-slate-200 dark:border-slate-700"
+                      />
+                    )}
                     <p className="text-xs text-slate-600 dark:text-slate-400 leading-relaxed mb-1.5">
                       {locale === 'ar' ? n.bodyAr : n.bodyEn}
                     </p>

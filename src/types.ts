@@ -238,6 +238,19 @@ export type OrderStatus =
 
 export type PaymentMethod = 'cod' | 'bankak';
 
+export type CancelRequestStatus = 'pending' | 'approved' | 'rejected';
+
+export interface CancelRequest {
+  status: CancelRequestStatus;
+  reason: string;
+  note?: string;
+  requestedAt: string;
+  requestedBy: string;
+  reviewedAt?: string;
+  reviewedBy?: string;
+  adminNote?: string;
+}
+
 export interface OrderItem {
   productId: string;
   name?: string;
@@ -293,7 +306,14 @@ export interface Order {
   paymentMethod: PaymentMethod;
   bankTransferReceiptUrl?: string;
   bankTransferReference?: string;
+  bankTransferVerified?: boolean;
   status: OrderStatus;
+  cancelRequest?: CancelRequest;
+  cancelRequestHistory?: CancelRequest[];
+  refundRequired?: boolean;
+  refunded?: boolean;
+  refundedAt?: string;
+  refundedBy?: string;
   createdAt: string;
   updatedAt: string;
 }
@@ -329,6 +349,7 @@ export interface Coupon {
 
 export interface AppNotification {
   id: string;
+  customerUid?: string;
   titleAr: string;
   titleEn: string;
   bodyAr: string;

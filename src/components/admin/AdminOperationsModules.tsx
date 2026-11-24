@@ -19,6 +19,8 @@ import {
   Download,
   ChevronDown,
   ChevronUp,
+  Clock,
+  RotateCcw,
 } from 'lucide-react';
 import { useStore } from '../../store/StoreContext';
 import { Order, OrderStatus } from '../../types';
@@ -53,6 +55,9 @@ export const AdminOrdersModule: React.FC<{ onPrintInvoice: (order: Order) => voi
     updateOrderStatus,
     approveBankTransfer,
     rejectBankTransfer,
+    approveOrderCancellation,
+    rejectOrderCancellation,
+    toggleOrderRefunded,
   } = useStore();
   const [search, setSearch] = useState('');
   const [statusFilter, setStatusFilter] = useState<string>('all');
@@ -63,11 +68,26 @@ export const AdminOrdersModule: React.FC<{ onPrintInvoice: (order: Order) => voi
     orderId: string;
     action: 'approve' | 'reject';
   } | null>(null);
+  const [cancelReviewModal, setCancelReviewModal] = useState<{
+    order: Order;
+    action: 'approve' | 'reject';
+  } | null>(null);
+  const [cancelAdminNote, setCancelAdminNote] = useState('');
+  const [submittingCancelReview, setSubmittingCancelReview] = useState(false);
+
+  const pendingCancelRequests = useMemo(
+    () => orders.filter((o) => o.cancelRequest?.status === 'pending'),
+    [orders]
+  );
 
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
     return orders.filter((o) => {
-      if (statusFilter !== 'all' && o.status !== statusFilter) return false;
+      if (statusFilter === 'cancel_requests') {
+        if (o.cancelRequest?.status !== 'pending') return false;
+      } else if (statusFilter !== 'all' && o.status !== statusFilter) {
+        return false;
+      }
       if (paymentFilter !== 'all' && o.paymentMethod !== paymentFilter) return false;
       if (q) {
         const hay = `${o.id} ${o.customerName} ${o.customerPhone} ${o.bankTransferReference || ''}`.toLowerCase();
@@ -77,6 +97,32 @@ export const AdminOrdersModule: React.FC<{ onPrintInvoice: (order: Order) => voi
     });
   }, [orders, search, statusFilter, paymentFilter]);
 
+  const openCancelReview = (order: Order, action: 'approve' | 'reject') => {
+    setCancelReviewModal({ order, action });
+    setCancelAdminNote('');
+  };
+
+  const handleConfirmCancelReview = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!cancelReviewModal || submittingCancelReview) return;
+    if (cancelReviewModal.action === 'reject' && !cancelAdminNote.trim()) return;
+    setSubmittingCancelReview(true);
+    try {
+      if (cancelReviewModal.action === 'approve') {
+        await approveOrderCancellation(
+          cancelReviewModal.order.id,
+          cancelAdminNote.trim() || undefined
+        );
+      } else {
+        await rejectOrderCancellation(cancelReviewModal.order.id, cancelAdminNote.trim());
+      }
+      setCancelReviewModal(null);
+      setCancelAdminNote('');
+    } finally {
+      setSubmittingCancelReview(false);
+    }
+  };
+
   return (
     <div className="space-y-4 text-xs">
       <div className="flex flex-wrap items-center gap-2">
@@ -84,14 +130,42 @@ export const AdminOrdersModule: React.FC<{ onPrintInvoice: (order: Order) => voi
           value={search}
           onChange={(e) => setSearch(e.target.value)}
           placeholder={t('بحث برقم الطلب، العميل، الهاتف، أو مرجع بنكك...', 'Search order ID, customer, phone, Bankak ref...')}
-          className="flex-1 min-w-[220px] px-3 py-2 rounded-lg border border-stone-200 dark:border-zinc-700 bg-white dark:bg-[#181B1E]"
+          className="flex-1 min-w-[220px] min-h-[44px] px-3 py-2 rounded-lg border border-stone-200 dark:border-zinc-700 bg-white dark:bg-[#181B1E]"
         />
+        <button
+          type="button"
+          onClick={() =>
+            setStatusFilter((prev) => (prev === 'cancel_requests' ? 'all' : 'cancel_requests'))
+          }
+          className={`min-h-[44px] px-3.5 py-2 rounded-lg border font-extrabold inline-flex items-center gap-1.5 transition-colors ${
+            statusFilter === 'cancel_requests'
+              ? 'bg-rose-600 text-white border-rose-600'
+              : 'bg-white dark:bg-[#181B1E] border-stone-200 dark:border-zinc-700 hover:border-rose-400'
+          }`}
+        >
+          <Clock className="w-3.5 h-3.5" />
+          <span>{t(`طلبات إلغاء (${pendingCancelRequests.length})`, `Cancel Requests (${pendingCancelRequests.length})`)}</span>
+          {pendingCancelRequests.length > 0 && (
+            <span
+              className={`px-1.5 py-0.5 rounded-full text-[10px] font-extrabold tabular-nums ${
+                statusFilter === 'cancel_requests'
+                  ? 'bg-white text-rose-600'
+                  : 'bg-rose-600 text-white'
+              }`}
+            >
+              {pendingCancelRequests.length}
+            </span>
+          )}
+        </button>
         <select
           value={statusFilter}
           onChange={(e) => setStatusFilter(e.target.value)}
-          className="px-3 py-2 rounded-lg border border-stone-200 dark:border-zinc-700 bg-white dark:bg-[#181B1E]"
+          className="min-h-[44px] px-3 py-2 rounded-lg border border-stone-200 dark:border-zinc-700 bg-white dark:bg-[#181B1E]"
         >
           <option value="all">{t('كل الحالات', 'All Statuses')}</option>
+          <option value="cancel_requests">
+            {t(`طلبات إلغاء معلقة (${pendingCancelRequests.length})`, `Cancel Requests (${pendingCancelRequests.length})`)}
+          </option>
           {(
             [
               'awaiting_payment_verification',
@@ -111,13 +185,73 @@ export const AdminOrdersModule: React.FC<{ onPrintInvoice: (order: Order) => voi
         <select
           value={paymentFilter}
           onChange={(e) => setPaymentFilter(e.target.value)}
-          className="px-3 py-2 rounded-lg border border-stone-200 dark:border-zinc-700 bg-white dark:bg-[#181B1E]"
+          className="min-h-[44px] px-3 py-2 rounded-lg border border-stone-200 dark:border-zinc-700 bg-white dark:bg-[#181B1E]"
         >
           <option value="all">{t('كل طرق الدفع', 'All Payment Methods')}</option>
           <option value="bankak">{t('بنكك / تحويل بنكي', 'Bankak Transfer')}</option>
           <option value="cod">{t('الدفع عند الاستلام', 'Cash on Delivery')}</option>
         </select>
       </div>
+
+      {/* Dedicated Pending Cancellation Requests Section */}
+      {pendingCancelRequests.length > 0 && statusFilter !== 'cancel_requests' && (
+        <div className="bg-rose-50/70 dark:bg-rose-950/20 border border-rose-200 dark:border-rose-900/50 rounded-xl p-4 space-y-3">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <div className="font-extrabold text-sm text-rose-800 dark:text-rose-300 flex items-center gap-2">
+              <AlertTriangle className="w-4 h-4 shrink-0" />
+              <span>
+                {t(
+                  `طلبات إلغاء بانتظار المراجعة (${pendingCancelRequests.length})`,
+                  `Pending Cancellation Requests (${pendingCancelRequests.length})`
+                )}
+              </span>
+            </div>
+            <button
+              type="button"
+              onClick={() => setStatusFilter('cancel_requests')}
+              className="min-h-[36px] px-3 py-1 rounded-lg bg-rose-600 text-white font-bold"
+            >
+              {t('عرض هذه الطلبات فقط', 'Filter Cancel Requests')}
+            </button>
+          </div>
+          <div className="grid md:grid-cols-2 gap-2.5">
+            {pendingCancelRequests.map((reqOrder) => (
+              <div
+                key={reqOrder.id}
+                className="bg-white dark:bg-[#181B1E] border border-rose-200 dark:border-rose-900/40 rounded-lg p-3 flex flex-wrap items-center justify-between gap-2"
+              >
+                <div className="min-w-0 space-y-0.5">
+                  <div className="font-bold flex items-center gap-1.5">
+                    <span className="font-mono-num">#{reqOrder.id}</span>
+                    <span>·</span>
+                    <span className="truncate">{reqOrder.address?.recipientName || reqOrder.customerName}</span>
+                  </div>
+                  <div className="text-[11px] text-slate-600 dark:text-slate-300">
+                    <strong>{t('السبب:', 'Reason:')}</strong> {reqOrder.cancelRequest?.reason}
+                    {reqOrder.cancelRequest?.note ? ` (${reqOrder.cancelRequest.note})` : ''}
+                  </div>
+                </div>
+                <div className="flex items-center gap-1.5 shrink-0">
+                  <button
+                    type="button"
+                    onClick={() => openCancelReview(reqOrder, 'approve')}
+                    className="min-h-[36px] px-2.5 py-1 rounded-lg bg-emerald-700 text-white font-bold"
+                  >
+                    {t('الموافقة على الإلغاء', 'Approve')}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => openCancelReview(reqOrder, 'reject')}
+                    className="min-h-[36px] px-2.5 py-1 rounded-lg bg-rose-700 text-white font-bold"
+                  >
+                    {t('رفض الطلب', 'Reject')}
+                  </button>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
 
       {filtered.length === 0 ? (
         <div className="bg-white dark:bg-[#181B1E] border border-stone-200 dark:border-zinc-800 rounded-xl p-10 text-center text-slate-500">
@@ -267,6 +401,122 @@ export const AdminOrdersModule: React.FC<{ onPrintInvoice: (order: Order) => voi
                   )}
                 </div>
               )}
+
+              {/* Cancellation Request Management & History */}
+              {(order.cancelRequest || (order.cancelRequestHistory && order.cancelRequestHistory.length > 0)) && (
+                <div
+                  className={`p-3.5 rounded-xl border space-y-2 ${
+                    order.cancelRequest?.status === 'pending'
+                      ? 'bg-amber-50 dark:bg-amber-950/25 border-amber-300 dark:border-amber-800'
+                      : order.cancelRequest?.status === 'approved'
+                      ? 'bg-rose-50 dark:bg-rose-950/20 border-rose-200 dark:border-rose-900/50'
+                      : 'bg-stone-50 dark:bg-zinc-900 border-stone-200 dark:border-zinc-800'
+                  }`}
+                >
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <div className="space-y-0.5">
+                      <div className="font-extrabold flex items-center gap-1.5">
+                        <RotateCcw className="w-3.5 h-3.5" />
+                        <span>
+                          {order.cancelRequest?.status === 'pending'
+                            ? t('طلب إلغاء قيد المراجعة', 'Cancellation Request Pending')
+                            : order.cancelRequest?.status === 'approved'
+                            ? t('تمت الموافقة على الإلغاء', 'Cancellation Approved')
+                            : t('تم رفض طلب الإلغاء', 'Cancellation Rejected')}
+                        </span>
+                        {order.cancelRequest?.requestedAt && (
+                          <span className="font-mono-num text-[11px] font-normal text-slate-500">
+                            · {formatShortDate(order.cancelRequest.requestedAt, locale)}
+                          </span>
+                        )}
+                      </div>
+                      {order.cancelRequest && (
+                        <div className="text-[11px] space-y-0.5">
+                          <div>
+                            <strong>{t('سبب العميل:', 'Reason:')}</strong> {order.cancelRequest.reason}
+                          </div>
+                          {order.cancelRequest.note && (
+                            <div>
+                              <strong>{t('ملاحظة العميل:', 'Customer Note:')}</strong> {order.cancelRequest.note}
+                            </div>
+                          )}
+                          {order.cancelRequest.adminNote && (
+                            <div>
+                              <strong>{t('رد الإدارة:', 'Admin Note:')}</strong> {order.cancelRequest.adminNote}
+                            </div>
+                          )}
+                        </div>
+                      )}
+                    </div>
+
+                    {order.cancelRequest?.status === 'pending' && (
+                      <div className="flex flex-wrap items-center gap-2 shrink-0">
+                        <button
+                          type="button"
+                          onClick={() => openCancelReview(order, 'approve')}
+                          className="min-h-[40px] px-3.5 py-1.5 rounded-lg bg-emerald-700 hover:bg-emerald-800 text-white font-extrabold inline-flex items-center gap-1"
+                        >
+                          <Check className="w-3.5 h-3.5" />
+                          {t('الموافقة على الإلغاء', 'Approve Cancellation')}
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => openCancelReview(order, 'reject')}
+                          className="min-h-[40px] px-3.5 py-1.5 rounded-lg bg-rose-700 hover:bg-rose-800 text-white font-extrabold inline-flex items-center gap-1"
+                        >
+                          <X className="w-3.5 h-3.5" />
+                          {t('رفض الطلب', 'Reject Request')}
+                        </button>
+                      </div>
+                    )}
+                  </div>
+
+                  {order.cancelRequestHistory && order.cancelRequestHistory.length > 1 && (
+                    <div className="pt-2 border-t border-black/10 dark:border-white/10 space-y-1 text-[11px] text-slate-600 dark:text-slate-400">
+                      <div className="font-bold">
+                        {t(
+                          `سجل طلبات الإلغاء (${order.cancelRequestHistory.length})`,
+                          `Cancellation History (${order.cancelRequestHistory.length})`
+                        )}
+                      </div>
+                      {order.cancelRequestHistory.map((hist, hIdx) => (
+                        <div key={`${hist.requestedAt}_${hIdx}`}>
+                          • [{hist.status}] {hist.reason}
+                          {hist.adminNote ? ` — ${hist.adminNote}` : ''} ({formatShortDate(hist.requestedAt, locale)})
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {/* Bankak Refund Tracking for Cancelled Verified Bankak Orders */}
+              {order.status === 'cancelled' &&
+                order.paymentMethod === 'bankak' &&
+                (order.refundRequired || order.bankTransferVerified) && (
+                  <div className="p-3.5 rounded-xl bg-amber-50 dark:bg-amber-950/30 border border-amber-300 dark:border-amber-800 flex flex-wrap items-center justify-between gap-3">
+                    <div className="space-y-0.5">
+                      <div className="font-extrabold text-amber-900 dark:text-amber-200 flex items-center gap-1.5">
+                        <AlertTriangle className="w-4 h-4 text-amber-600 shrink-0" />
+                        <span>{t('يجب إرجاع المبلغ للعميل', 'Refund Required to Customer')}</span>
+                      </div>
+                      {order.refunded && order.refundedAt && (
+                        <p className="text-[11px] text-emerald-700 dark:text-emerald-300 font-semibold">
+                          {t('تم الاسترجاع بتاريخ:', 'Refunded on:')} {formatShortDate(order.refundedAt, locale)}
+                        </p>
+                      )}
+                    </div>
+                    <label className="min-h-[40px] px-3 py-1.5 rounded-lg bg-white dark:bg-[#181B1E] border border-amber-300 dark:border-amber-700 flex items-center gap-2 cursor-pointer font-extrabold">
+                      <input
+                        type="checkbox"
+                        checked={Boolean(order.refunded)}
+                        onChange={(e) => void toggleOrderRefunded(order.id, e.target.checked)}
+                        className="w-4 h-4 accent-emerald-600"
+                      />
+                      <span>{t('تم الاسترجاع', 'Refunded')}</span>
+                    </label>
+                  </div>
+                )}
 
               {isDetailsOpen && (
                 <div className="space-y-3 pt-2 border-t border-stone-100 dark:border-zinc-800">
@@ -623,12 +873,112 @@ export const AdminOrdersModule: React.FC<{ onPrintInvoice: (order: Order) => voi
           </div>
         </div>
       )}
+
+      {/* Confirm Cancellation Approve / Reject Modal */}
+      {cancelReviewModal && (
+        <div className="fixed inset-0 z-50 bg-black/55 flex items-center justify-center p-4">
+          <form
+            onSubmit={handleConfirmCancelReview}
+            className="bg-white dark:bg-[#181B1E] rounded-2xl max-w-md w-full p-5 space-y-4 border border-stone-200 dark:border-zinc-800 shadow-2xl"
+          >
+            <div className="flex items-center gap-2 font-extrabold text-sm">
+              <AlertTriangle
+                className={`w-5 h-5 ${
+                  cancelReviewModal.action === 'approve' ? 'text-emerald-600' : 'text-rose-600'
+                }`}
+              />
+              <span>
+                {cancelReviewModal.action === 'approve'
+                  ? t('تأكيد الموافقة على إلغاء الطلب', 'Confirm Approve Cancellation')
+                  : t('تأكيد رفض طلب الإلغاء', 'Confirm Reject Cancellation')}
+              </span>
+            </div>
+
+            <div className="p-3 rounded-xl bg-stone-50 dark:bg-zinc-900 border border-stone-200 dark:border-zinc-800 space-y-1 text-[11px]">
+              <div className="font-mono-num font-bold">#{cancelReviewModal.order.id}</div>
+              <div>
+                <strong>{t('سبب العميل:', 'Reason:')}</strong>{' '}
+                {cancelReviewModal.order.cancelRequest?.reason}
+              </div>
+              {cancelReviewModal.order.cancelRequest?.note && (
+                <div>
+                  <strong>{t('ملاحظة:', 'Note:')}</strong>{' '}
+                  {cancelReviewModal.order.cancelRequest.note}
+                </div>
+              )}
+            </div>
+
+            {cancelReviewModal.action === 'approve' ? (
+              <p className="text-slate-600 dark:text-slate-400">
+                {t(
+                  'سيتم تحويل حالة الطلب إلى "ملغي"، وإعادة الكميات للمخزون تلقائياً، وإرسال إشعار للعميل.',
+                  'Order will be marked cancelled, product stock restored automatically, and customer notified.'
+                )}
+              </p>
+            ) : (
+              <p className="text-slate-600 dark:text-slate-400">
+                {t(
+                  'سيبقى الطلب في حالته الحالية ويستمر تجهيزه، وسيصل سبب الرفض للعميل في الإشعارات وتفاصيل الطلب.',
+                  'Order will stay in its current status and the rejection reason will be shown to the customer.'
+                )}
+              </p>
+            )}
+
+            <div className="space-y-1">
+              <label className="block font-bold">
+                {cancelReviewModal.action === 'reject'
+                  ? t('سبب الرفض (مطلوب) *', 'Rejection Reason (required) *')
+                  : t('ملاحظة الإدارة للعميل (اختياري)', 'Admin Note to Customer (optional)')}
+              </label>
+              <textarea
+                rows={3}
+                required={cancelReviewModal.action === 'reject'}
+                value={cancelAdminNote}
+                onChange={(e) => setCancelAdminNote(e.target.value)}
+                placeholder={
+                  cancelReviewModal.action === 'reject'
+                    ? t('اكتب سبب رفض طلب الإلغاء بوضوح...', 'Write rejection reason clearly...')
+                    : t('ملاحظة اختيارية للعميل...', 'Optional note...')
+                }
+                className="w-full px-3 py-2 rounded-lg border border-stone-200 dark:border-zinc-700 bg-stone-50 dark:bg-zinc-900"
+              />
+            </div>
+
+            <div className="flex justify-end gap-2">
+              <button
+                type="button"
+                onClick={() => setCancelReviewModal(null)}
+                className="min-h-[40px] px-4 py-1.5 rounded-lg border font-bold"
+              >
+                {t('تراجع', 'Cancel')}
+              </button>
+              <button
+                type="submit"
+                disabled={
+                  submittingCancelReview ||
+                  (cancelReviewModal.action === 'reject' && !cancelAdminNote.trim())
+                }
+                className={`min-h-[40px] px-4 py-1.5 rounded-lg text-white font-extrabold disabled:opacity-50 ${
+                  cancelReviewModal.action === 'approve' ? 'bg-emerald-700' : 'bg-rose-600'
+                }`}
+              >
+                {submittingCancelReview
+                  ? t('جارٍ التنفيذ...', 'Processing...')
+                  : cancelReviewModal.action === 'approve'
+                  ? t('الموافقة على الإلغاء', 'Approve Cancellation')
+                  : t('رفض الطلب', 'Reject Request')}
+              </button>
+            </div>
+          </form>
+        </div>
+      )}
     </div>
   );
 };
 
 export const AdminCouponsModule: React.FC = () => {
   const { t, coupons, upsertCoupon, deleteCoupon } = useStore();
+  const [confirmDeleteCode, setConfirmDeleteCode] = useState<string | null>(null);
   const [code, setCode] = useState('');
   const [type, setType] = useState<'percent' | 'fixed'>('percent');
   const [value, setValue] = useState('15');
@@ -713,23 +1063,56 @@ export const AdminCouponsModule: React.FC = () => {
               >
                 {c.isActive ? t('نشط', 'Active') : t('معطل', 'Off')}
               </button>
-              <button type="button" onClick={() => deleteCoupon(c.code)} className="p-1.5 text-rose-600">
+              <button type="button" onClick={() => setConfirmDeleteCode(c.code)} className="p-1.5 text-rose-600">
                 <Trash2 className="w-4 h-4" />
               </button>
             </div>
           </div>
         ))}
       </div>
+
+      {confirmDeleteCode && (
+        <div className="fixed inset-0 z-50 bg-black/50 flex items-center justify-center p-4">
+          <div className="bg-white dark:bg-[#181B1E] rounded-2xl max-w-sm w-full p-5 space-y-4 border border-stone-200 dark:border-zinc-800 shadow-xl">
+            <h3 className="font-bold text-sm text-rose-600">
+              {t('تأكيد حذف الكوبون', 'Confirm Delete Coupon')}
+            </h3>
+            <p className="text-slate-600 dark:text-slate-400">
+              {t(`هل تريد حذف كود الخصم ${confirmDeleteCode}؟`, `Delete coupon ${confirmDeleteCode}?`)}
+            </p>
+            <div className="flex justify-end gap-2">
+              <button
+                type="button"
+                onClick={() => setConfirmDeleteCode(null)}
+                className="min-h-[40px] px-3.5 py-1.5 rounded-lg border font-bold"
+              >
+                {t('إلغاء', 'Cancel')}
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  deleteCoupon(confirmDeleteCode);
+                  setConfirmDeleteCode(null);
+                }}
+                className="min-h-[40px] px-4 py-1.5 rounded-lg bg-rose-600 text-white font-bold"
+              >
+                {t('حذف', 'Delete')}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };
 
 export const AdminNotificationsModule: React.FC = () => {
-  const { locale, t, notifications, sendBroadcastNotification } = useStore();
+  const { locale, t, notifications, sendBroadcastNotification, showToast } = useStore();
   const [titleAr, setTitleAr] = useState('');
   const [titleEn, setTitleEn] = useState('');
   const [bodyAr, setBodyAr] = useState('');
   const [bodyEn, setBodyEn] = useState('');
+  const [imageUrl, setImageUrl] = useState('');
   const [segment, setSegment] = useState<'all' | 'khartoum' | 'states' | 'vip'>('all');
   const [deepLinkType, setDeepLinkType] = useState<'order' | 'product' | 'category' | 'consult'>('category');
   const [deepLinkId, setDeepLinkId] = useState('frames');
@@ -742,6 +1125,7 @@ export const AdminNotificationsModule: React.FC = () => {
       titleEn: titleEn.trim() || titleAr.trim(),
       bodyAr: bodyAr.trim(),
       bodyEn: bodyEn.trim() || bodyAr.trim(),
+      imageUrl: imageUrl.trim() || undefined,
       segment,
       deepLinkType,
       deepLinkId,
@@ -750,6 +1134,7 @@ export const AdminNotificationsModule: React.FC = () => {
     setTitleEn('');
     setBodyAr('');
     setBodyEn('');
+    setImageUrl('');
   };
 
   return (
@@ -762,26 +1147,44 @@ export const AdminNotificationsModule: React.FC = () => {
           <Send className="w-4 h-4 text-[#D9B24C]" />
           {t('إرسال إشعار ترويجي للعملاء', 'Send Push Notification')}
         </h2>
-        <input required value={titleAr} onChange={(e) => setTitleAr(e.target.value)} placeholder={t('العنوان (عربي)*', 'Title (AR)*')} className="w-full px-3 py-2 rounded-lg border bg-stone-50 dark:bg-zinc-900" />
-        <input value={titleEn} onChange={(e) => setTitleEn(e.target.value)} placeholder={t('العنوان (إنجليزي)', 'Title (EN)')} className="w-full px-3 py-2 rounded-lg border bg-stone-50 dark:bg-zinc-900" />
+        <input required value={titleAr} onChange={(e) => setTitleAr(e.target.value)} placeholder={t('العنوان (عربي)*', 'Title (AR)*')} className="w-full min-h-[44px] px-3 py-2 rounded-lg border bg-stone-50 dark:bg-zinc-900" />
+        <input value={titleEn} onChange={(e) => setTitleEn(e.target.value)} placeholder={t('العنوان (إنجليزي)', 'Title (EN)')} className="w-full min-h-[44px] px-3 py-2 rounded-lg border bg-stone-50 dark:bg-zinc-900" />
         <textarea required rows={3} value={bodyAr} onChange={(e) => setBodyAr(e.target.value)} placeholder={t('نص الإشعار (عربي)*', 'Body (AR)*')} className="w-full px-3 py-2 rounded-lg border bg-stone-50 dark:bg-zinc-900" />
         <textarea rows={2} value={bodyEn} onChange={(e) => setBodyEn(e.target.value)} placeholder={t('نص الإشعار (إنجليزي)', 'Body (EN)')} className="w-full px-3 py-2 rounded-lg border bg-stone-50 dark:bg-zinc-900" />
+        <div className="flex flex-wrap items-center gap-2">
+          <input
+            dir="ltr"
+            value={imageUrl}
+            onChange={(e) => setImageUrl(e.target.value)}
+            placeholder={t('رابط صورة الإشعار (اختياري)', 'Notification image URL (optional)')}
+            className="flex-1 min-h-[44px] px-3 py-2 rounded-lg border bg-stone-50 dark:bg-zinc-900"
+          />
+          {imageUrl && (
+            <button
+              type="button"
+              onClick={() => setImageUrl('')}
+              className="min-h-[44px] px-3 rounded-lg border text-rose-600 font-bold"
+            >
+              {t('مسح', 'Clear')}
+            </button>
+          )}
+        </div>
         <div className="grid grid-cols-3 gap-2">
-          <select value={segment} onChange={(e) => setSegment(e.target.value as typeof segment)} className="px-2 py-2 rounded-lg border bg-stone-50 dark:bg-zinc-900">
+          <select value={segment} onChange={(e) => setSegment(e.target.value as typeof segment)} className="min-h-[44px] px-2 py-2 rounded-lg border bg-stone-50 dark:bg-zinc-900">
             <option value="all">{t('كل المستخدمين', 'All Users')}</option>
             <option value="khartoum">{t('الخرطوم', 'Khartoum')}</option>
             <option value="states">{t('الولايات', 'States')}</option>
             <option value="vip">{t('عملاء VIP', 'VIP')}</option>
           </select>
-          <select value={deepLinkType} onChange={(e) => setDeepLinkType(e.target.value as typeof deepLinkType)} className="px-2 py-2 rounded-lg border bg-stone-50 dark:bg-zinc-900">
+          <select value={deepLinkType} onChange={(e) => setDeepLinkType(e.target.value as typeof deepLinkType)} className="min-h-[44px] px-2 py-2 rounded-lg border bg-stone-50 dark:bg-zinc-900">
             <option value="category">{t('تصنيف', 'Category')}</option>
             <option value="product">{t('منتج', 'Product')}</option>
             <option value="consult">{t('استشارة', 'Consult')}</option>
             <option value="order">{t('الطلبات', 'Orders')}</option>
           </select>
-          <input value={deepLinkId} onChange={(e) => setDeepLinkId(e.target.value)} placeholder="ID" className="px-2 py-2 rounded-lg border bg-stone-50 dark:bg-zinc-900 font-mono-num" />
+          <input value={deepLinkId} onChange={(e) => setDeepLinkId(e.target.value)} placeholder="ID" className="min-h-[44px] px-2 py-2 rounded-lg border bg-stone-50 dark:bg-zinc-900 font-mono-num" />
         </div>
-        <button type="submit" className="w-full py-2.5 rounded-xl bg-[#D9B24C] text-[#11223E] font-extrabold">
+        <button type="submit" onClick={() => { if (!titleAr.trim() || !bodyAr.trim()) showToast(t('أدخل العنوان والنص', 'Enter title and body')); }} className="w-full min-h-[44px] py-2.5 rounded-xl bg-[#D9B24C] text-[#11223E] font-extrabold">
           {t('إرسال الإشعار الآن', 'Send Broadcast')}
         </button>
       </form>
@@ -797,6 +1200,9 @@ export const AdminNotificationsModule: React.FC = () => {
                   {n.segment || 'all'} · {formatShortDate(n.createdAt, locale)}
                 </span>
               </div>
+              {n.imageUrl && (
+                <img src={n.imageUrl} alt="" className="w-24 h-14 object-cover rounded-lg border border-stone-200 dark:border-zinc-700" />
+              )}
               <p className="text-slate-600 dark:text-slate-400">{locale === 'ar' ? n.bodyAr : n.bodyEn}</p>
             </div>
           ))}

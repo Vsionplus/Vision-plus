@@ -145,7 +145,6 @@ const AppRouter: React.FC = () => {
         {activeTab === 'consult' && <ConsultView />}
         {activeTab === 'profile' && <ProfileView />}
         {activeTab === 'contact' && <ContactAboutView />}
-        {activeTab === 'admin' && <HomeView />}
         <ProductDetailModal />
       </NavigationShell>
 

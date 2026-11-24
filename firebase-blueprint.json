@@ -48,11 +48,18 @@
         "couponCode": { "type": "string", "maxLength": 40 },
         "paymentMethod": { "type": "string", "enum": ["cod", "bankak"] },
         "bankTransferReference": { "type": "string", "maxLength": 120 },
-        "bankTransferReceiptUrl": { "type": "string", "maxLength": 400000 },
+        "bankTransferReceiptUrl": { "type": "string", "maxLength": 800000 },
+        "bankTransferVerified": { "type": "boolean" },
         "status": {
           "type": "string",
           "enum": ["pending", "awaiting_payment_verification", "confirmed", "preparing", "shipped", "delivered", "cancelled"]
         },
+        "cancelRequest": { "type": "object" },
+        "cancelRequestHistory": { "type": "array" },
+        "refundRequired": { "type": "boolean" },
+        "refunded": { "type": "boolean" },
+        "refundedAt": { "type": "string", "format": "date-time" },
+        "refundedBy": { "type": "string", "maxLength": 128 },
         "createdAt": { "type": "string", "format": "date-time" },
         "updatedAt": { "type": "string", "format": "date-time" }
       },
