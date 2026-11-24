@@ -43,9 +43,10 @@ function toWhatsappDigits(phone: string): string {
   return `249${digits}`;
 }
 
-export const AdminOrdersModule: React.FC<{ onPrintInvoice: (order: Order) => void }> = ({
-  onPrintInvoice,
-}) => {
+export const AdminOrdersModule: React.FC<{
+  onPrintInvoice: (order: Order) => void;
+  initialStatusFilter?: string;
+}> = ({ onPrintInvoice, initialStatusFilter = 'all' }) => {
   const {
     locale,
     t,
@@ -60,7 +61,7 @@ export const AdminOrdersModule: React.FC<{ onPrintInvoice: (order: Order) => voi
     toggleOrderRefunded,
   } = useStore();
   const [search, setSearch] = useState('');
-  const [statusFilter, setStatusFilter] = useState<string>('all');
+  const [statusFilter, setStatusFilter] = useState<string>(initialStatusFilter);
   const [paymentFilter, setPaymentFilter] = useState<string>('all');
   const [collapsedOrderIds, setCollapsedOrderIds] = useState<Record<string, boolean>>({});
   const [lightboxImage, setLightboxImage] = useState<string | null>(null);
@@ -73,6 +74,7 @@ export const AdminOrdersModule: React.FC<{ onPrintInvoice: (order: Order) => voi
     action: 'approve' | 'reject';
   } | null>(null);
   const [cancelAdminNote, setCancelAdminNote] = useState('');
+  const [cancelReviewError, setCancelReviewError] = useState<string | null>(null);
   const [submittingCancelReview, setSubmittingCancelReview] = useState(false);
 
   const pendingCancelRequests = useMemo(
@@ -100,12 +102,17 @@ export const AdminOrdersModule: React.FC<{ onPrintInvoice: (order: Order) => voi
   const openCancelReview = (order: Order, action: 'approve' | 'reject') => {
     setCancelReviewModal({ order, action });
     setCancelAdminNote('');
+    setCancelReviewError(null);
   };
 
   const handleConfirmCancelReview = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!cancelReviewModal || submittingCancelReview) return;
-    if (cancelReviewModal.action === 'reject' && !cancelAdminNote.trim()) return;
+    if (cancelReviewModal.action === 'reject' && !cancelAdminNote.trim()) {
+      setCancelReviewError(t('يرجى كتابة سبب الرفض للعميل.', 'Please enter a rejection reason.'));
+      return;
+    }
+    setCancelReviewError(null);
     setSubmittingCancelReview(true);
     try {
       if (cancelReviewModal.action === 'approve') {
@@ -118,6 +125,10 @@ export const AdminOrdersModule: React.FC<{ onPrintInvoice: (order: Order) => voi
       }
       setCancelReviewModal(null);
       setCancelAdminNote('');
+    } catch {
+      setCancelReviewError(
+        t('تعذر تنفيذ القرار حالياً. يرجى المحاولة مرة أخرى.', 'Action failed. Please try again.')
+      );
     } finally {
       setSubmittingCancelReview(false);
     }
@@ -271,7 +282,20 @@ export const AdminOrdersModule: React.FC<{ onPrintInvoice: (order: Order) => voi
             >
               <div className="flex flex-wrap items-center justify-between gap-3">
                 <div>
-                  <div className="font-mono-num font-extrabold text-sm">{order.id}</div>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <span className="font-mono-num font-extrabold text-sm">{order.id}</span>
+                    {order.cancelRequest?.status === 'pending' && (
+                      <span className="px-2 py-0.5 rounded-md bg-amber-100 dark:bg-amber-950/50 border border-amber-300 dark:border-amber-700 text-amber-900 dark:text-amber-300 text-[11px] font-extrabold inline-flex items-center gap-1">
+                        <Clock className="w-3 h-3" />
+                        {t('طلب إلغاء معلق', 'Pending Cancel Request')}
+                      </span>
+                    )}
+                    {order.cancelRequest?.status === 'rejected' && (
+                      <span className="px-2 py-0.5 rounded-md bg-stone-100 dark:bg-zinc-800 border border-stone-300 dark:border-zinc-700 text-slate-600 dark:text-slate-300 text-[11px] font-bold">
+                        {t('تم رفض الإلغاء', 'Cancel Rejected')}
+                      </span>
+                    )}
+                  </div>
                   <div className="text-stone-500 dark:text-zinc-400">
                     {recipient} · <span className="font-mono-num" dir="ltr">{phone}</span> ·{' '}
                     {locale === 'ar'
@@ -311,7 +335,14 @@ export const AdminOrdersModule: React.FC<{ onPrintInvoice: (order: Order) => voi
 
                   <select
                     value={order.status}
-                    onChange={(e) => updateOrderStatus(order.id, e.target.value as OrderStatus)}
+                    onChange={(e) => {
+                      const nextStatus = e.target.value as OrderStatus;
+                      if (nextStatus === 'cancelled' && order.status !== 'cancelled') {
+                        openCancelReview(order, 'approve');
+                        return;
+                      }
+                      updateOrderStatus(order.id, nextStatus);
+                    }}
                     className="min-h-[36px] px-2.5 py-1.5 rounded-lg border border-stone-200 dark:border-zinc-700 bg-stone-50 dark:bg-zinc-900 font-semibold"
                   >
                     {(
@@ -934,7 +965,10 @@ export const AdminOrdersModule: React.FC<{ onPrintInvoice: (order: Order) => voi
                 rows={3}
                 required={cancelReviewModal.action === 'reject'}
                 value={cancelAdminNote}
-                onChange={(e) => setCancelAdminNote(e.target.value)}
+                onChange={(e) => {
+                  setCancelAdminNote(e.target.value);
+                  setCancelReviewError(null);
+                }}
                 placeholder={
                   cancelReviewModal.action === 'reject'
                     ? t('اكتب سبب رفض طلب الإلغاء بوضوح...', 'Write rejection reason clearly...')
@@ -944,11 +978,18 @@ export const AdminOrdersModule: React.FC<{ onPrintInvoice: (order: Order) => voi
               />
             </div>
 
+            {cancelReviewError && (
+              <div className="p-2.5 rounded-lg bg-rose-50 dark:bg-rose-950/30 border border-rose-200 dark:border-rose-800 text-rose-700 dark:text-rose-300 font-bold">
+                {cancelReviewError}
+              </div>
+            )}
+
             <div className="flex justify-end gap-2">
               <button
                 type="button"
+                disabled={submittingCancelReview}
                 onClick={() => setCancelReviewModal(null)}
-                className="min-h-[40px] px-4 py-1.5 rounded-lg border font-bold"
+                className="min-h-[40px] px-4 py-1.5 rounded-lg border font-bold disabled:opacity-50"
               >
                 {t('تراجع', 'Cancel')}
               </button>

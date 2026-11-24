@@ -2255,7 +2255,13 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         'confirmed',
         'preparing',
       ];
-      if (!allowedStatuses.includes(order.status) || order.cancelRequest?.status === 'pending') {
+      if (!allowedStatuses.includes(order.status) || Boolean(order.cancelRequest)) {
+        showToast(
+          t(
+            'تم إرسال طلب إلغاء مسبقاً لهذا الطلب أو لم يعد متاحاً للإلغاء.',
+            'A cancellation request was already submitted or this order can no longer be cancelled.'
+          )
+        );
         return;
       }
       const cleanReason = reason.trim();
@@ -2269,6 +2275,7 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         requestedBy: current.uid,
       });
       const nextHistory = [...(order.cancelRequestHistory || []), cancelReq];
+      const prevOrders = stateRef.current.orders;
 
       setState((prev) => ({
         ...prev,
@@ -2301,12 +2308,17 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
           )
         );
       } catch (err) {
+        setState((prev) => ({
+          ...prev,
+          orders: prevOrders,
+        }));
         handleFirestoreError(err, OperationType.UPDATE, `orders/${orderId}`);
       }
     },
     approveOrderCancellation: async (orderId, adminNote) => {
       const current = auth.currentUser;
-      if (!current) return;
+      const role = stateRef.current.user.role;
+      if (!current || (role !== 'admin' && role !== 'staff')) return;
       const nowIso = new Date().toISOString();
       const cleanAdminNote = adminNote?.trim() || undefined;
 
@@ -2324,6 +2336,9 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
             throw new Error('Order not found');
           }
           const orderData = orderSnap.data() as Order;
+          if (orderData.status === 'cancelled') {
+            throw new Error('Order already cancelled');
+          }
           customerUid = orderData.customerUid;
 
           const uniqueProductIds = Array.from(
@@ -2469,10 +2484,11 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     },
     rejectOrderCancellation: async (orderId, adminNote) => {
       const current = auth.currentUser;
+      const role = stateRef.current.user.role;
       const cleanNote = adminNote.trim();
-      if (!current || !cleanNote) return;
+      if (!current || !cleanNote || (role !== 'admin' && role !== 'staff')) return;
       const order = stateRef.current.orders.find((o) => o.id === orderId);
-      if (!order || !order.cancelRequest) return;
+      if (!order || !order.cancelRequest || order.cancelRequest.status !== 'pending') return;
       const nowIso = new Date().toISOString();
 
       const rejectedReq: CancelRequest = stripUndefined({
@@ -2505,6 +2521,9 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         deepLinkId: orderId,
       };
 
+      const prevOrders = stateRef.current.orders;
+      const prevNotifications = stateRef.current.notifications;
+
       setState((prev) => ({
         ...prev,
         orders: prev.orders.map((o) =>
@@ -2531,6 +2550,11 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
           })
         );
       } catch (err) {
+        setState((prev) => ({
+          ...prev,
+          orders: prevOrders,
+          notifications: prevNotifications,
+        }));
         handleFirestoreError(err, OperationType.UPDATE, `orders/${orderId}`);
       }
 
@@ -2607,6 +2631,8 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       showToast(t('تمت إعادة إضافة منتجات الطلب للسلة', 'Order items added to cart'));
     },
     updateOrderStatus: (orderId, status) => {
+      const role = stateRef.current.user.role;
+      if (role !== 'admin' && role !== 'staff') return;
       const nowIso = new Date().toISOString();
       const targetOrder = stateRef.current.orders.find((o) => o.id === orderId);
       const notif: AppNotification = {

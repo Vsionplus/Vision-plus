@@ -132,6 +132,15 @@ function pwaBuilderManifestPlugin(): Plugin {
           res.end(manifestBody);
           return;
         }
+        if (reqPath === '/dev-sw.js') {
+          res.statusCode = 200;
+          res.setHeader('Content-Type', 'application/javascript; charset=utf-8');
+          res.setHeader('Cache-Control', 'no-store');
+          res.end(
+            `self.addEventListener('install',()=>self.skipWaiting());self.addEventListener('activate',async()=>{await self.registration.unregister();const clients=await self.clients.matchAll({type:'window'});clients.forEach(c=>c.navigate(c.url));});`
+          );
+          return;
+        }
         next();
       });
     },

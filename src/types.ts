@@ -314,6 +314,10 @@ export interface Order {
   refunded?: boolean;
   refundedAt?: string;
   refundedBy?: string;
+  customerNote?: string;
+  adminNote?: string;
+  lastEditedAt?: string;
+  lastEditedBy?: string;
   createdAt: string;
   updatedAt: string;
 }

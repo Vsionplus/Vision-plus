@@ -300,6 +300,10 @@ service cloud.firestore {
           'refunded',
           'refundedAt',
           'refundedBy',
+          'customerNote',
+          'adminNote',
+          'lastEditedAt',
+          'lastEditedBy',
           'createdAt',
           'updatedAt',
           'createdAtServer',
@@ -333,6 +337,10 @@ service cloud.firestore {
         && (!('refunded' in data) || data.refunded is bool)
         && (!('refundedAt' in data) || (data.refundedAt is string && data.refundedAt.size() <= 64))
         && (!('refundedBy' in data) || (data.refundedBy is string && data.refundedBy.size() <= 128))
+        && (!('customerNote' in data) || (data.customerNote is string && data.customerNote.size() <= 600))
+        && (!('adminNote' in data) || (data.adminNote is string && data.adminNote.size() <= 600))
+        && (!('lastEditedAt' in data) || (data.lastEditedAt is string && data.lastEditedAt.size() <= 64))
+        && (!('lastEditedBy' in data) || isValidId(data.lastEditedBy))
         && data.createdAt is string && data.createdAt.size() <= 64
         && data.updatedAt is string && data.updatedAt.size() <= 64
         && data.createdAtServer is timestamp
@@ -708,6 +716,7 @@ service cloud.firestore {
         && !('cancelRequestHistory' in incoming())
         && !('refundRequired' in incoming())
         && !('refunded' in incoming())
+        && !('adminNote' in incoming())
         && incoming().createdAtServer == request.time
         && incoming().updatedAtServer == request.time;
       allow update: if isActiveNonAnonAccount()
@@ -720,6 +729,24 @@ service cloud.firestore {
         && incoming().updatedAtServer == request.time
         && (
           ((isAdmin() || isStaff()) && incoming().diff(existing()).affectedKeys().hasOnly([
+            'customerName',
+            'customerPhone',
+            'stateId',
+            'city',
+            'area',
+            'addressDetails',
+            'address',
+            'items',
+            'itemsSubtotalSdg',
+            'lensOptionsTotalSdg',
+            'subtotalSdg',
+            'discountSdg',
+            'deliveryFeeSdg',
+            'totalSdg',
+            'couponCode',
+            'paymentMethod',
+            'bankTransferReference',
+            'bankTransferReceiptUrl',
             'status',
             'bankTransferVerified',
             'cancelRequest',
@@ -728,6 +755,10 @@ service cloud.firestore {
             'refunded',
             'refundedAt',
             'refundedBy',
+            'customerNote',
+            'adminNote',
+            'lastEditedAt',
+            'lastEditedBy',
             'updatedAt',
             'updatedAtServer'
           ]))
@@ -735,14 +766,69 @@ service cloud.firestore {
             isEmailVerified()
             && existing().customerUid == request.auth.uid
             && existing().status in ['pending', 'awaiting_payment_verification', 'confirmed', 'preparing']
-            && (!('cancelRequest' in existing()) || existing().cancelRequest.status != 'pending')
+            && !('cancelRequest' in existing())
+            && (!('cancelRequestHistory' in existing()) || existing().cancelRequestHistory.size() == 0)
             && incoming().status == existing().status
             && incoming().cancelRequest is map
             && incoming().cancelRequest.status == 'pending'
             && incoming().cancelRequest.requestedBy == request.auth.uid
+            && incoming().cancelRequestHistory is list
+            && incoming().cancelRequestHistory.size() == 1
             && incoming().diff(existing()).affectedKeys().hasOnly([
               'cancelRequest',
               'cancelRequestHistory',
+              'updatedAt',
+              'updatedAtServer'
+            ])
+          )
+          || (
+            isEmailVerified()
+            && existing().customerUid == request.auth.uid
+            && existing().status in ['pending', 'awaiting_payment_verification']
+            && (!('cancelRequest' in existing()) || existing().cancelRequest.status != 'approved')
+            && incoming().status == existing().status
+            && incoming().discountSdg == existing().discountSdg
+            && incoming().lastEditedBy == request.auth.uid
+            && incoming().diff(existing()).affectedKeys().hasOnly([
+              'customerName',
+              'customerPhone',
+              'stateId',
+              'city',
+              'area',
+              'addressDetails',
+              'address',
+              'items',
+              'itemsSubtotalSdg',
+              'lensOptionsTotalSdg',
+              'subtotalSdg',
+              'deliveryFeeSdg',
+              'totalSdg',
+              'bankTransferReference',
+              'bankTransferReceiptUrl',
+              'customerNote',
+              'lastEditedAt',
+              'lastEditedBy',
+              'updatedAt',
+              'updatedAtServer'
+            ])
+          )
+          || (
+            isEmailVerified()
+            && existing().customerUid == request.auth.uid
+            && existing().status in ['confirmed', 'preparing']
+            && (!('cancelRequest' in existing()) || existing().cancelRequest.status != 'approved')
+            && incoming().status == existing().status
+            && incoming().lastEditedBy == request.auth.uid
+            && incoming().diff(existing()).affectedKeys().hasOnly([
+              'customerName',
+              'customerPhone',
+              'city',
+              'area',
+              'addressDetails',
+              'address',
+              'customerNote',
+              'lastEditedAt',
+              'lastEditedBy',
               'updatedAt',
               'updatedAtServer'
             ])

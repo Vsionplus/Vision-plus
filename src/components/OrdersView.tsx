@@ -57,21 +57,46 @@ export const OrdersView: React.FC = () => {
   } = useStore();
 
   const [cancelTargetOrder, setCancelTargetOrder] = useState<Order | null>(null);
-  const [selectedReason, setSelectedReason] = useState(CANCEL_REASONS[0].ar);
+  const [selectedReason, setSelectedReason] = useState('');
   const [cancelNote, setCancelNote] = useState('');
+  const [confirmCancelAck, setConfirmCancelAck] = useState(false);
+  const [cancelError, setCancelError] = useState<string | null>(null);
   const [submittingCancel, setSubmittingCancel] = useState(false);
 
   const whatsappDigits = (settings.whatsapp || '').replace(/[^\d]/g, '');
 
   const openCancelDialog = (order: Order) => {
+    if (order.cancelRequest) return;
     setCancelTargetOrder(order);
-    setSelectedReason(CANCEL_REASONS[0].ar);
+    setSelectedReason('');
     setCancelNote('');
+    setConfirmCancelAck(false);
+    setCancelError(null);
+  };
+
+  const closeCancelDialog = () => {
+    if (submittingCancel) return;
+    setCancelTargetOrder(null);
+    setCancelError(null);
   };
 
   const handleSubmitCancelRequest = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!cancelTargetOrder || !selectedReason.trim() || submittingCancel) return;
+    if (!cancelTargetOrder || submittingCancel) return;
+    if (!selectedReason.trim()) {
+      setCancelError(t('يرجى اختيار سبب طلب الإلغاء أولاً.', 'Please select a cancellation reason first.'));
+      return;
+    }
+    if (!confirmCancelAck) {
+      setCancelError(
+        t(
+          'يرجى تأكيد فهمك أن الإلغاء يتطلب موافقة الإدارة.',
+          'Please confirm that cancellation requires admin approval.'
+        )
+      );
+      return;
+    }
+    setCancelError(null);
     setSubmittingCancel(true);
     try {
       await requestOrderCancellation(
@@ -81,6 +106,14 @@ export const OrdersView: React.FC = () => {
       );
       setCancelTargetOrder(null);
       setCancelNote('');
+      setConfirmCancelAck(false);
+    } catch {
+      setCancelError(
+        t(
+          'تعذر إرسال طلب الإلغاء حالياً. يرجى المحاولة مرة أخرى.',
+          'Could not submit cancellation request. Please try again.'
+        )
+      );
     } finally {
       setSubmittingCancel(false);
     }
@@ -220,7 +253,16 @@ export const OrdersView: React.FC = () => {
                           <Clock className="w-3.5 h-3.5" />
                           {t('طلب الإلغاء قيد المراجعة', 'Cancellation Pending')}
                         </button>
-                      ) : (
+                      ) : isCancelRejected ? (
+                        <button
+                          type="button"
+                          disabled
+                          className="min-h-[44px] px-3.5 py-2 rounded-xl border border-rose-200 dark:border-rose-900/50 bg-rose-50 dark:bg-rose-950/20 text-rose-700 dark:text-rose-300 text-xs font-bold inline-flex items-center gap-1.5 opacity-80 cursor-not-allowed"
+                        >
+                          <XCircle className="w-3.5 h-3.5" />
+                          {t('تم رفض طلب الإلغاء', 'Cancellation Rejected')}
+                        </button>
+                      ) : !cancelReq ? (
                         <button
                           type="button"
                           onClick={() => openCancelDialog(order)}
@@ -229,7 +271,7 @@ export const OrdersView: React.FC = () => {
                           <XCircle className="w-3.5 h-3.5" />
                           {t('طلب إلغاء الطلب', 'Request Cancellation')}
                         </button>
-                      )
+                      ) : null
                     )}
                   </div>
                 </div>
@@ -410,12 +452,19 @@ export const OrdersView: React.FC = () => {
               </div>
               <button
                 type="button"
-                onClick={() => setCancelTargetOrder(null)}
+                onClick={closeCancelDialog}
                 aria-label={t('إغلاق', 'Close')}
                 className="min-h-[44px] min-w-[44px] flex items-center justify-center rounded-xl hover:bg-slate-100 dark:hover:bg-zinc-800"
               >
                 <X className="w-5 h-5" />
               </button>
+            </div>
+
+            <div className="p-3 rounded-xl bg-amber-50 dark:bg-amber-950/25 border border-amber-200 dark:border-amber-900/50 text-amber-900 dark:text-amber-200 text-[11px] leading-relaxed">
+              {t(
+                'تنبيه: إرسال هذا النموذج يرفع طلب إلغاء للإدارة فقط، ويظل الطلب فعالاً حتى تتم مراجعته والموافقة عليه من لوحة التحكم (يمكن تقديم طلب إلغاء واحد فقط لكل طلب).',
+                'Notice: This submits a cancellation request for admin review. Your order remains active until approved by management (one request allowed per order).'
+              )}
             </div>
 
             <div className="space-y-1.5">
@@ -425,9 +474,15 @@ export const OrdersView: React.FC = () => {
               <select
                 required
                 value={selectedReason}
-                onChange={(e) => setSelectedReason(e.target.value)}
+                onChange={(e) => {
+                  setSelectedReason(e.target.value);
+                  setCancelError(null);
+                }}
                 className="w-full min-h-[44px] px-3 py-2 rounded-xl border border-stone-200 dark:border-zinc-700 bg-stone-50 dark:bg-zinc-900 text-sm"
               >
+                <option value="" disabled>
+                  {t('— اختر سبب طلب الإلغاء —', '— Select cancellation reason —')}
+                </option>
                 {CANCEL_REASONS.map((r) => (
                   <option key={r.ar} value={r.ar}>
                     {locale === 'ar' ? r.ar : r.en}
@@ -453,17 +508,42 @@ export const OrdersView: React.FC = () => {
               />
             </div>
 
+            <label className="flex items-start gap-2.5 p-3 rounded-xl border border-stone-200 dark:border-zinc-700 bg-stone-50/70 dark:bg-zinc-900/70 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={confirmCancelAck}
+                onChange={(e) => {
+                  setConfirmCancelAck(e.target.checked);
+                  setCancelError(null);
+                }}
+                className="w-4 h-4 mt-0.5 accent-[#11223E] shrink-0"
+              />
+              <span className="text-[11px] font-bold text-slate-700 dark:text-slate-200 leading-relaxed">
+                {t(
+                  'أعلم أن هذا الطلب سيُعرض على الإدارة للموافقة أو الرفض ولا يُلغى الطلب تلقائياً.',
+                  'I understand this request will be reviewed by management for approval or rejection and does not cancel the order automatically.'
+                )}
+              </span>
+            </label>
+
+            {cancelError && (
+              <div className="p-2.5 rounded-xl bg-rose-50 dark:bg-rose-950/30 border border-rose-200 dark:border-rose-800 text-rose-700 dark:text-rose-300 font-bold">
+                {cancelError}
+              </div>
+            )}
+
             <div className="flex items-center justify-end gap-2 pt-2">
               <button
                 type="button"
-                onClick={() => setCancelTargetOrder(null)}
-                className="min-h-[44px] px-4 py-2 rounded-xl border border-stone-200 dark:border-zinc-700 font-bold"
+                disabled={submittingCancel}
+                onClick={closeCancelDialog}
+                className="min-h-[44px] px-4 py-2 rounded-xl border border-stone-200 dark:border-zinc-700 font-bold disabled:opacity-50"
               >
                 {t('تراجع', 'Back')}
               </button>
               <button
                 type="submit"
-                disabled={submittingCancel || !selectedReason.trim()}
+                disabled={submittingCancel || !selectedReason.trim() || !confirmCancelAck}
                 className="min-h-[44px] px-5 py-2 rounded-xl bg-rose-600 hover:bg-rose-700 text-white font-extrabold disabled:opacity-50"
               >
                 {submittingCancel

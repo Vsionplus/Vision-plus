@@ -60,6 +60,10 @@
         "refunded": { "type": "boolean" },
         "refundedAt": { "type": "string", "format": "date-time" },
         "refundedBy": { "type": "string", "maxLength": 128 },
+        "customerNote": { "type": "string", "maxLength": 600 },
+        "adminNote": { "type": "string", "maxLength": 600 },
+        "lastEditedAt": { "type": "string", "format": "date-time" },
+        "lastEditedBy": { "type": "string", "maxLength": 128 },
         "createdAt": { "type": "string", "format": "date-time" },
         "updatedAt": { "type": "string", "format": "date-time" }
       },
