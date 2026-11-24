@@ -9,7 +9,6 @@ import {
   User,
   Sun,
   Moon,
-  ShieldCheck,
   X,
   CheckCheck,
   Globe,
@@ -18,7 +17,6 @@ import {
   Wrench,
   RefreshCw,
   LogIn,
-  UserPlus,
   LogOut,
 } from 'lucide-react';
 import { hasLegacyBrandString, useStore } from '../store/StoreContext';
@@ -73,7 +71,6 @@ export const NavigationShell: React.FC<{ children: React.ReactNode }> = ({ child
     openCatalog('all', headerSearch.trim());
   };
 
-  const isAdminOrStaff = user.role === 'admin' || user.role === 'staff';
   const showMaintenanceWall = settings.maintenanceMode && activeTab !== 'admin';
   const cartBadgeText = cartCount > 9 ? '9+' : String(cartCount);
 
@@ -209,20 +206,6 @@ export const NavigationShell: React.FC<{ children: React.ReactNode }> = ({ child
           <div className="bg-slate-50 dark:bg-[#0F1624] border-t border-slate-200/70 dark:border-slate-800/80">
             <div className="max-w-7xl mx-auto px-3 sm:px-6 py-1.5 flex items-center justify-between gap-2 overflow-x-auto text-xs">
               <div className="flex items-center gap-2 shrink-0">
-                {isAdminOrStaff && (
-                  <button
-                    type="button"
-                    onClick={() => setActiveTab(activeTab === 'admin' ? 'home' : 'admin')}
-                    style={{ backgroundColor: appearance.secondaryColor, color: appearance.primaryColor }}
-                    className="px-2.5 py-1 rounded-lg font-bold flex items-center gap-1.5 whitespace-nowrap"
-                  >
-                    <ShieldCheck className="w-3.5 h-3.5" />
-                    {activeTab === 'admin'
-                      ? t('العودة إلى المتجر', 'Back to Store')
-                      : t('لوحة تحكم الإدارة', 'Admin Panel')}
-                  </button>
-                )}
-
                 {isGuest ? (
                   <button
                     type="button"
@@ -293,30 +276,19 @@ export const NavigationShell: React.FC<{ children: React.ReactNode }> = ({ child
         {/* Gentle Guest Banner */}
         {isGuest && activeTab !== 'admin' && !showMaintenanceWall && (
           <div className="bg-amber-50 dark:bg-amber-950/30 border-b border-amber-200 dark:border-amber-900/50">
-            <div className="max-w-7xl mx-auto px-3 sm:px-6 py-2 flex flex-wrap items-center justify-between gap-2 text-xs">
+            <div className="max-w-7xl mx-auto px-3 sm:px-6 py-1.5 flex flex-wrap items-center justify-between gap-2 text-xs">
               <span className="font-bold text-[#11223E] dark:text-amber-200">
                 {t('أنت داخل كضيف، سجّل دخولك لإتمام الشراء', 'You are browsing as a guest, sign in to complete purchase')}
               </span>
-              <div className="flex items-center gap-2">
-                <button
-                  type="button"
-                  onClick={() => openAuthModal('login', false)}
-                  style={{ backgroundColor: appearance.primaryColor }}
-                  className="min-h-[36px] px-3 py-1 rounded-lg text-white font-bold inline-flex items-center gap-1"
-                >
-                  <LogIn className="w-3.5 h-3.5" />
-                  {t('تسجيل الدخول', 'Sign In')}
-                </button>
-                <button
-                  type="button"
-                  onClick={() => openAuthModal('register', false)}
-                  style={{ backgroundColor: appearance.secondaryColor, color: appearance.primaryColor }}
-                  className="min-h-[36px] px-3 py-1 rounded-lg font-extrabold inline-flex items-center gap-1"
-                >
-                  <UserPlus className="w-3.5 h-3.5" />
-                  {t('إنشاء حساب جديد', 'Register')}
-                </button>
-              </div>
+              <button
+                type="button"
+                onClick={() => openAuthModal('login', activeTab === 'cart')}
+                style={{ backgroundColor: appearance.primaryColor }}
+                className="min-h-[44px] px-4 py-1.5 rounded-xl text-white font-bold inline-flex items-center gap-1.5 shrink-0"
+              >
+                <LogIn className="w-3.5 h-3.5" />
+                <span>{t('تسجيل الدخول', 'Sign In')}</span>
+              </button>
             </div>
           </div>
         )}

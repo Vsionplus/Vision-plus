@@ -18,6 +18,9 @@ import {
   deleteDoc,
   doc,
   getDoc,
+  getDocFromServer,
+  getDocs,
+  limit,
   onSnapshot,
   query,
   serverTimestamp,
@@ -79,6 +82,12 @@ import {
   stripUndefined,
 } from '../lib/firebase';
 import { hasCustomLensOrRx, resolveExtraOptions, resolveVisionType } from '../utils/prescription';
+import {
+  AdminLoginAttemptStatus,
+  clearAdminAttempts,
+  getAdminAttemptStatusByEmail,
+  recordAdminFailedAttempt,
+} from '../utils/adminAuth';
 
 export type AppTab =
   | 'home'
@@ -91,6 +100,17 @@ export type AppTab =
   | 'contact'
   | 'admin';
 
+export type AdminRouteMode = 'store' | 'admin_login' | 'admin_panel';
+
+export class AdminLoginError extends Error {
+  attemptStatus?: AdminLoginAttemptStatus;
+  constructor(message: string, attemptStatus?: AdminLoginAttemptStatus) {
+    super(message);
+    this.name = 'AdminLoginError';
+    this.attemptStatus = attemptStatus;
+  }
+}
+
 export type AuthScreenMode = 'none' | 'entry' | 'verify_email';
 
 export interface AuthModalState {
@@ -99,7 +119,6 @@ export interface AuthModalState {
   checkoutNotice: boolean;
 }
 
-const BOOTSTRAPPED_ADMIN_EMAIL = 'visionplusvisionstore@gmail.com';
 const ALL_ADMIN_PERMS: StaffPermission[] = [
   'dashboard',
   'products',
@@ -137,6 +156,7 @@ interface StoreState {
   locale: Locale;
   theme: ThemeMode;
   activeTab: AppTab;
+  adminRoute: AdminRouteMode;
   catalogCategory: CategoryId | 'all';
   catalogSearch: string;
   selectedProductId: string | null;
@@ -212,15 +232,19 @@ interface StoreContextValue extends StoreState {
   setLocale: (l: Locale) => void;
   setTheme: (m: ThemeMode) => void;
   setActiveTab: (tab: AppTab) => void;
+  navigateToAdminPanel: (module?: StaffPermission) => void;
+  navigateToHome: () => void;
   openCatalog: (category?: CategoryId | 'all', search?: string) => void;
   setCatalogSearch: (q: string) => void;
   openProduct: (productId: string | null) => void;
   openAuthEntry: () => void;
   openVerifyEmailScreen: () => void;
+  closeVerifyEmailScreen: () => void;
   openAuthModal: (view?: 'choice' | 'login' | 'register', checkoutNotice?: boolean) => void;
   closeAuthModal: () => void;
   continueAsGuest: () => Promise<void>;
   loginWithEmail: (email: string, password: string) => Promise<void>;
+  loginAdminWithEmail: (email: string, password: string) => Promise<void>;
   registerWithEmail: (payload: RegisterPayload) => Promise<void>;
   refreshEmailVerification: (silent?: boolean) => Promise<boolean>;
   resendVerificationEmail: () => Promise<void>;
@@ -283,7 +307,11 @@ interface StoreContextValue extends StoreState {
   updateSettings: (settings: StoreSettings) => void;
   toggleBlockUser: (uid: string) => void;
   upsertStaffOrAdmin: (userRecord: AppUser) => void;
-  removeAdminRole: (uid: string) => void;
+  addOrUpdateAdminByEmail: (
+    email: string,
+    role: 'admin' | 'staff'
+  ) => Promise<{ ok: boolean; error?: string }>;
+  removeAdminRole: (uid: string) => Promise<void>;
   showToast: (msg: string) => void;
   resetDemoData: () => void;
 }
@@ -458,8 +486,66 @@ function normalizeHomeSections(raw?: HomeSectionConfig[]): HomeSectionConfig[] {
   return filtered.length > 0 ? filtered : HOME_SECTIONS_SEED;
 }
 
+export function resolveAdminRouteFromLocation(): AdminRouteMode {
+  if (typeof window === 'undefined') return 'store';
+  const pathname = window.location.pathname.toLowerCase();
+  const hash = window.location.hash.replace(/^#\/?/, '').split('?')[0].toLowerCase();
+  if (
+    pathname === '/vp-admin/login' ||
+    pathname.startsWith('/vp-admin/login/') ||
+    hash === 'vp-admin/login'
+  ) {
+    return 'admin_login';
+  }
+  if (
+    pathname === '/vp-admin' ||
+    pathname.startsWith('/vp-admin/') ||
+    hash === 'vp-admin' ||
+    hash.startsWith('vp-admin/') ||
+    hash === 'admin'
+  ) {
+    return 'admin_panel';
+  }
+  return 'store';
+}
+
+const VALID_ADMIN_MODULES: StaffPermission[] = [
+  'dashboard',
+  'products',
+  'categories',
+  'home_builder',
+  'banners',
+  'content',
+  'appearance',
+  'settings',
+  'orders',
+  'coupons',
+  'notifications',
+  'consults',
+  'customers',
+  'roles',
+];
+
+export function resolveAdminModuleFromLocation(): StaffPermission | null {
+  if (typeof window === 'undefined') return null;
+  const pathname = window.location.pathname.toLowerCase();
+  const hash = window.location.hash.replace(/^#\/?/, '').split('?')[0].toLowerCase();
+  let segment = '';
+  if (pathname.startsWith('/vp-admin/')) {
+    segment = pathname.slice('/vp-admin/'.length).split('/')[0];
+  } else if (hash.startsWith('vp-admin/')) {
+    segment = hash.slice('vp-admin/'.length).split('/')[0];
+  }
+  if (segment && segment !== 'login' && (VALID_ADMIN_MODULES as string[]).includes(segment)) {
+    return segment as StaffPermission;
+  }
+  return null;
+}
+
 function resolveTabFromHash(): AppTab {
   if (typeof window === 'undefined') return 'home';
+  const adminRoute = resolveAdminRouteFromLocation();
+  if (adminRoute === 'admin_panel') return 'admin';
   const raw = window.location.hash.replace(/^#\/?/, '').split('?')[0].toLowerCase();
   if (raw === 'categories' || raw === 'catalog') return 'catalog';
   if (raw === 'cart') return 'cart';
@@ -468,7 +554,6 @@ function resolveTabFromHash(): AppTab {
   if (raw === 'profile') return 'profile';
   if (raw === 'favorites') return 'favorites';
   if (raw === 'contact') return 'contact';
-  if (raw === 'admin') return 'admin';
   return 'home';
 }
 
@@ -530,6 +615,7 @@ function mergeCartItems(existingCart: CartItem[], incomingCart: CartItem[]): Car
 
 function getInitialState(): StoreState {
   const baseAppearance = APP_APPEARANCE_SEED;
+  const initialAdminRoute = resolveAdminRouteFromLocation();
   const initialTab = resolveTabFromHash();
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
@@ -539,6 +625,7 @@ function getInitialState(): StoreState {
         locale: parsed.locale || 'ar',
         theme: parsed.theme || parsed.appearance?.defaultTheme || baseAppearance.defaultTheme,
         activeTab: initialTab,
+        adminRoute: initialAdminRoute,
         catalogCategory: 'all',
         catalogSearch: '',
         selectedProductId: null,
@@ -574,6 +661,7 @@ function getInitialState(): StoreState {
     locale: 'ar',
     theme: baseAppearance.defaultTheme,
     activeTab: initialTab,
+    adminRoute: initialAdminRoute,
     catalogCategory: 'all',
     catalogSearch: '',
     selectedProductId: null,
@@ -635,22 +723,30 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   }, [state.theme]);
 
   useEffect(() => {
-    const onHashChange = () => {
+    const syncLocation = () => {
+      const nextAdminRoute = resolveAdminRouteFromLocation();
       const nextTab = resolveTabFromHash();
       setState((prev) =>
-        prev.activeTab === nextTab ? prev : { ...prev, activeTab: nextTab, selectedProductId: null }
+        prev.adminRoute === nextAdminRoute && prev.activeTab === nextTab
+          ? prev
+          : { ...prev, adminRoute: nextAdminRoute, activeTab: nextTab, selectedProductId: null }
       );
     };
-    window.addEventListener('hashchange', onHashChange);
-    return () => window.removeEventListener('hashchange', onHashChange);
+    window.addEventListener('hashchange', syncLocation);
+    window.addEventListener('popstate', syncLocation);
+    return () => {
+      window.removeEventListener('hashchange', syncLocation);
+      window.removeEventListener('popstate', syncLocation);
+    };
   }, []);
 
   useEffect(() => {
+    if (state.adminRoute !== 'store') return;
     const targetHash = hashForTab(state.activeTab);
     if (window.location.hash !== targetHash && !(state.activeTab === 'home' && !window.location.hash)) {
       window.history.replaceState(null, '', targetHash);
     }
-  }, [state.activeTab]);
+  }, [state.activeTab, state.adminRoute]);
 
   useEffect(() => {
     const root = document.documentElement;
@@ -721,14 +817,19 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   // Helper to resolve Firebase User -> AppUser document in Firestore
   const ensureUserDocument = useCallback(async (fbUser: User): Promise<AppUser> => {
     const path = `users/${fbUser.uid}`;
-    const isBootstrappedOwner =
-      fbUser.email?.toLowerCase() === BOOTSTRAPPED_ADMIN_EMAIL && fbUser.emailVerified;
 
     try {
-      const snap = await getDoc(doc(db, 'users', fbUser.uid));
+      let snap;
+      try {
+        snap = await getDocFromServer(doc(db, 'users', fbUser.uid));
+      } catch {
+        snap = await getDoc(doc(db, 'users', fbUser.uid));
+      }
+
       if (snap.exists()) {
         const data = snap.data() as Partial<AppUser>;
-        const resolvedRole = isBootstrappedOwner ? 'admin' : data.role || 'customer';
+        const resolvedRole = data.role || 'customer';
+        const resolvedBlocked = Boolean(data.isBlocked || data.blocked);
         const appUser: AppUser = {
           uid: fbUser.uid,
           name:
@@ -738,8 +839,14 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
           email: fbUser.email || data.email || '',
           phone: data.phone || '',
           role: resolvedRole,
-          permissions: isBootstrappedOwner ? ALL_ADMIN_PERMS : data.permissions,
-          isBlocked: Boolean(data.isBlocked),
+          permissions:
+            resolvedRole === 'admin'
+              ? ALL_ADMIN_PERMS
+              : resolvedRole === 'staff'
+              ? ['orders']
+              : data.permissions,
+          isBlocked: resolvedBlocked,
+          blocked: Boolean(data.blocked),
           isAnonymous: fbUser.isAnonymous,
           emailVerified: fbUser.emailVerified,
           createdAt: data.createdAt || new Date().toISOString(),
@@ -759,6 +866,7 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         phone: '',
         role: 'customer' as const,
         isBlocked: false,
+        blocked: false,
         isAnonymous: fbUser.isAnonymous,
         emailVerified: fbUser.emailVerified,
         favoriteProductIds: stateRef.current.user.favoriteProductIds || [],
@@ -777,11 +885,7 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         })
       );
 
-      return {
-        ...initialDoc,
-        role: isBootstrappedOwner ? 'admin' : 'customer',
-        permissions: isBootstrappedOwner ? ALL_ADMIN_PERMS : undefined,
-      };
+      return initialDoc;
     } catch (error) {
       handleFirestoreError(error, OperationType.GET, path);
     }
@@ -831,8 +935,9 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   useEffect(() => {
     if (!state.authReady || !state.firebaseUser) return;
     const fbUser = state.firebaseUser;
-    const isBootstrappedOwner =
-      fbUser.email?.toLowerCase() === BOOTSTRAPPED_ADMIN_EMAIL && fbUser.emailVerified;
+    const isBlockedAccount = Boolean(state.user.isBlocked || state.user.blocked);
+    const isVerifiedAdmin = Boolean(!fbUser.isAnonymous && !isBlockedAccount && state.user.role === 'admin');
+    const isVerifiedStaff = Boolean(!fbUser.isAnonymous && !isBlockedAccount && state.user.role === 'staff');
     const unsubs: (() => void)[] = [];
 
     // 1. User document (cart, favorites, profile, role, block status)
@@ -842,6 +947,8 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         (snap) => {
           if (!snap.exists()) return;
           const data = snap.data() as Partial<AppUser> & { cart?: CartItem[] };
+          const resolvedRole = data.role || 'customer';
+          const resolvedBlocked = Boolean(data.isBlocked || data.blocked);
           setState((prev) => ({
             ...prev,
             cart: Array.isArray(data.cart) ? data.cart : prev.cart,
@@ -851,9 +958,15 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
               name: data.name || fbUser.displayName || prev.user.name,
               email: fbUser.email || data.email || prev.user.email,
               phone: data.phone ?? prev.user.phone,
-              role: isBootstrappedOwner ? 'admin' : data.role || prev.user.role,
-              permissions: isBootstrappedOwner ? ALL_ADMIN_PERMS : data.permissions,
-              isBlocked: Boolean(data.isBlocked),
+              role: resolvedRole,
+              permissions:
+                resolvedRole === 'admin'
+                  ? ALL_ADMIN_PERMS
+                  : resolvedRole === 'staff'
+                  ? ['orders']
+                  : data.permissions,
+              isBlocked: resolvedBlocked,
+              blocked: Boolean(data.blocked),
               isAnonymous: fbUser.isAnonymous,
               emailVerified: fbUser.emailVerified,
               favoriteProductIds: Array.isArray(data.favoriteProductIds)
@@ -937,7 +1050,7 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
             if (!snap.exists()) return;
             const val = snap.data();
 
-            if (isBootstrappedOwner && !migratedConfigs.has(configId)) {
+            if (isVerifiedAdmin && !migratedConfigs.has(configId)) {
               if (configId === 'settings') {
                 const rawSettings = val as Partial<StoreSettings>;
                 if (
@@ -1016,7 +1129,7 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       );
     });
 
-    const productsQ = isBootstrappedOwner
+    const productsQ = isVerifiedAdmin
       ? collection(db, 'products')
       : query(collection(db, 'products'), where('visible', '==', true));
     unsubs.push(
@@ -1031,7 +1144,7 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       )
     );
 
-    const categoriesQ = isBootstrappedOwner
+    const categoriesQ = isVerifiedAdmin
       ? collection(db, 'categories')
       : query(collection(db, 'categories'), where('visible', '==', true));
     unsubs.push(
@@ -1046,7 +1159,7 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       )
     );
 
-    const brandsQ = isBootstrappedOwner
+    const brandsQ = isVerifiedAdmin
       ? collection(db, 'brands')
       : query(collection(db, 'brands'), where('visible', '==', true));
     unsubs.push(
@@ -1061,7 +1174,7 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       )
     );
 
-    const bannersQ = isBootstrappedOwner
+    const bannersQ = isVerifiedAdmin
       ? collection(db, 'banners')
       : query(collection(db, 'banners'), where('isActive', '==', true));
     unsubs.push(
@@ -1076,7 +1189,7 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       )
     );
 
-    const couponsQ = isBootstrappedOwner
+    const couponsQ = isVerifiedAdmin
       ? collection(db, 'coupons')
       : query(collection(db, 'coupons'), where('isActive', '==', true));
     unsubs.push(
@@ -1091,25 +1204,30 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       )
     );
 
-    // 3. Orders (scoped securely to customerUid for customers, or all for verified bootstrapped admin)
-    const ordersQ = isBootstrappedOwner
-      ? collection(db, 'orders')
-      : query(collection(db, 'orders'), where('customerUid', '==', fbUser.uid));
-    unsubs.push(
-      onSnapshot(
-        ordersQ,
-        (snap) => {
-          const items = snap.docs
-            .map((d) => d.data() as Order)
-            .sort((a, b) => (b.createdAt || '').localeCompare(a.createdAt || ''));
-          setState((prev) => ({ ...prev, orders: items }));
-        },
-        (err) => handleFirestoreError(err, OperationType.LIST, 'orders')
-      )
-    );
+    // 3. Orders (non-anonymous accounts only; guests cannot use order history)
+    if (!fbUser.isAnonymous) {
+      const ordersQ =
+        isVerifiedAdmin || isVerifiedStaff
+          ? collection(db, 'orders')
+          : query(collection(db, 'orders'), where('customerUid', '==', fbUser.uid));
+      unsubs.push(
+        onSnapshot(
+          ordersQ,
+          (snap) => {
+            const items = snap.docs
+              .map((d) => d.data() as Order)
+              .sort((a, b) => (b.createdAt || '').localeCompare(a.createdAt || ''));
+            setState((prev) => ({ ...prev, orders: items }));
+          },
+          (err) => handleFirestoreError(err, OperationType.LIST, 'orders')
+        )
+      );
+    } else {
+      setState((prev) => (prev.orders.length > 0 ? { ...prev, orders: [] } : prev));
+    }
 
-    // 4. Consultations (scoped securely to customerUid or all for verified bootstrapped admin)
-    const consultsQ = isBootstrappedOwner
+    // 4. Consultations (scoped to customerUid or all for verified admin)
+    const consultsQ = isVerifiedAdmin
       ? collection(db, 'consults')
       : query(collection(db, 'consults'), where('customerUid', '==', fbUser.uid));
     unsubs.push(
@@ -1125,8 +1243,8 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       )
     );
 
-    // 5. Bootstrapped admin-only customers directory
-    if (isBootstrappedOwner) {
+    // 5. Admin-only customers & staff directory
+    if (isVerifiedAdmin) {
       unsubs.push(
         onSnapshot(
           collection(db, 'users'),
@@ -1143,7 +1261,7 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     return () => {
       unsubs.forEach((fn) => fn());
     };
-  }, [state.authReady, state.firebaseUser]);
+  }, [state.authReady, state.firebaseUser, state.user.role, state.user.isBlocked, state.user.blocked]);
 
   // Auth Methods
   const continueAsGuest = useCallback(async () => {
@@ -1152,6 +1270,7 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       await ensureUserDocument(cred.user);
       setState((prev) => ({
         ...prev,
+        activeTab: 'home',
         authScreenMode: 'none',
         authModal: { open: false, view: 'choice', checkoutNotice: false },
       }));
@@ -1184,6 +1303,8 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         }
 
         await firebaseUpdateProfile(userCredUser, { displayName: cleanName });
+        // Force-refresh ID token so Firestore sees non-anonymous provider immediately after linkWithCredential
+        await userCredUser.getIdToken(true);
         await sendEmailVerification(userCredUser);
 
         const nowIso = new Date().toISOString();
@@ -1236,6 +1357,8 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
           firebaseUser: userCredUser,
           user: { ...prev.user, ...userPayload },
           cart: guestCart,
+          pendingCheckoutReturn:
+            prev.pendingCheckoutReturn || prev.activeTab === 'cart' || guestCart.length > 0,
           authModal: { open: false, view: 'choice', checkoutNotice: false },
           authScreenMode: 'verify_email',
         }));
@@ -1273,8 +1396,8 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
           : [];
         const mergedFavs = Array.from(new Set([...accountFavs, ...guestFavs]));
 
-        const isBootstrappedOwner =
-          signedUser.email?.toLowerCase() === BOOTSTRAPPED_ADMIN_EMAIL && signedUser.emailVerified;
+        const resolvedRole = existingData.role || ('customer' as const);
+        const resolvedBlocked = Boolean(existingData.isBlocked || existingData.blocked);
 
         const nowIso = new Date().toISOString();
         const syncedUserDoc = {
@@ -1282,8 +1405,9 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
           name: existingData.name || signedUser.displayName || 'عميل فيجن بلس',
           email: signedUser.email || existingData.email || email.trim(),
           phone: existingData.phone || '',
-          role: existingData.role || ('customer' as const),
-          isBlocked: Boolean(existingData.isBlocked),
+          role: resolvedRole,
+          isBlocked: resolvedBlocked,
+          blocked: Boolean(existingData.blocked),
           isAnonymous: false,
           emailVerified: signedUser.emailVerified,
           favoriteProductIds: mergedFavs,
@@ -1314,6 +1438,7 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
               ...syncedUserDoc,
               role: 'customer',
               isBlocked: false,
+              blocked: false,
               createdAtServer: serverTimestamp(),
               updatedAtServer: serverTimestamp(),
             })
@@ -1321,19 +1446,27 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         }
 
         setState((prev) => {
-          const goToCheckout = prev.pendingCheckoutReturn;
+          const goToCheckout = prev.pendingCheckoutReturn || prev.activeTab === 'cart';
           return {
             ...prev,
             firebaseUser: signedUser,
             user: {
               ...syncedUserDoc,
-              role: isBootstrappedOwner ? 'admin' : syncedUserDoc.role,
-              permissions: isBootstrappedOwner ? ALL_ADMIN_PERMS : existingData.permissions,
+              permissions:
+                resolvedRole === 'admin'
+                  ? ALL_ADMIN_PERMS
+                  : resolvedRole === 'staff'
+                  ? ['orders']
+                  : existingData.permissions,
             },
             cart: mergedCart,
             authModal: { open: false, view: 'choice', checkoutNotice: false },
             authScreenMode: 'none',
-            activeTab: goToCheckout ? 'cart' : 'home',
+            activeTab: goToCheckout
+              ? 'cart'
+              : prev.activeTab === 'orders' || prev.activeTab === 'profile'
+              ? prev.activeTab
+              : 'home',
             pendingCheckoutReturn: goToCheckout ? !signedUser.emailVerified : false,
           };
         });
@@ -1345,6 +1478,113 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         );
       } catch (error) {
         throw new Error(mapFirebaseAuthError(error, stateRef.current.locale));
+      }
+    },
+    [showToast, t]
+  );
+
+  const loginAdminWithEmail = useCallback(
+    async (email: string, password: string) => {
+      const cleanEmail = email.trim().toLowerCase();
+      const attemptStatus = await getAdminAttemptStatusByEmail(cleanEmail);
+      if (attemptStatus.isLocked) {
+        throw new AdminLoginError(
+          'تم قفل تسجيل الدخول مؤقتاً لمدة 15 دقيقة بسبب تكرار المحاولات الخاطئة',
+          attemptStatus
+        );
+      }
+
+      let signedUser: User;
+      try {
+        const cred = await signInWithEmailAndPassword(auth, cleanEmail, password);
+        signedUser = cred.user;
+      } catch (error) {
+        const code = getFirebaseAuthErrorCode(error);
+        if (code === 'auth/too-many-requests') {
+          throw new AdminLoginError(
+            'تم إرسال طلبات كثيرة مؤقتاً. يرجى الانتظار قليلاً ثم المحاولة مرة أخرى.',
+            attemptStatus
+          );
+        }
+        if (code === 'auth/network-request-failed') {
+          throw new AdminLoginError(
+            'تعذر الاتصال بالشبكة. تحقق من اتصال الإنترنت وحاول مجدداً.',
+            attemptStatus
+          );
+        }
+        const nextStatus = await recordAdminFailedAttempt(cleanEmail);
+        throw new AdminLoginError('بيانات الدخول غير صحيحة', nextStatus);
+      }
+
+      try {
+        let userSnap;
+        try {
+          userSnap = await getDocFromServer(doc(db, 'users', signedUser.uid));
+        } catch {
+          userSnap = await getDoc(doc(db, 'users', signedUser.uid));
+        }
+
+        const data = userSnap.exists()
+          ? (userSnap.data() as Partial<AppUser>)
+          : null;
+        const role = data?.role;
+        const blocked = Boolean(data?.isBlocked || data?.blocked);
+
+        if (!userSnap.exists() || !data || (role !== 'admin' && role !== 'staff') || blocked) {
+          await signOut(auth);
+          const nextStatus = await recordAdminFailedAttempt(cleanEmail);
+          throw new AdminLoginError('بيانات الدخول غير صحيحة', nextStatus);
+        }
+
+        await clearAdminAttempts(cleanEmail);
+
+        const resolvedUser: AppUser = {
+          uid: signedUser.uid,
+          name: data.name || signedUser.displayName || 'مشرف فيجن بلس',
+          email: signedUser.email || data.email || cleanEmail,
+          phone: data.phone || '',
+          role,
+          permissions: role === 'admin' ? ALL_ADMIN_PERMS : ['orders'],
+          isBlocked: false,
+          blocked: false,
+          isAnonymous: false,
+          emailVerified: signedUser.emailVerified,
+          createdAt: data.createdAt || new Date().toISOString(),
+          updatedAt: new Date().toISOString(),
+          favoriteProductIds: Array.isArray(data.favoriteProductIds) ? data.favoriteProductIds : [],
+          addresses: Array.isArray(data.addresses) ? data.addresses : [],
+          prescriptions: Array.isArray(data.prescriptions) ? data.prescriptions : [],
+        };
+
+        const targetUrl = role === 'staff' ? '/vp-admin/orders' : '/vp-admin';
+        if (typeof window !== 'undefined') {
+          window.history.replaceState(null, '', targetUrl);
+        }
+
+        setState((prev) => ({
+          ...prev,
+          firebaseUser: signedUser,
+          user: resolvedUser,
+          authScreenMode: 'none',
+          authModal: { open: false, view: 'choice', checkoutNotice: false },
+          adminRoute: 'admin_panel',
+          activeTab: 'admin',
+        }));
+
+        showToast(t('مرحباً بك في لوحة التحكم', 'Welcome to Admin Panel'));
+      } catch (err) {
+        if (err instanceof AdminLoginError) {
+          throw err;
+        }
+        const code = getFirebaseAuthErrorCode(err);
+        if (code === 'auth/network-request-failed') {
+          throw new AdminLoginError(
+            'تعذر الاتصال بالشبكة. تحقق من اتصال الإنترنت وحاول مجدداً.'
+          );
+        }
+        await signOut(auth).catch(() => undefined);
+        const nextStatus = await recordAdminFailedAttempt(cleanEmail);
+        throw new AdminLoginError('بيانات الدخول غير صحيحة', nextStatus);
       }
     },
     [showToast, t]
@@ -1427,6 +1667,9 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
 
   const logout = useCallback(async () => {
     await signOut(auth);
+    if (typeof window !== 'undefined' && stateRef.current.adminRoute !== 'store') {
+      window.history.replaceState(null, '', '/#/home');
+    }
     setState((prev) => ({
       ...prev,
       firebaseUser: null,
@@ -1434,13 +1677,42 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       cart: [],
       orders: [],
       consults: [],
+      directoryUsers: [],
       authScreenMode: 'entry',
       authModal: { open: false, view: 'choice', checkoutNotice: false },
       pendingCheckoutReturn: false,
+      adminRoute: 'store',
       activeTab: 'home',
     }));
     showToast(t('تم تسجيل الخروج', 'Signed out'));
   }, [showToast, t]);
+
+  const navigateToAdminPanel = useCallback((module?: StaffPermission) => {
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+    const targetUrl = module && module !== 'dashboard' ? `/vp-admin/${module}` : '/vp-admin';
+    if (typeof window !== 'undefined') {
+      window.history.pushState(null, '', targetUrl);
+    }
+    setState((prev) => ({
+      ...prev,
+      adminRoute: 'admin_panel',
+      activeTab: 'admin',
+      selectedProductId: null,
+    }));
+  }, []);
+
+  const navigateToHome = useCallback(() => {
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+    if (typeof window !== 'undefined') {
+      window.history.replaceState(null, '', '/#/home');
+    }
+    setState((prev) => ({
+      ...prev,
+      adminRoute: 'store',
+      activeTab: 'home',
+      selectedProductId: null,
+    }));
+  }, []);
 
   const isGuest = !state.firebaseUser || state.firebaseUser.isAnonymous;
   const isEmailVerified = Boolean(state.firebaseUser && !state.firebaseUser.isAnonymous && state.firebaseUser.emailVerified);
@@ -1475,9 +1747,10 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   );
 
   const hasPermission = (perm: StaffPermission) => {
+    if (state.user.isBlocked || state.user.blocked) return false;
     if (state.user.role === 'admin') return true;
     if (state.user.role === 'staff') {
-      return Boolean(state.user.permissions?.includes(perm));
+      return perm === 'orders';
     }
     return false;
   };
@@ -1505,12 +1778,25 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     setTheme: (theme) => setState((prev) => ({ ...prev, theme })),
     setActiveTab: (activeTab) => {
       window.scrollTo({ top: 0, behavior: 'smooth' });
-      setState((prev) => ({ ...prev, activeTab, selectedProductId: null }));
+      if (activeTab === 'admin') {
+        navigateToAdminPanel();
+        return;
+      }
+      if (stateRef.current.adminRoute !== 'store' && typeof window !== 'undefined') {
+        window.history.replaceState(null, '', `/${hashForTab(activeTab)}`);
+      }
+      setState((prev) => ({ ...prev, adminRoute: 'store', activeTab, selectedProductId: null }));
     },
+    navigateToAdminPanel,
+    navigateToHome,
     openCatalog: (category = 'all', search = '') => {
       window.scrollTo({ top: 0, behavior: 'smooth' });
+      if (stateRef.current.adminRoute !== 'store' && typeof window !== 'undefined') {
+        window.history.replaceState(null, '', '/#/categories');
+      }
       setState((prev) => ({
         ...prev,
+        adminRoute: 'store',
         activeTab: 'catalog',
         catalogCategory: category,
         catalogSearch: search,
@@ -1521,10 +1807,17 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     openProduct: (selectedProductId) => setState((prev) => ({ ...prev, selectedProductId })),
     openAuthEntry: () => setState((prev) => ({ ...prev, authScreenMode: 'entry' })),
     openVerifyEmailScreen: () => setState((prev) => ({ ...prev, authScreenMode: 'verify_email' })),
+    closeVerifyEmailScreen: () =>
+      setState((prev) => ({
+        ...prev,
+        authScreenMode: 'none',
+        activeTab: prev.pendingCheckoutReturn || prev.cart.length > 0 ? 'cart' : prev.activeTab,
+      })),
     openAuthModal: (view = 'choice', checkoutNotice = false) =>
       setState((prev) => ({
         ...prev,
-        pendingCheckoutReturn: checkoutNotice ? true : prev.pendingCheckoutReturn,
+        pendingCheckoutReturn:
+          checkoutNotice || prev.activeTab === 'cart' ? true : prev.pendingCheckoutReturn,
         authModal: { open: true, view, checkoutNotice },
       })),
     closeAuthModal: () =>
@@ -1534,16 +1827,20 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       })),
     continueAsGuest,
     loginWithEmail,
+    loginAdminWithEmail,
     registerWithEmail,
     refreshEmailVerification,
     resendVerificationEmail,
     changeVerificationEmail,
     logout,
     updateProfile: (name, phone, email) => {
-      setState((prev) => ({ ...prev, user: { ...prev.user, name, phone, email } }));
-      if (auth.currentUser) {
-        void syncUserDocFields(auth.currentUser.uid, { name, phone, email });
+      const current = auth.currentUser;
+      if (!current || current.isAnonymous) {
+        showToast(t('سجّل دخولك لاستخدام هذه الميزة', 'Sign in to use this feature'));
+        return;
       }
+      setState((prev) => ({ ...prev, user: { ...prev.user, name, phone, email } }));
+      void syncUserDocFields(current.uid, { name, phone, email });
       showToast(t('تم تحديث بيانات الحساب', 'Profile updated'));
     },
     toggleFavorite: (productId) => {
@@ -1838,6 +2135,11 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       return newOrder;
     },
     cancelOrder: (orderId) => {
+      const current = auth.currentUser;
+      if (!current || current.isAnonymous) {
+        showToast(t('سجّل دخولك لاستخدام هذه الميزة', 'Sign in to use this feature'));
+        return;
+      }
       const nowIso = new Date().toISOString();
       setState((prev) => ({
         ...prev,
@@ -1853,6 +2155,11 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       showToast(t('تم إلغاء الطلب', 'Order cancelled'));
     },
     reorder: (orderId) => {
+      const current = auth.currentUser;
+      if (!current || current.isAnonymous) {
+        showToast(t('سجّل دخولك لاستخدام هذه الميزة', 'Sign in to use this feature'));
+        return;
+      }
       const order = state.orders.find((o) => o.id === orderId);
       if (!order) return;
       const itemsToAdd: CartItem[] = order.items.map((item, idx) =>
@@ -1873,9 +2180,7 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         cart: nextCart,
         activeTab: 'cart',
       }));
-      if (auth.currentUser) {
-        void syncUserDocFields(auth.currentUser.uid, { cart: nextCart });
-      }
+      void syncUserDocFields(current.uid, { cart: nextCart });
       showToast(t('تمت إعادة إضافة منتجات الطلب للسلة', 'Order items added to cart'));
     },
     updateOrderStatus: (orderId, status) => {
@@ -2128,6 +2433,11 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       const id = `addr_${Date.now()}`;
       const isDefault = Boolean(addr.isDefault) || stateRef.current.user.addresses.length === 0;
       const created: SavedAddress = stripUndefined({ ...addr, id, isDefault });
+      const current = auth.currentUser;
+      if (!current || current.isAnonymous) {
+        showToast(t('سجّل دخولك لاستخدام هذه الميزة', 'Sign in to use this feature'));
+        return created;
+      }
       const prevCleared = isDefault
         ? stateRef.current.user.addresses.map((a) => ({ ...a, isDefault: false }))
         : stateRef.current.user.addresses;
@@ -2136,36 +2446,38 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         ...prev,
         user: { ...prev.user, addresses: nextAddresses },
       }));
-      const current = auth.currentUser;
-      if (current && !current.isAnonymous) {
-        if (isDefault) {
-          prevCleared.forEach((a) => {
-            void setDoc(
-              doc(db, 'users', current.uid, 'addresses', a.id),
-              stripUndefined({ ...a, uid: current.uid, updatedAtServer: serverTimestamp() }),
-              { merge: true }
-            ).catch((err) =>
-              handleFirestoreError(err, OperationType.WRITE, `users/${current.uid}/addresses/${a.id}`)
-            );
-          });
-        }
-        void setDoc(
-          doc(db, 'users', current.uid, 'addresses', id),
-          stripUndefined({
-            ...created,
-            uid: current.uid,
-            createdAtServer: serverTimestamp(),
-            updatedAtServer: serverTimestamp(),
-          })
-        ).catch((err) =>
-          handleFirestoreError(err, OperationType.CREATE, `users/${current.uid}/addresses/${id}`)
-        );
-        void syncUserDocFields(current.uid, { addresses: nextAddresses });
+      if (isDefault) {
+        prevCleared.forEach((a) => {
+          void setDoc(
+            doc(db, 'users', current.uid, 'addresses', a.id),
+            stripUndefined({ ...a, uid: current.uid, updatedAtServer: serverTimestamp() }),
+            { merge: true }
+          ).catch((err) =>
+            handleFirestoreError(err, OperationType.WRITE, `users/${current.uid}/addresses/${a.id}`)
+          );
+        });
       }
+      void setDoc(
+        doc(db, 'users', current.uid, 'addresses', id),
+        stripUndefined({
+          ...created,
+          uid: current.uid,
+          createdAtServer: serverTimestamp(),
+          updatedAtServer: serverTimestamp(),
+        })
+      ).catch((err) =>
+        handleFirestoreError(err, OperationType.CREATE, `users/${current.uid}/addresses/${id}`)
+      );
+      void syncUserDocFields(current.uid, { addresses: nextAddresses });
       showToast(t('تم حفظ العنوان بنجاح', 'Address saved'));
       return created;
     },
     updateAddress: (addr) => {
+      const current = auth.currentUser;
+      if (!current || current.isAnonymous) {
+        showToast(t('سجّل دخولك لاستخدام هذه الميزة', 'Sign in to use this feature'));
+        return;
+      }
       const prevAddresses = stateRef.current.user.addresses;
       const nextAddresses = prevAddresses.map((a) => {
         if (a.id === addr.id) return stripUndefined(addr);
@@ -2175,42 +2487,44 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         ...prev,
         user: { ...prev.user, addresses: nextAddresses },
       }));
-      const current = auth.currentUser;
-      if (current && !current.isAnonymous) {
-        if (addr.isDefault) {
-          prevAddresses
-            .filter((a) => a.id !== addr.id && a.isDefault)
-            .forEach((a) => {
-              void setDoc(
-                doc(db, 'users', current.uid, 'addresses', a.id),
-                stripUndefined({
-                  ...a,
-                  isDefault: false,
-                  uid: current.uid,
-                  updatedAtServer: serverTimestamp(),
-                }),
-                { merge: true }
-              ).catch((err) =>
-                handleFirestoreError(err, OperationType.WRITE, `users/${current.uid}/addresses/${a.id}`)
-              );
-            });
-        }
-        void setDoc(
-          doc(db, 'users', current.uid, 'addresses', addr.id),
-          stripUndefined({
-            ...addr,
-            uid: current.uid,
-            updatedAtServer: serverTimestamp(),
-          }),
-          { merge: true }
-        ).catch((err) =>
-          handleFirestoreError(err, OperationType.WRITE, `users/${current.uid}/addresses/${addr.id}`)
-        );
-        void syncUserDocFields(current.uid, { addresses: nextAddresses });
+      if (addr.isDefault) {
+        prevAddresses
+          .filter((a) => a.id !== addr.id && a.isDefault)
+          .forEach((a) => {
+            void setDoc(
+              doc(db, 'users', current.uid, 'addresses', a.id),
+              stripUndefined({
+                ...a,
+                isDefault: false,
+                uid: current.uid,
+                updatedAtServer: serverTimestamp(),
+              }),
+              { merge: true }
+            ).catch((err) =>
+              handleFirestoreError(err, OperationType.WRITE, `users/${current.uid}/addresses/${a.id}`)
+            );
+          });
       }
+      void setDoc(
+        doc(db, 'users', current.uid, 'addresses', addr.id),
+        stripUndefined({
+          ...addr,
+          uid: current.uid,
+          updatedAtServer: serverTimestamp(),
+        }),
+        { merge: true }
+      ).catch((err) =>
+        handleFirestoreError(err, OperationType.WRITE, `users/${current.uid}/addresses/${addr.id}`)
+      );
+      void syncUserDocFields(current.uid, { addresses: nextAddresses });
       showToast(t('تم تحديث العنوان', 'Address updated'));
     },
     setDefaultAddress: (id) => {
+      const current = auth.currentUser;
+      if (!current || current.isAnonymous) {
+        showToast(t('سجّل دخولك لاستخدام هذه الميزة', 'Sign in to use this feature'));
+        return;
+      }
       const nextAddresses = stateRef.current.user.addresses.map((a) => ({
         ...a,
         isDefault: a.id === id,
@@ -2219,34 +2533,33 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         ...prev,
         user: { ...prev.user, addresses: nextAddresses },
       }));
-      const current = auth.currentUser;
-      if (current && !current.isAnonymous) {
-        nextAddresses.forEach((a) => {
-          void setDoc(
-            doc(db, 'users', current.uid, 'addresses', a.id),
-            stripUndefined({ ...a, uid: current.uid, updatedAtServer: serverTimestamp() }),
-            { merge: true }
-          ).catch((err) =>
-            handleFirestoreError(err, OperationType.WRITE, `users/${current.uid}/addresses/${a.id}`)
-          );
-        });
-        void syncUserDocFields(current.uid, { addresses: nextAddresses });
-      }
+      nextAddresses.forEach((a) => {
+        void setDoc(
+          doc(db, 'users', current.uid, 'addresses', a.id),
+          stripUndefined({ ...a, uid: current.uid, updatedAtServer: serverTimestamp() }),
+          { merge: true }
+        ).catch((err) =>
+          handleFirestoreError(err, OperationType.WRITE, `users/${current.uid}/addresses/${a.id}`)
+        );
+      });
+      void syncUserDocFields(current.uid, { addresses: nextAddresses });
       showToast(t('تم تعيين العنوان الافتراضي', 'Default address updated'));
     },
     deleteAddress: (id) => {
+      const current = auth.currentUser;
+      if (!current || current.isAnonymous) {
+        showToast(t('سجّل دخولك لاستخدام هذه الميزة', 'Sign in to use this feature'));
+        return;
+      }
       const nextAddresses = stateRef.current.user.addresses.filter((a) => a.id !== id);
       setState((prev) => ({
         ...prev,
         user: { ...prev.user, addresses: nextAddresses },
       }));
-      const current = auth.currentUser;
-      if (current && !current.isAnonymous) {
-        void deleteDoc(doc(db, 'users', current.uid, 'addresses', id)).catch((err) =>
-          handleFirestoreError(err, OperationType.DELETE, `users/${current.uid}/addresses/${id}`)
-        );
-        void syncUserDocFields(current.uid, { addresses: nextAddresses });
-      }
+      void deleteDoc(doc(db, 'users', current.uid, 'addresses', id)).catch((err) =>
+        handleFirestoreError(err, OperationType.DELETE, `users/${current.uid}/addresses/${id}`)
+      );
+      void syncUserDocFields(current.uid, { addresses: nextAddresses });
     },
     savePrescription: (rx) => {
       const id = `rx_${Date.now()}`;
@@ -2255,42 +2568,46 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         id,
         savedAt: new Date().toISOString(),
       });
+      const current = auth.currentUser;
+      if (!current || current.isAnonymous) {
+        showToast(t('سجّل دخولك لاستخدام هذه الميزة', 'Sign in to use this feature'));
+        return created;
+      }
       const nextRx = [created, ...stateRef.current.user.prescriptions];
       setState((prev) => ({
         ...prev,
         user: { ...prev.user, prescriptions: nextRx },
       }));
-      const current = auth.currentUser;
-      if (current && !current.isAnonymous) {
-        void setDoc(
-          doc(db, 'users', current.uid, 'prescriptions', id),
-          stripUndefined({
-            ...created,
-            uid: current.uid,
-            createdAtServer: serverTimestamp(),
-            updatedAtServer: serverTimestamp(),
-          })
-        ).catch((err) =>
-          handleFirestoreError(err, OperationType.CREATE, `users/${current.uid}/prescriptions/${id}`)
-        );
-        void syncUserDocFields(current.uid, { prescriptions: nextRx });
-      }
+      void setDoc(
+        doc(db, 'users', current.uid, 'prescriptions', id),
+        stripUndefined({
+          ...created,
+          uid: current.uid,
+          createdAtServer: serverTimestamp(),
+          updatedAtServer: serverTimestamp(),
+        })
+      ).catch((err) =>
+        handleFirestoreError(err, OperationType.CREATE, `users/${current.uid}/prescriptions/${id}`)
+      );
+      void syncUserDocFields(current.uid, { prescriptions: nextRx });
       showToast(t('تم حفظ الوصفة الطبية في ملفك', 'Prescription saved to profile'));
       return created;
     },
     deletePrescription: (id) => {
+      const current = auth.currentUser;
+      if (!current || current.isAnonymous) {
+        showToast(t('سجّل دخولك لاستخدام هذه الميزة', 'Sign in to use this feature'));
+        return;
+      }
       const nextRx = stateRef.current.user.prescriptions.filter((p) => p.id !== id);
       setState((prev) => ({
         ...prev,
         user: { ...prev.user, prescriptions: nextRx },
       }));
-      const current = auth.currentUser;
-      if (current && !current.isAnonymous) {
-        void deleteDoc(doc(db, 'users', current.uid, 'prescriptions', id)).catch((err) =>
-          handleFirestoreError(err, OperationType.DELETE, `users/${current.uid}/prescriptions/${id}`)
-        );
-        void syncUserDocFields(current.uid, { prescriptions: nextRx });
-      }
+      void deleteDoc(doc(db, 'users', current.uid, 'prescriptions', id)).catch((err) =>
+        handleFirestoreError(err, OperationType.DELETE, `users/${current.uid}/prescriptions/${id}`)
+      );
+      void syncUserDocFields(current.uid, { prescriptions: nextRx });
     },
     upsertProduct: (product) => {
       setState((prev) => {
@@ -2511,53 +2828,161 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     },
     toggleBlockUser: (uid) => {
       const target = stateRef.current.directoryUsers.find((u) => u.uid === uid);
-      const nextBlocked = !target?.isBlocked;
+      const nextBlocked = !(target?.isBlocked || target?.blocked);
       setState((prev) => ({
         ...prev,
         directoryUsers: prev.directoryUsers.map((u) =>
-          u.uid === uid ? { ...u, isBlocked: nextBlocked } : u
+          u.uid === uid ? { ...u, isBlocked: nextBlocked, blocked: nextBlocked } : u
         ),
-        user: prev.user.uid === uid ? { ...prev.user, isBlocked: nextBlocked } : prev.user,
+        user:
+          prev.user.uid === uid
+            ? { ...prev.user, isBlocked: nextBlocked, blocked: nextBlocked }
+            : prev.user,
       }));
       void updateDoc(doc(db, 'users', uid), {
         isBlocked: nextBlocked,
+        blocked: nextBlocked,
         updatedAt: new Date().toISOString(),
         updatedAtServer: serverTimestamp(),
       }).catch((err) => handleFirestoreError(err, OperationType.UPDATE, `users/${uid}`));
       showToast(t('تم تحديث حالة حساب العميل', 'Customer status updated'));
     },
     upsertStaffOrAdmin: (userRecord) => {
+      const resolvedPerms: StaffPermission[] =
+        userRecord.role === 'admin' ? ALL_ADMIN_PERMS : ['orders'];
+      const nextRec: AppUser = { ...userRecord, permissions: resolvedPerms };
       setState((prev) => {
         const exists = prev.directoryUsers.some(
-          (u) => u.uid === userRecord.uid || u.email === userRecord.email
+          (u) => u.uid === nextRec.uid || u.email === nextRec.email
         );
         const directoryUsers = exists
           ? prev.directoryUsers.map((u) =>
-              u.uid === userRecord.uid || u.email === userRecord.email ? userRecord : u
+              u.uid === nextRec.uid || u.email === nextRec.email ? nextRec : u
             )
-          : [userRecord, ...prev.directoryUsers];
+          : [nextRec, ...prev.directoryUsers];
         return { ...prev, directoryUsers };
       });
       void setDoc(
-        doc(db, 'admins', userRecord.uid),
+        doc(db, 'admins', nextRec.uid),
         stripUndefined({
-          uid: userRecord.uid,
-          role: userRecord.role,
-          email: userRecord.email,
+          uid: nextRec.uid,
+          role: nextRec.role,
+          email: nextRec.email,
         })
-      ).catch((err) => handleFirestoreError(err, OperationType.WRITE, `admins/${userRecord.uid}`));
+      ).catch((err) => handleFirestoreError(err, OperationType.WRITE, `admins/${nextRec.uid}`));
       showToast(t('تم حفظ صلاحيات المسؤول/الموظف', 'Admin/Staff permissions saved'));
     },
-    removeAdminRole: (uid) => {
+    addOrUpdateAdminByEmail: async (email, role) => {
+      const cleanEmail = email.trim();
+      const lowerEmail = cleanEmail.toLowerCase();
+      if (!cleanEmail) {
+        return { ok: false, error: t('يرجى إدخال البريد الإلكتروني', 'Please enter an email address') };
+      }
+
+      let targetUser: AppUser | undefined = stateRef.current.directoryUsers.find(
+        (u) => (u.email || '').trim().toLowerCase() === lowerEmail
+      );
+
+      if (!targetUser) {
+        try {
+          const exactSnap = await getDocs(
+            query(collection(db, 'users'), where('email', '==', cleanEmail), limit(1))
+          );
+          if (!exactSnap.empty) {
+            targetUser = exactSnap.docs[0].data() as AppUser;
+          } else if (lowerEmail !== cleanEmail) {
+            const lowerSnap = await getDocs(
+              query(collection(db, 'users'), where('email', '==', lowerEmail), limit(1))
+            );
+            if (!lowerSnap.empty) {
+              targetUser = lowerSnap.docs[0].data() as AppUser;
+            }
+          }
+        } catch (err) {
+          handleFirestoreError(err, OperationType.LIST, 'users');
+        }
+      }
+
+      if (!targetUser || !targetUser.uid) {
+        return {
+          ok: false,
+          error: t(
+            'لا يوجد حساب مسجل بهذا البريد الإلكتروني. يجب على المستخدم إنشاء حساب في المتجر أولاً.',
+            'No registered user found with this email. The user must create an account first.'
+          ),
+        };
+      }
+
+      if (targetUser.isAnonymous) {
+        return {
+          ok: false,
+          error: t('لا يمكن منح صلاحيات لحساب ضيف', 'Cannot assign roles to a guest account'),
+        };
+      }
+
+      const nextPerms: StaffPermission[] = role === 'admin' ? ALL_ADMIN_PERMS : ['orders'];
+      const nowIso = new Date().toISOString();
+
+      await updateDoc(
+        doc(db, 'users', targetUser.uid),
+        stripUndefined({
+          role,
+          permissions: nextPerms,
+          updatedAt: nowIso,
+          updatedAtServer: serverTimestamp(),
+        })
+      );
+
+      await setDoc(
+        doc(db, 'admins', targetUser.uid),
+        stripUndefined({
+          uid: targetUser.uid,
+          role,
+          email: targetUser.email || cleanEmail,
+        })
+      );
+
+      const updatedTarget: AppUser = {
+        ...targetUser,
+        role,
+        permissions: nextPerms,
+        updatedAt: nowIso,
+      };
+
+      setState((prev) => ({
+        ...prev,
+        directoryUsers: prev.directoryUsers.some((u) => u.uid === targetUser!.uid)
+          ? prev.directoryUsers.map((u) => (u.uid === targetUser!.uid ? updatedTarget : u))
+          : [updatedTarget, ...prev.directoryUsers],
+        user: prev.user.uid === targetUser!.uid ? { ...prev.user, role, permissions: nextPerms } : prev.user,
+      }));
+
+      showToast(
+        role === 'admin'
+          ? t('تمت إضافة المدير بنجاح', 'Admin added successfully')
+          : t('تمت إضافة الموظف (الطلبات فقط) بنجاح', 'Staff (orders only) added successfully')
+      );
+      return { ok: true };
+    },
+    removeAdminRole: async (uid) => {
+      if (uid === stateRef.current.user.uid) {
+        showToast(t('لا يمكنك إزالة صلاحيتك الحالية', 'Cannot revoke your own admin role'));
+        return;
+      }
+      const nowIso = new Date().toISOString();
       setState((prev) => ({
         ...prev,
         directoryUsers: prev.directoryUsers.map((u) =>
-          u.uid === uid ? { ...u, role: 'customer', permissions: undefined } : u
+          u.uid === uid ? { ...u, role: 'customer', permissions: [] } : u
         ),
       }));
-      void deleteDoc(doc(db, 'admins', uid)).catch((err) =>
-        handleFirestoreError(err, OperationType.DELETE, `admins/${uid}`)
-      );
+      await updateDoc(doc(db, 'users', uid), {
+        role: 'customer',
+        permissions: [],
+        updatedAt: nowIso,
+        updatedAtServer: serverTimestamp(),
+      }).catch((err) => handleFirestoreError(err, OperationType.UPDATE, `users/${uid}`));
+      await deleteDoc(doc(db, 'admins', uid)).catch(() => undefined);
       showToast(t('تمت إزالة صلاحية الإدارة', 'Admin role removed'));
     },
     showToast,

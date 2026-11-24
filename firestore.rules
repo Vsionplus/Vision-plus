@@ -40,14 +40,50 @@ service cloud.firestore {
         && request.auth.token.email_verified == true;
     }
 
-    function isBootstrappedAdmin() {
-      return isEmailVerified()
-        && request.auth.token.email == 'visionplusvisionstore@gmail.com';
+    function isActiveNonAnonAccount() {
+      return isSignedIn()
+        && request.auth.token.firebase.sign_in_provider != 'anonymous';
+    }
+
+    function currentUserExists() {
+      return exists(/databases/$(database)/documents/users/$(request.auth.uid));
+    }
+
+    function currentUserData() {
+      return get(/databases/$(database)/documents/users/$(request.auth.uid)).data;
+    }
+
+    function isAccountNotBlocked(data) {
+      return data.isBlocked != true
+        && (!('blocked' in data) || data.blocked != true);
     }
 
     function isAdmin() {
-      return isBootstrappedAdmin()
-        || (isEmailVerified() && exists(/databases/$(database)/documents/admins/$(request.auth.uid)));
+      return isActiveNonAnonAccount()
+        && currentUserExists()
+        && currentUserData().role == 'admin'
+        && isAccountNotBlocked(currentUserData());
+    }
+
+    function isStaff() {
+      return isActiveNonAnonAccount()
+        && currentUserExists()
+        && currentUserData().role == 'staff'
+        && isAccountNotBlocked(currentUserData());
+    }
+
+    function isValidAttemptId(attemptId) {
+      return attemptId is string && attemptId.matches('^[a-f0-9]{64}$');
+    }
+
+    function isValidAdminAttempt(data) {
+      return data.keys().hasAll(['id', 'failedCount', 'lastAttemptAt'])
+        && data.keys().hasOnly(['id', 'failedCount', 'lastAttemptAt'])
+        && isValidAttemptId(data.id)
+        && data.failedCount is int
+        && data.failedCount >= 1
+        && data.failedCount <= 5
+        && data.lastAttemptAt is timestamp;
     }
 
     // -------------------------------------------------------------------------
@@ -76,6 +112,7 @@ service cloud.firestore {
           'role',
           'permissions',
           'isBlocked',
+          'blocked',
           'isAnonymous',
           'emailVerified',
           'favoriteProductIds',
@@ -94,6 +131,7 @@ service cloud.firestore {
         && data.role is string && data.role in ['customer', 'staff', 'admin']
         && (!('permissions' in data) || (data.permissions is list && data.permissions.size() <= 20 && (data.permissions.size() == 0 || data.permissions[0] is string)))
         && data.isBlocked is bool
+        && (!('blocked' in data) || data.blocked is bool)
         && (!('isAnonymous' in data) || data.isAnonymous is bool)
         && (!('emailVerified' in data) || data.emailVerified is bool)
         && data.favoriteProductIds is list && data.favoriteProductIds.size() <= 200 && (data.favoriteProductIds.size() == 0 || data.favoriteProductIds[0] is string)
@@ -492,7 +530,7 @@ service cloud.firestore {
     // -------------------------------------------------------------------------
     match /users/{userId} {
       allow get: if isSignedIn() && isValidId(userId) && (isOwner(userId) || isAdmin());
-      allow list: if isBootstrappedAdmin();
+      allow list: if isAdmin();
       allow create: if isSignedIn()
         && isValidId(userId)
         && isValidUser(incoming())
@@ -500,7 +538,17 @@ service cloud.firestore {
         && incoming().uid == request.auth.uid
         && incoming().role == 'customer'
         && incoming().isBlocked == false
+        && (!('blocked' in incoming()) || incoming().blocked == false)
         && !('permissions' in incoming())
+        && (
+          isActiveNonAnonAccount()
+          || (
+            incoming().isAnonymous == true
+            && incoming().emailVerified == false
+            && incoming().addresses.size() == 0
+            && incoming().prescriptions.size() == 0
+          )
+        )
         && incoming().createdAtServer == request.time
         && incoming().updatedAtServer == request.time;
       allow update: if isSignedIn()
@@ -511,11 +559,13 @@ service cloud.firestore {
         && incoming().createdAtServer == existing().createdAtServer
         && incoming().updatedAtServer == request.time
         && (
-          (isAdmin() && incoming().diff(existing()).affectedKeys().hasOnly(['isBlocked', 'role', 'permissions', 'updatedAt', 'updatedAtServer']))
+          (isAdmin() && incoming().diff(existing()).affectedKeys().hasOnly(['isBlocked', 'blocked', 'role', 'permissions', 'updatedAt', 'updatedAtServer']))
           || (
-            isOwner(userId)
+            isNonAnonymousOwner(userId)
             && incoming().role == existing().role
             && incoming().isBlocked == existing().isBlocked
+            && incoming().get('blocked', false) == existing().get('blocked', false)
+            && incoming().get('permissions', []) == existing().get('permissions', [])
             && incoming().diff(existing()).affectedKeys().hasOnly([
               'name',
               'email',
@@ -530,12 +580,26 @@ service cloud.firestore {
               'updatedAtServer'
             ])
           )
+          || (
+            isOwner(userId)
+            && !isActiveNonAnonAccount()
+            && incoming().role == existing().role
+            && incoming().isBlocked == existing().isBlocked
+            && incoming().get('blocked', false) == existing().get('blocked', false)
+            && incoming().get('permissions', []) == existing().get('permissions', [])
+            && incoming().diff(existing()).affectedKeys().hasOnly([
+              'favoriteProductIds',
+              'cart',
+              'updatedAt',
+              'updatedAtServer'
+            ])
+          )
         );
       allow delete: if isAdmin() && isValidId(userId);
 
       match /addresses/{addressId} {
         allow get: if isSignedIn() && isValidId(addressId) && (isNonAnonymousOwner(userId) || isAdmin());
-        allow list: if isSignedIn() && (isNonAnonymousOwner(userId) || isBootstrappedAdmin());
+        allow list: if isSignedIn() && (isNonAnonymousOwner(userId) || isAdmin());
         allow create: if isNonAnonymousOwner(userId)
           && isValidId(addressId)
           && isValidSavedAddress(incoming())
@@ -566,7 +630,7 @@ service cloud.firestore {
 
       match /prescriptions/{rxId} {
         allow get: if isSignedIn() && isValidId(rxId) && (isNonAnonymousOwner(userId) || isAdmin());
-        allow list: if isSignedIn() && (isNonAnonymousOwner(userId) || isBootstrappedAdmin());
+        allow list: if isSignedIn() && (isNonAnonymousOwner(userId) || isAdmin());
         allow create: if isNonAnonymousOwner(userId)
           && isValidId(rxId)
           && isValidSavedPrescription(incoming())
@@ -600,10 +664,12 @@ service cloud.firestore {
     }
 
     match /orders/{orderId} {
-      allow get: if isSignedIn() && isValidId(orderId) && (existing().customerUid == request.auth.uid || isAdmin());
-      allow list: if isSignedIn() && (resource.data.customerUid == request.auth.uid || isBootstrappedAdmin());
+      allow get: if isActiveNonAnonAccount() && isValidId(orderId) && (existing().customerUid == request.auth.uid || isAdmin() || isStaff());
+      allow list: if isActiveNonAnonAccount() && (resource.data.customerUid == request.auth.uid || isAdmin() || isStaff());
       // Strictly requires verified non-anonymous email auth
-      allow create: if isEmailVerified()
+      allow create: if request.auth != null
+        && request.auth.token.firebase.sign_in_provider != 'anonymous'
+        && request.auth.token.email_verified == true
         && isValidId(orderId)
         && isValidOrder(incoming())
         && incoming().id == orderId
@@ -611,7 +677,7 @@ service cloud.firestore {
         && incoming().status in ['pending', 'awaiting_payment_verification']
         && incoming().createdAtServer == request.time
         && incoming().updatedAtServer == request.time;
-      allow update: if isSignedIn()
+      allow update: if isActiveNonAnonAccount()
         && isValidId(orderId)
         && isValidOrder(incoming())
         && incoming().id == existing().id
@@ -620,7 +686,7 @@ service cloud.firestore {
         && incoming().createdAtServer == existing().createdAtServer
         && incoming().updatedAtServer == request.time
         && (
-          (isAdmin() && incoming().diff(existing()).affectedKeys().hasOnly(['status', 'updatedAt', 'updatedAtServer']))
+          ((isAdmin() || isStaff()) && incoming().diff(existing()).affectedKeys().hasOnly(['status', 'updatedAt', 'updatedAtServer']))
           || (
             isEmailVerified()
             && existing().customerUid == request.auth.uid
@@ -634,7 +700,7 @@ service cloud.firestore {
 
     match /consults/{consultId} {
       allow get: if isSignedIn() && isValidId(consultId) && (existing().customerUid == request.auth.uid || isAdmin());
-      allow list: if isSignedIn() && (resource.data.customerUid == request.auth.uid || isBootstrappedAdmin());
+      allow list: if isSignedIn() && (resource.data.customerUid == request.auth.uid || isAdmin());
       allow create: if isSignedIn()
         && isValidId(consultId)
         && isValidConsult(incoming())
@@ -665,7 +731,7 @@ service cloud.firestore {
 
     match /products/{productId} {
       allow get: if isSignedIn() && isValidId(productId) && (existing().visible == true || isAdmin());
-      allow list: if isSignedIn() && (resource.data.visible == true || isBootstrappedAdmin());
+      allow list: if isSignedIn() && (resource.data.visible == true || isAdmin());
       allow create: if isAdmin() && isValidId(productId) && isValidProduct(incoming()) && incoming().id == productId;
       allow update: if isAdmin()
         && isValidId(productId)
@@ -706,7 +772,7 @@ service cloud.firestore {
 
     match /categories/{categoryId} {
       allow get: if isSignedIn() && isValidId(categoryId) && (existing().visible == true || isAdmin());
-      allow list: if isSignedIn() && (resource.data.visible == true || isBootstrappedAdmin());
+      allow list: if isSignedIn() && (resource.data.visible == true || isAdmin());
       allow create: if isAdmin() && isValidId(categoryId) && isValidCategory(incoming()) && incoming().id == categoryId;
       allow update: if isAdmin()
         && isValidId(categoryId)
@@ -718,7 +784,7 @@ service cloud.firestore {
 
     match /brands/{brandId} {
       allow get: if isSignedIn() && isValidId(brandId) && (existing().visible == true || isAdmin());
-      allow list: if isSignedIn() && (resource.data.visible == true || isBootstrappedAdmin());
+      allow list: if isSignedIn() && (resource.data.visible == true || isAdmin());
       allow create: if isAdmin() && isValidId(brandId) && isValidBrand(incoming()) && incoming().id == brandId;
       allow update: if isAdmin()
         && isValidId(brandId)
@@ -730,7 +796,7 @@ service cloud.firestore {
 
     match /banners/{bannerId} {
       allow get: if isSignedIn() && isValidId(bannerId) && (existing().isActive == true || isAdmin());
-      allow list: if isSignedIn() && (resource.data.isActive == true || isBootstrappedAdmin());
+      allow list: if isSignedIn() && (resource.data.isActive == true || isAdmin());
       allow create: if isAdmin() && isValidId(bannerId) && isValidBanner(incoming()) && incoming().id == bannerId;
       allow update: if isAdmin()
         && isValidId(bannerId)
@@ -742,7 +808,7 @@ service cloud.firestore {
 
     match /coupons/{couponId} {
       allow get: if isSignedIn() && isValidId(couponId) && (existing().isActive == true || isAdmin());
-      allow list: if isSignedIn() && (resource.data.isActive == true || isBootstrappedAdmin());
+      allow list: if isSignedIn() && (resource.data.isActive == true || isAdmin());
       allow create: if isAdmin() && isValidId(couponId) && isValidCoupon(incoming()) && incoming().code == couponId;
       allow update: if isAdmin()
         && isValidId(couponId)
@@ -754,7 +820,7 @@ service cloud.firestore {
 
     match /notifications/{notificationId} {
       allow get: if isSignedIn() && isValidId(notificationId) && (existing().customerUid == 'all' || existing().customerUid == request.auth.uid || isAdmin());
-      allow list: if isSignedIn() && (resource.data.customerUid == 'all' || resource.data.customerUid == request.auth.uid || isBootstrappedAdmin());
+      allow list: if isSignedIn() && (resource.data.customerUid == 'all' || resource.data.customerUid == request.auth.uid || isAdmin());
       allow create: if isAdmin() && isValidId(notificationId) && isValidNotification(incoming()) && incoming().id == notificationId;
       allow update: if isAdmin()
         && isValidId(notificationId)
@@ -766,7 +832,7 @@ service cloud.firestore {
 
     match /store_config/{configId} {
       allow get: if isSignedIn() && isValidId(configId);
-      allow list: if isBootstrappedAdmin();
+      allow list: if isAdmin();
       allow create: if isAdmin() && isValidId(configId) && isValidStoreConfig(incoming()) && incoming().id == configId;
       allow update: if isAdmin()
         && isValidId(configId)
@@ -777,14 +843,37 @@ service cloud.firestore {
 
     match /admins/{userId} {
       allow get: if isSignedIn() && isValidId(userId) && (isOwner(userId) || isAdmin());
-      allow list: if isBootstrappedAdmin();
-      allow create: if isBootstrappedAdmin() && isValidId(userId) && isValidAdminRecord(incoming()) && incoming().uid == userId;
-      allow update: if isBootstrappedAdmin()
+      allow list: if isAdmin();
+      allow create: if isAdmin() && isValidId(userId) && isValidAdminRecord(incoming()) && incoming().uid == userId;
+      allow update: if isAdmin()
         && isValidId(userId)
         && isValidAdminRecord(incoming())
         && incoming().uid == existing().uid
         && incoming().diff(existing()).affectedKeys().hasOnly(['role', 'email']);
-      allow delete: if isBootstrappedAdmin() && isValidId(userId);
+      allow delete: if isAdmin() && isValidId(userId);
+    }
+
+    match /adminLoginAttempts/{attemptId} {
+      allow get: if isValidAttemptId(attemptId);
+      allow list: if isAdmin();
+      allow create: if isValidAttemptId(attemptId)
+        && isValidAdminAttempt(incoming())
+        && incoming().id == attemptId
+        && incoming().failedCount == 1
+        && incoming().lastAttemptAt == request.time;
+      allow update: if isValidAttemptId(attemptId)
+        && isValidAdminAttempt(incoming())
+        && incoming().id == existing().id
+        && incoming().lastAttemptAt == request.time
+        && (
+          (existing().failedCount < 5 && incoming().failedCount == existing().failedCount + 1)
+          || (
+            existing().failedCount >= 5
+            && request.time >= existing().lastAttemptAt + duration.value(15, 'm')
+            && incoming().failedCount == 1
+          )
+        );
+      allow delete: if (isAdmin() || isStaff()) && isValidAttemptId(attemptId);
     }
   }
 }

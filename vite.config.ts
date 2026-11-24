@@ -8,6 +8,156 @@ import { VitePWA } from 'vite-plugin-pwa';
 
 const rootDir = import.meta.dirname;
 
+const PWA_MANIFEST = {
+  id: '/',
+  name: 'Vision Plus - فيجن بلس',
+  short_name: 'Vision Plus',
+  description:
+    'متجر فيجن بلس للبصريات والنظارات الطبية والشمسية والعدسات اللاصقة ومحاليلها في السودان بالـ ج.س مع استشارة أخصائي البصريات.',
+  lang: 'ar',
+  dir: 'rtl' as const,
+  start_url: '/',
+  scope: '/',
+  display: 'standalone' as const,
+  display_override: ['window-controls-overlay', 'standalone', 'minimal-ui'] as (
+    | 'window-controls-overlay'
+    | 'standalone'
+    | 'minimal-ui'
+  )[],
+  orientation: 'portrait' as const,
+  background_color: '#ffffff',
+  theme_color: '#1565C0',
+  categories: ['shopping'],
+  prefer_related_applications: false,
+  launch_handler: {
+    client_mode: 'focus-existing' as const,
+  },
+  icons: [
+    {
+      src: '/icons/icon-192.png',
+      sizes: '192x192',
+      type: 'image/png',
+      purpose: 'any',
+    },
+    {
+      src: '/icons/icon-512.png',
+      sizes: '512x512',
+      type: 'image/png',
+      purpose: 'any',
+    },
+    {
+      src: '/icons/icon-maskable-192.png',
+      sizes: '192x192',
+      type: 'image/png',
+      purpose: 'maskable',
+    },
+    {
+      src: '/icons/icon-maskable-512.png',
+      sizes: '512x512',
+      type: 'image/png',
+      purpose: 'maskable',
+    },
+  ],
+  screenshots: [
+    {
+      src: '/screenshots/wide-home.png',
+      sizes: '1280x720',
+      type: 'image/png',
+      form_factor: 'wide' as const,
+      label: 'Vision Plus Desktop Storefront',
+    },
+    {
+      src: '/screenshots/narrow-home.png',
+      sizes: '540x960',
+      type: 'image/png',
+      form_factor: 'narrow' as const,
+      label: 'Vision Plus Mobile Storefront',
+    },
+  ],
+  shortcuts: [
+    {
+      name: 'التصنيفات',
+      short_name: 'التصنيفات',
+      description: 'تصفح أقسام النظارات والعدسات',
+      url: '/#/categories',
+      icons: [
+        {
+          src: '/icons/icon-192.png',
+          sizes: '192x192',
+          type: 'image/png',
+        },
+      ],
+    },
+    {
+      name: 'سلة المشتريات',
+      short_name: 'السلة',
+      description: 'عرض سلة المشتريات وإتمام الطلب',
+      url: '/#/cart',
+      icons: [
+        {
+          src: '/icons/icon-192.png',
+          sizes: '192x192',
+          type: 'image/png',
+        },
+      ],
+    },
+    {
+      name: 'طلباتي',
+      short_name: 'الطلبات',
+      description: 'متابعة حالة الطلبات والتوصيل',
+      url: '/#/orders',
+      icons: [
+        {
+          src: '/icons/icon-192.png',
+          sizes: '192x192',
+          type: 'image/png',
+        },
+      ],
+    },
+  ],
+};
+
+function pwaBuilderManifestPlugin(): Plugin {
+  const manifestBody = JSON.stringify(PWA_MANIFEST, null, 2);
+
+  return {
+    name: 'pwabuilder-manifest-middleware',
+    configureServer(server) {
+      server.middlewares.use((req, res, next) => {
+        const reqPath = (req.url || '').split('?')[0];
+        if (reqPath === '/manifest.webmanifest' || reqPath === '/manifest.json') {
+          res.statusCode = 200;
+          res.setHeader('Content-Type', 'application/manifest+json; charset=utf-8');
+          res.setHeader('Cache-Control', 'no-cache');
+          res.end(manifestBody);
+          return;
+        }
+        next();
+      });
+    },
+    transformIndexHtml(html, ctx) {
+      // In dev server (especially with DISABLE_HMR=true where vite-plugin-pwa skips dev SW),
+      // ensure the manifest link is still present for PWABuilder & browser detection.
+      if (ctx.server && !html.includes('rel="manifest"')) {
+        return html.replace(
+          '</head>',
+          '    <link rel="manifest" href="/manifest.webmanifest" />\n  </head>'
+        );
+      }
+      return html;
+    },
+    closeBundle(error?: Error) {
+      if (error) return;
+      const distDir = path.resolve(rootDir, 'dist');
+      const webmanifestPath = path.resolve(distDir, 'manifest.webmanifest');
+      const manifestJsonPath = path.resolve(distDir, 'manifest.json');
+      if (fs.existsSync(webmanifestPath)) {
+        fs.copyFileSync(webmanifestPath, manifestJsonPath);
+      }
+    },
+  };
+}
+
 function assetLinksJsonPlugin(): Plugin {
   const sendAssetLinks = (
     req: { url?: string },
@@ -62,93 +212,23 @@ export default defineConfig(() => {
     plugins: [
       react(),
       tailwindcss(),
+      pwaBuilderManifestPlugin(),
       assetLinksJsonPlugin(),
       VitePWA({
         registerType: 'autoUpdate',
         injectRegister: 'auto',
-        manifest: {
-          id: '/',
-          name: 'Vision Plus - فيجن بلس',
-          short_name: 'Vision Plus',
-          description:
-            'متجر فيجن بلس للبصريات والنظارات الطبية والشمسية والعدسات اللاصقة ومحاليلها في السودان بالـ ج.س مع استشارة أخصائي البصريات.',
-          lang: 'ar',
-          dir: 'rtl',
-          start_url: '/',
-          scope: '/',
-          display: 'standalone',
-          orientation: 'portrait',
-          background_color: '#ffffff',
-          theme_color: '#1565C0',
-          categories: ['shopping'],
-          icons: [
-            {
-              src: '/icons/icon-192.png',
-              sizes: '192x192',
-              type: 'image/png',
-              purpose: 'any',
-            },
-            {
-              src: '/icons/icon-512.png',
-              sizes: '512x512',
-              type: 'image/png',
-              purpose: 'any',
-            },
-            {
-              src: '/icons/icon-maskable-192.png',
-              sizes: '192x192',
-              type: 'image/png',
-              purpose: 'maskable',
-            },
-            {
-              src: '/icons/icon-maskable-512.png',
-              sizes: '512x512',
-              type: 'image/png',
-              purpose: 'maskable',
-            },
-          ],
-          shortcuts: [
-            {
-              name: 'التصنيفات',
-              short_name: 'التصنيفات',
-              description: 'تصفح أقسام النظارات والعدسات',
-              url: '/#/categories',
-              icons: [
-                {
-                  src: '/icons/icon-192.png',
-                  sizes: '192x192',
-                  type: 'image/png',
-                },
-              ],
-            },
-            {
-              name: 'سلة المشتريات',
-              short_name: 'السلة',
-              description: 'عرض سلة المشتريات وإتمام الطلب',
-              url: '/#/cart',
-              icons: [
-                {
-                  src: '/icons/icon-192.png',
-                  sizes: '192x192',
-                  type: 'image/png',
-                },
-              ],
-            },
-            {
-              name: 'طلباتي',
-              short_name: 'الطلبات',
-              description: 'متابعة حالة الطلبات والتوصيل',
-              url: '/#/orders',
-              icons: [
-                {
-                  src: '/icons/icon-192.png',
-                  sizes: '192x192',
-                  type: 'image/png',
-                },
-              ],
-            },
-          ],
-        },
+        includeAssets: [
+          'favicon.ico',
+          'offline.html',
+          'icons/apple-touch-icon.png',
+          'icons/icon-192.png',
+          'icons/icon-512.png',
+          'icons/icon-maskable-192.png',
+          'icons/icon-maskable-512.png',
+          'screenshots/wide-home.png',
+          'screenshots/narrow-home.png',
+        ],
+        manifest: PWA_MANIFEST,
         workbox: {
           maximumFileSizeToCacheInBytes: 5 * 1024 * 1024,
           globPatterns: ['**/*.{js,css,html,ico,png,svg,woff,woff2}'],

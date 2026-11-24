@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import {
   BarChart3,
   Package,
@@ -18,8 +18,11 @@ import {
   Share2,
   AlertTriangle,
   X,
+  LogOut,
+  ArrowRight,
 } from 'lucide-react';
-import { useStore } from '../store/StoreContext';
+import { resolveAdminModuleFromLocation, useStore } from '../store/StoreContext';
+import { useAdminSecurity } from './admin/AdminGuard';
 import { Order, StaffPermission } from '../types';
 import { formatSdg, formatShortDate, getOrderStatusLabel } from '../utils/format';
 import {
@@ -50,8 +53,13 @@ import {
 } from './admin/AdminOperationsModules';
 
 export const AdminDashboardView: React.FC = () => {
-  const { locale, t, products, orders, settings, lensOptions, showToast, hasPermission } = useStore();
-  const [activeModule, setActiveModule] = useState<StaffPermission>('dashboard');
+  const { locale, t, user, products, orders, settings, lensOptions, showToast, hasPermission, navigateToHome } = useStore();
+  const { requestAdminLogout } = useAdminSecurity();
+  const [activeModule, setActiveModule] = useState<StaffPermission>(() => {
+    const fromUrl = resolveAdminModuleFromLocation();
+    if (fromUrl && hasPermission(fromUrl)) return fromUrl;
+    return user.role === 'staff' ? 'orders' : 'dashboard';
+  });
   const [period, setPeriod] = useState<'today' | 'week' | 'month'>('month');
   const [invoiceOrder, setInvoiceOrder] = useState<Order | null>(null);
 
@@ -73,6 +81,20 @@ export const AdminDashboardView: React.FC = () => {
   ];
 
   const allowedNav = navItems.filter((item) => hasPermission(item.id));
+
+  useEffect(() => {
+    if (!hasPermission(activeModule) && allowedNav.length > 0) {
+      setActiveModule(allowedNav[0].id);
+    }
+  }, [activeModule, allowedNav, hasPermission]);
+
+  const handleSelectModule = (id: StaffPermission) => {
+    setActiveModule(id);
+    if (typeof window !== 'undefined') {
+      const targetUrl = id === 'dashboard' ? '/vp-admin' : `/vp-admin/${id}`;
+      window.history.replaceState(null, '', targetUrl);
+    }
+  };
 
   const analytics = useMemo(() => {
     const now = Date.now();
@@ -171,13 +193,41 @@ export const AdminDashboardView: React.FC = () => {
 
   return (
     <div className="max-w-7xl mx-auto px-4 sm:px-6 pt-6">
+      {/* Top Admin Session Bar */}
+      <div className="mb-4 bg-white dark:bg-[#131C2E] border border-slate-200 dark:border-slate-800 rounded-2xl px-4 py-3 flex flex-wrap items-center justify-between gap-3">
+        <div>
+          <h1 className="text-base font-extrabold">{t('لوحة تحكم الإدارة', 'Admin Control Panel')}</h1>
+          <p className="text-[11px] text-slate-500">
+            {locale === 'ar' ? settings.storeNameAr : settings.storeNameEn} · {user.email}
+          </p>
+        </div>
+        <div className="flex flex-wrap items-center gap-2">
+          <button
+            type="button"
+            onClick={navigateToHome}
+            className="min-h-[44px] px-3.5 py-2 rounded-xl border border-slate-200 dark:border-slate-700 text-xs font-bold inline-flex items-center gap-1.5 hover:bg-slate-50 dark:hover:bg-slate-800"
+          >
+            <ArrowRight className="w-4 h-4" />
+            <span>{t('العودة إلى المتجر', 'Back to Store')}</span>
+          </button>
+          <button
+            type="button"
+            onClick={requestAdminLogout}
+            className="min-h-[44px] px-3.5 py-2 rounded-xl bg-rose-50 dark:bg-rose-950/30 border border-rose-200 dark:border-rose-900/50 text-rose-700 dark:text-rose-300 text-xs font-extrabold inline-flex items-center gap-1.5 hover:bg-rose-100 dark:hover:bg-rose-950/50"
+          >
+            <LogOut className="w-4 h-4" />
+            <span>{t('تسجيل الخروج', 'Sign Out')}</span>
+          </button>
+        </div>
+      </div>
+
       <div className="grid lg:grid-cols-12 gap-6 items-start">
         {/* Sidebar Navigation */}
         <aside className="lg:col-span-3 bg-white dark:bg-[#131C2E] border border-slate-200 dark:border-slate-800 rounded-2xl p-3 flex lg:flex-col gap-1 overflow-x-auto">
           <div className="hidden lg:block px-3 py-2 border-b border-slate-100 dark:border-slate-800 mb-1">
-            <h1 className="text-base font-extrabold">{t('لوحة تحكم المالك', 'Owner Control Panel')}</h1>
+            <h2 className="text-sm font-extrabold">{t('أقسام الإدارة', 'Admin Modules')}</h2>
             <p className="text-[11px] text-slate-500">
-              {locale === 'ar' ? settings.storeNameAr : settings.storeNameEn}
+              {user.role === 'staff' ? t('صلاحية موظف: الطلبات فقط', 'Staff: Orders Only') : t('مدير عام', 'Full Admin')}
             </p>
           </div>
           {allowedNav.map((item) => {
@@ -187,8 +237,8 @@ export const AdminDashboardView: React.FC = () => {
               <button
                 key={item.id}
                 type="button"
-                onClick={() => setActiveModule(item.id)}
-                className={`px-3 py-2.5 rounded-xl text-xs font-bold flex items-center gap-2 whitespace-nowrap transition-colors text-start ${
+                onClick={() => handleSelectModule(item.id)}
+                className={`min-h-[44px] px-3 py-2.5 rounded-xl text-xs font-bold flex items-center gap-2 whitespace-nowrap transition-colors text-start ${
                   active
                     ? 'bg-[#11223E] text-white dark:bg-[#D9B24C] dark:text-[#11223E]'
                     : 'text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800'
@@ -199,6 +249,16 @@ export const AdminDashboardView: React.FC = () => {
               </button>
             );
           })}
+          <div className="hidden lg:flex flex-col gap-1.5 pt-3 mt-2 border-t border-slate-100 dark:border-slate-800">
+            <button
+              type="button"
+              onClick={requestAdminLogout}
+              className="min-h-[44px] px-3 py-2 rounded-xl text-xs font-extrabold text-rose-700 dark:text-rose-300 hover:bg-rose-50 dark:hover:bg-rose-950/30 flex items-center gap-2 text-start"
+            >
+              <LogOut className="w-4 h-4 shrink-0" />
+              <span>{t('تسجيل الخروج', 'Sign Out')}</span>
+            </button>
+          </div>
         </aside>
 
         {/* Active Admin Module */}

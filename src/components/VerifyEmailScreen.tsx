@@ -17,9 +17,11 @@ export const VerifyEmailScreen: React.FC = () => {
     appearance,
     firebaseUser,
     user,
+    cart,
     refreshEmailVerification,
     resendVerificationEmail,
     changeVerificationEmail,
+    closeVerifyEmailScreen,
     logout,
   } = useStore();
 
@@ -323,7 +325,20 @@ export const VerifyEmailScreen: React.FC = () => {
             </form>
           )}
 
-          {/* 4. Sign Out */}
+          {/* 4. Return to Cart / Storefront (shows unverified email warning in checkout) */}
+          <button
+            type="button"
+            onClick={closeVerifyEmailScreen}
+            className="w-full min-h-[44px] px-4 py-2.5 rounded-2xl border border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-200 font-bold text-xs flex items-center justify-center gap-2 hover:border-[var(--vp-secondary)] transition-colors"
+          >
+            <span>
+              {cart.length > 0
+                ? t('العودة إلى سلة المشتريات', 'Return to Cart & Checkout')
+                : t('متابعة تصفح المتجر', 'Continue Browsing Store')}
+            </span>
+          </button>
+
+          {/* 5. Sign Out */}
           <button
             type="button"
             onClick={() => void logout()}

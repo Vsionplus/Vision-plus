@@ -18,6 +18,7 @@ import { BannerAd, HomeSectionConfig, StoreSettings } from '../../types';
 import { IMG_HERO_BOUTIQUE } from '../../data/seedData';
 import { EXTRA_OPTION_IDS, VISION_TYPE_IDS } from '../../utils/prescription';
 import { ResilientImage } from '../ResilientImage';
+import { useAdminSecurity } from './AdminGuard';
 
 export const AdminHomeBuilderModule: React.FC = () => {
   const { locale, t, homeSections, updateHomeSections } = useStore();
@@ -583,6 +584,7 @@ export const AdminAppearanceModule: React.FC = () => {
 
 export const AdminStoreSettingsModule: React.FC = () => {
   const { locale, t, settings, lensOptions, updateSettings, updateLensOptions } = useStore();
+  const { requireSensitiveReauth } = useAdminSecurity();
   const [draft, setDraft] = useState(settings);
   const [lensDraft, setLensDraft] = useState(lensOptions);
   const [brandMigrated, setBrandMigrated] = useState(false);
@@ -660,8 +662,25 @@ export const AdminStoreSettingsModule: React.FC = () => {
     <form
       onSubmit={(e) => {
         e.preventDefault();
-        updateSettings(draft);
-        updateLensOptions(lensDraft);
+        const bankDetailsChanged =
+          draft.bankakAccountName !== settings.bankakAccountName ||
+          draft.bankakAccountNumber !== settings.bankakAccountNumber ||
+          draft.bankakBranchAr !== settings.bankakBranchAr ||
+          draft.otherBankDetailsAr !== settings.otherBankDetailsAr;
+
+        const commitSettings = () => {
+          updateSettings(draft);
+          updateLensOptions(lensDraft);
+        };
+
+        if (bankDetailsChanged) {
+          requireSensitiveReauth(
+            t('تأكيد تعديل بيانات الحساب البنكي', 'Confirm Bank Details Update'),
+            commitSettings
+          );
+          return;
+        }
+        commitSettings();
       }}
       className="bg-white dark:bg-[#181B1E] border border-stone-200 dark:border-zinc-800 rounded-xl p-5 space-y-6 text-xs"
     >
@@ -845,6 +864,10 @@ export const AdminStoreSettingsModule: React.FC = () => {
         <div>
           <label className="block font-semibold mb-1">{t('رقم حساب بنكك', 'Bankak Account Number')}</label>
           <input value={draft.bankakAccountNumber} onChange={(e) => setDraft({ ...draft, bankakAccountNumber: e.target.value })} className="w-full px-3 py-2 rounded-lg border bg-stone-50 dark:bg-zinc-900 font-mono-num" />
+        </div>
+        <div>
+          <label className="block font-semibold mb-1">{t('فرع بنكك', 'Bankak Branch')}</label>
+          <input value={draft.bankakBranchAr} onChange={(e) => setDraft({ ...draft, bankakBranchAr: e.target.value })} className="w-full px-3 py-2 rounded-lg border bg-stone-50 dark:bg-zinc-900" />
         </div>
         <div>
           <label className="block font-semibold mb-1">{t('بنك آخر / فوري', 'Other Bank Details')}</label>

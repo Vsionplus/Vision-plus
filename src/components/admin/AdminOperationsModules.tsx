@@ -21,7 +21,8 @@ import {
   ChevronUp,
 } from 'lucide-react';
 import { useStore } from '../../store/StoreContext';
-import { AppUser, Order, OrderStatus, StaffPermission } from '../../types';
+import { Order, OrderStatus } from '../../types';
+import { useAdminSecurity } from './AdminGuard';
 import { formatSdg, formatShortDate, getOrderStatusLabel } from '../../utils/format';
 import {
   calculateLensPricingBreakdown,
@@ -1011,49 +1012,61 @@ export const AdminCustomersReviewsModule: React.FC = () => {
 };
 
 export const AdminRolesModule: React.FC = () => {
-  const { t, directoryUsers, upsertStaffOrAdmin, removeAdminRole } = useStore();
-  const [name, setName] = useState('');
+  const { t, user, directoryUsers, addOrUpdateAdminByEmail, removeAdminRole } = useStore();
+  const { requireSensitiveReauth } = useAdminSecurity();
   const [email, setEmail] = useState('');
-  const [role, setRole] = useState<'admin' | 'staff'>('staff');
-  const [perms, setPerms] = useState<StaffPermission[]>(['dashboard', 'orders', 'consults']);
-
-  const allPerms: { id: StaffPermission; ar: string; en: string }[] = [
-    { id: 'dashboard', ar: 'لوحة الإحصائيات', en: 'Dashboard' },
-    { id: 'products', ar: 'المنتجات', en: 'Products' },
-    { id: 'categories', ar: 'التصنيفات والماركات', en: 'Categories & Brands' },
-    { id: 'home_builder', ar: 'منشئ الرئيسية', en: 'Home Builder' },
-    { id: 'banners', ar: 'البانرات', en: 'Banners' },
-    { id: 'content', ar: 'نصوص التطبيق', en: 'App Content' },
-    { id: 'appearance', ar: 'المظهر والألوان', en: 'Appearance' },
-    { id: 'settings', ar: 'إعدادات المتجر', en: 'Store Settings' },
-    { id: 'orders', ar: 'الطلبات وبنكك', en: 'Orders' },
-    { id: 'coupons', ar: 'الكوبونات', en: 'Coupons' },
-    { id: 'notifications', ar: 'الإشعارات', en: 'Notifications' },
-    { id: 'consults', ar: 'الاستشارات', en: 'Consults' },
-    { id: 'customers', ar: 'العملاء والتقييمات', en: 'Customers' },
-    { id: 'roles', ar: 'الصلاحيات', en: 'Roles' },
-  ];
+  const [role, setRole] = useState<'admin' | 'staff'>('admin');
+  const [submitting, setSubmitting] = useState(false);
+  const [feedback, setFeedback] = useState<{ type: 'error' | 'success'; text: string } | null>(null);
 
   const adminsAndStaff = directoryUsers.filter((u) => u.role === 'admin' || u.role === 'staff');
 
   const handleSave = (e: React.FormEvent) => {
     e.preventDefault();
-    if (!name.trim() || !email.trim()) return;
-    const record: AppUser = {
-      uid: `usr_${Date.now()}`,
-      name: name.trim(),
-      email: email.trim(),
-      phone: '+249',
-      role,
-      permissions: role === 'admin' ? allPerms.map((p) => p.id) : perms,
-      isBlocked: false,
-      favoriteProductIds: [],
-      addresses: [],
-      prescriptions: [],
-    };
-    upsertStaffOrAdmin(record);
-    setName('');
-    setEmail('');
+    const cleanEmail = email.trim();
+    if (!cleanEmail) return;
+    setFeedback(null);
+
+    requireSensitiveReauth(
+      t('تأكيد تعديل صلاحيات الإدارة', 'Confirm Admin Role Update'),
+      async () => {
+        setSubmitting(true);
+        try {
+          const res = await addOrUpdateAdminByEmail(cleanEmail, role);
+          if (!res.ok) {
+            setFeedback({
+              type: 'error',
+              text: res.error || t('تعذر تحديث الصلاحيات', 'Failed to update role'),
+            });
+            return;
+          }
+          setFeedback({
+            type: 'success',
+            text:
+              role === 'admin'
+                ? t(`تم تعيين ${cleanEmail} كمدير عام`, `${cleanEmail} assigned as Admin`)
+                : t(`تم تعيين ${cleanEmail} كموظف للطلبات فقط`, `${cleanEmail} assigned as Staff (Orders only)`),
+          });
+          setEmail('');
+        } finally {
+          setSubmitting(false);
+        }
+      }
+    );
+  };
+
+  const handleRemove = (targetUid: string, targetEmail: string) => {
+    setFeedback(null);
+    requireSensitiveReauth(
+      t('تأكيد إزالة صلاحية الإدارة', 'Confirm Admin Role Removal'),
+      async () => {
+        await removeAdminRole(targetUid);
+        setFeedback({
+          type: 'success',
+          text: t(`تمت إزالة صلاحية ${targetEmail}`, `Removed role for ${targetEmail}`),
+        });
+      }
+    );
   };
 
   return (
@@ -1064,58 +1077,100 @@ export const AdminRolesModule: React.FC = () => {
       >
         <h2 className="text-base font-bold flex items-center gap-2">
           <Shield className="w-4 h-4 text-[#D9B24C]" />
-          {t('إضافة مسؤول أو موظف بصلاحيات محددة', 'Add Admin / Staff Member')}
+          {t('إدارة المديرين والموظفين بالبريد الإلكتروني', 'Manage Admins & Staff by Email')}
         </h2>
-        <input required value={name} onChange={(e) => setName(e.target.value)} placeholder={t('الاسم الكامل', 'Full Name')} className="w-full px-3 py-2 rounded-lg border bg-stone-50 dark:bg-zinc-900" />
-        <input required type="email" dir="ltr" value={email} onChange={(e) => setEmail(e.target.value)} placeholder="staff@visionplus.sd" className="w-full px-3 py-2 rounded-lg border bg-stone-50 dark:bg-zinc-900" />
-        <select value={role} onChange={(e) => setRole(e.target.value as 'admin' | 'staff')} className="w-full px-3 py-2 rounded-lg border bg-stone-50 dark:bg-zinc-900">
-          <option value="staff">{t('موظف (صلاحيات محددة)', 'Staff (Scoped Permissions)')}</option>
-          <option value="admin">{t('مالك / مدير عام (كامل الصلاحيات)', 'Full Admin')}</option>
-        </select>
+        <p className="text-[11px] text-slate-500 leading-relaxed">
+          {t(
+            'أدخل البريد الإلكتروني لحساب مسجل مسبقاً في المتجر لمنحه صلاحية مدير كامل أو موظف طلبات فقط.',
+            'Enter the email of an existing registered user to grant Full Admin or Orders-only Staff access.'
+          )}
+        </p>
 
-        {role === 'staff' && (
-          <div className="grid grid-cols-2 gap-1.5 pt-2">
-            {allPerms.map((p) => (
-              <label key={p.id} className="flex items-center gap-1.5 cursor-pointer">
-                <input
-                  type="checkbox"
-                  checked={perms.includes(p.id)}
-                  onChange={(e) =>
-                    setPerms(e.target.checked ? [...perms, p.id] : perms.filter((x) => x !== p.id))
-                  }
-                  className="accent-[#D9B24C]"
-                />
-                <span>{t(p.ar, p.en)}</span>
-              </label>
-            ))}
+        {feedback && (
+          <div
+            className={`p-3 rounded-xl font-bold border ${
+              feedback.type === 'error'
+                ? 'bg-rose-50 dark:bg-rose-950/30 border-rose-200 dark:border-rose-900/50 text-rose-700 dark:text-rose-300'
+                : 'bg-emerald-50 dark:bg-emerald-950/30 border-emerald-200 dark:border-emerald-900/50 text-emerald-700 dark:text-emerald-300'
+            }`}
+          >
+            {feedback.text}
           </div>
         )}
 
-        <button type="submit" className="w-full py-2.5 rounded-xl bg-[#D9B24C] text-[#11223E] font-extrabold">
-          {t('حفظ الصلاحيات', 'Save Member')}
+        <div>
+          <label className="block font-bold mb-1">{t('البريد الإلكتروني', 'Email Address')}</label>
+          <input
+            required
+            type="email"
+            dir="ltr"
+            value={email}
+            onChange={(e) => setEmail(e.target.value)}
+            placeholder="admin@visionplus.sd"
+            className="w-full min-h-[44px] px-3 py-2 rounded-lg border border-stone-200 dark:border-zinc-700 bg-stone-50 dark:bg-zinc-900 text-base"
+          />
+        </div>
+
+        <div>
+          <label className="block font-bold mb-1">{t('الدور الوظيفي', 'Role')}</label>
+          <select
+            value={role}
+            onChange={(e) => setRole(e.target.value as 'admin' | 'staff')}
+            className="w-full min-h-[44px] px-3 py-2 rounded-lg border border-stone-200 dark:border-zinc-700 bg-stone-50 dark:bg-zinc-900 text-base"
+          >
+            <option value="admin">{t('مدير عام (كامل الصلاحيات)', 'Full Admin (All Modules)')}</option>
+            <option value="staff">{t('موظف (إدارة الطلبات فقط)', 'Staff (Orders Only)')}</option>
+          </select>
+        </div>
+
+        <button
+          type="submit"
+          disabled={submitting}
+          className="w-full min-h-[44px] py-2.5 rounded-xl bg-[#D9B24C] text-[#11223E] font-extrabold disabled:opacity-50"
+        >
+          {submitting ? t('جارٍ الحفظ...', 'Saving...') : t('حفظ الصلاحيات', 'Save Role')}
         </button>
       </form>
 
       <div className="lg:col-span-7 bg-white dark:bg-[#181B1E] border border-stone-200 dark:border-zinc-800 rounded-xl divide-y divide-stone-100 dark:divide-zinc-800">
-        {adminsAndStaff.map((u) => (
-          <div key={u.uid} className="p-4 flex flex-wrap items-center justify-between gap-3">
-            <div>
-              <div className="font-bold text-sm">{u.name}</div>
-              <div className="text-slate-500 font-mono-num">
-                {u.email} · <strong className="uppercase">{u.role}</strong>
-              </div>
-            </div>
-            {u.email !== 'visionplusvisionstore@gmail.com' && (
-              <button
-                type="button"
-                onClick={() => removeAdminRole(u.uid)}
-                className="px-3 py-1.5 rounded-lg bg-rose-50 text-rose-700 font-bold"
-              >
-                {t('إزالة الصلاحية', 'Revoke')}
-              </button>
-            )}
+        {adminsAndStaff.length === 0 ? (
+          <div className="p-6 text-center text-slate-500">
+            {t('لا يوجد مشرفون مسجلون حالياً', 'No admin or staff members found')}
           </div>
-        ))}
+        ) : (
+          adminsAndStaff.map((u) => {
+            const isSelf = u.uid === user.uid;
+            return (
+              <div key={u.uid} className="p-4 flex flex-wrap items-center justify-between gap-3">
+                <div>
+                  <div className="font-bold text-sm flex items-center gap-2">
+                    <span>{u.name || u.email}</span>
+                    {isSelf && (
+                      <span className="px-2 py-0.5 rounded bg-slate-100 dark:bg-zinc-800 text-[10px] font-bold">
+                        {t('حسابك الحالي', 'You')}
+                      </span>
+                    )}
+                  </div>
+                  <div className="text-slate-500 font-mono-num text-xs mt-0.5">
+                    {u.email} ·{' '}
+                    <strong className="uppercase">
+                      {u.role === 'admin' ? t('مدير عام', 'ADMIN') : t('موظف طلبات', 'STAFF (ORDERS)')}
+                    </strong>
+                  </div>
+                </div>
+                {!isSelf && (
+                  <button
+                    type="button"
+                    onClick={() => handleRemove(u.uid, u.email)}
+                    className="min-h-[44px] px-3.5 py-2 rounded-lg bg-rose-50 dark:bg-rose-950/30 text-rose-700 dark:text-rose-300 font-bold hover:bg-rose-100 dark:hover:bg-rose-950/50"
+                  >
+                    {t('إزالة الصلاحية', 'Remove Role')}
+                  </button>
+                )}
+              </div>
+            );
+          })
+        )}
       </div>
     </div>
   );

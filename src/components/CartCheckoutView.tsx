@@ -1,5 +1,7 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import {
+  ArrowLeft,
+  ArrowRight,
   Banknote,
   Building2,
   CheckCircle2,
@@ -21,6 +23,7 @@ import {
   ShoppingBag,
   Tag,
   Trash2,
+  Truck,
   Upload,
   UserPlus,
   X,
@@ -37,6 +40,7 @@ import { formatSdg } from '../utils/format';
 import {
   MIRROR_COLOR_OPTIONS,
   calculateLensPricingBreakdown,
+  formatLensSummaryLine,
   getExtraOptionLabel,
   getMirrorColorLabel,
   getVisionTypeLabel,
@@ -64,6 +68,8 @@ export const CartCheckoutView: React.FC = () => {
     user,
     isGuest,
     isEmailVerified,
+    setActiveTab,
+    openProduct,
     openAuthModal,
     openVerifyEmailScreen,
     resendVerificationEmail,
@@ -100,7 +106,6 @@ export const CartCheckoutView: React.FC = () => {
   const [checkingVerify, setCheckingVerify] = useState(false);
   const [verifyNotice, setVerifyNotice] = useState<string | null>(null);
 
-  // Sync default saved address if none chosen yet, or keep selected address synced with edits/deletes
   useEffect(() => {
     if (!selectedAddress) {
       const def = user.addresses.find((a) => a.isDefault);
@@ -124,6 +129,11 @@ export const CartCheckoutView: React.FC = () => {
   const toggleExpandItem = (id: string) => {
     setExpandedItemIds((prev) => ({ ...prev, [id]: !prev[id] }));
   };
+
+  const totalUnitsCount = useMemo(
+    () => cart.reduce((sum, item) => sum + item.quantity, 0),
+    [cart]
+  );
 
   const itemsSubtotalSdg = useMemo(
     () => cart.reduce((sum, item) => sum + item.unitPriceSdg * item.quantity, 0),
@@ -339,35 +349,60 @@ export const CartCheckoutView: React.FC = () => {
 
   if (cart.length === 0) {
     return (
-      <div className="max-w-3xl mx-auto px-4 py-16 text-center space-y-4">
-        <div className="w-16 h-16 rounded-2xl bg-stone-100 dark:bg-zinc-800 mx-auto flex items-center justify-center text-stone-400">
-          <ShoppingBag className="w-8 h-8" />
+      <div className="max-w-3xl mx-auto px-4 py-16 text-center space-y-5">
+        <div className="w-20 h-20 rounded-2xl bg-[#11223E] text-[#D9B24C] mx-auto flex items-center justify-center shadow-lg">
+          <ShoppingBag className="w-9 h-9" />
         </div>
-        <h1 className="text-xl font-bold">
-          {locale === 'ar' ? appTexts.emptyCartTitleAr : appTexts.emptyCartTitleEn}
-        </h1>
-        <p className="text-sm text-stone-500 dark:text-zinc-400">
-          {locale === 'ar' ? appTexts.emptyCartDescAr : appTexts.emptyCartDescEn}
-        </p>
+        <div className="space-y-2">
+          <h1 className="text-xl sm:text-2xl font-extrabold text-[#11223E] dark:text-white">
+            {locale === 'ar' ? appTexts.emptyCartTitleAr : appTexts.emptyCartTitleEn}
+          </h1>
+          <p className="text-sm text-slate-500 dark:text-slate-400 max-w-md mx-auto">
+            {locale === 'ar' ? appTexts.emptyCartDescAr : appTexts.emptyCartDescEn}
+          </p>
+        </div>
         <button
           type="button"
           onClick={() => openCatalog('all', '')}
-          style={{ backgroundColor: appearance.primaryColor }}
-          className="min-h-[44px] px-6 py-2.5 rounded-xl text-white text-sm font-bold"
+          className="min-h-[48px] px-7 py-3 rounded-2xl bg-[#11223E] text-white dark:bg-[#D9B24C] dark:text-[#11223E] text-sm font-extrabold inline-flex items-center gap-2 shadow-md hover:opacity-95 transition-opacity"
         >
-          {locale === 'ar' ? appTexts.btnStartShoppingAr : appTexts.btnStartShoppingEn}
+          <span>{locale === 'ar' ? appTexts.btnStartShoppingAr : appTexts.btnStartShoppingEn}</span>
+          {locale === 'ar' ? <ArrowLeft className="w-4 h-4" /> : <ArrowRight className="w-4 h-4" />}
         </button>
       </div>
     );
   }
 
   return (
-    <div className="max-w-7xl mx-auto px-4 sm:px-6 pt-6 space-y-6">
-      <h1 className="text-2xl font-extrabold">{t('سلة التسوق وإتمام الطلب', 'Cart & Checkout')}</h1>
+    <div className="max-w-7xl mx-auto px-4 sm:px-6 pt-5 pb-8 space-y-6">
+      {/* Cart Page Header */}
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div className="flex items-center gap-3">
+          <div className="w-11 h-11 rounded-xl bg-[#11223E] text-[#D9B24C] flex items-center justify-center shrink-0">
+            <ShoppingBag className="w-5 h-5" />
+          </div>
+          <div>
+            <h1 className="text-xl sm:text-2xl font-extrabold text-[#11223E] dark:text-white">
+              {t('سلة التسوق وإتمام الطلب', 'Cart & Checkout')}
+            </h1>
+            <p className="text-xs text-slate-500 dark:text-slate-400 font-medium">
+              {t(`${totalUnitsCount} قطعة في سلتك`, `${totalUnitsCount} items in your bag`)}
+            </p>
+          </div>
+        </div>
+
+        <button
+          type="button"
+          onClick={() => openCatalog('all', '')}
+          className="min-h-[42px] px-3.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-[#131C2E] text-xs font-bold text-[#11223E] dark:text-slate-200 hover:border-[#D9B24C] transition-colors inline-flex items-center gap-1.5"
+        >
+          <span>{t('مواصلة التسوق', 'Continue Shopping')}</span>
+        </button>
+      </div>
 
       {/* Guest Checkout Gate Banner */}
       {isGuest && (
-        <div className="rounded-2xl border border-amber-300 dark:border-amber-800/70 bg-amber-50 dark:bg-amber-950/25 p-4 flex flex-wrap items-center justify-between gap-3">
+        <div className="rounded-2xl border border-amber-300 dark:border-amber-800/70 bg-amber-50/90 dark:bg-amber-950/25 p-4 flex flex-wrap items-center justify-between gap-3">
           <div className="text-xs sm:text-sm font-bold text-[#11223E] dark:text-amber-200">
             {t('سجّل دخولك أو أنشئ حساباً لإتمام الشراء', 'Sign in or create an account to complete purchase')}
           </div>
@@ -454,393 +489,445 @@ export const CartCheckoutView: React.FC = () => {
       )}
 
       <form onSubmit={handleSubmitOrder} className="grid lg:grid-cols-12 gap-6 items-start">
-        {/* Cart Items & Payment Method Column */}
-        <div className="lg:col-span-7 space-y-6">
-          <div className="bg-white dark:bg-[#181B1E] border border-stone-200 dark:border-zinc-800 rounded-2xl divide-y divide-stone-100 dark:divide-zinc-800">
-            {cart.map((item) => {
-              const prod = products.find((p) => p.id === item.productId);
-              if (!prod) return null;
+        {/* Left/Right Column: Cart Item Cards & Optician Help & Payment Method */}
+        <div className="lg:col-span-7 space-y-4">
+          {cart.map((item) => {
+            const prod = products.find((p) => p.id === item.productId);
+            if (!prod) return null;
 
-              const lensExtra = item.prescription?.lensExtraPriceSdg || 0;
-              const unitTotal = item.unitPriceSdg + lensExtra;
-              const lineTotal = unitTotal * item.quantity;
-              const isExpanded = Boolean(expandedItemIds[item.id]);
-              const isRxEligible = isPrescriptionEligibleProduct(prod, categories);
-              const rx = item.prescription;
-              const hasCustomLens = hasCustomLensOrRx(rx);
-              const hasRxValues = Boolean(rx && rx.type !== 'none');
-              const itemVisionType = resolveVisionType(rx);
-              const itemExtras = resolveExtraOptions(rx);
-              const itemPricing = calculateLensPricingBreakdown(
-                itemVisionType,
-                itemExtras,
-                lensOptions
-              );
-              const effectiveVisionPrice =
-                rx?.visionTypePriceSdg ?? itemPricing.visionTypePriceSdg;
-              const mirrorMeta = rx?.mirrorColor
-                ? MIRROR_COLOR_OPTIONS.find((m) => m.id === rx.mirrorColor)
-                : undefined;
+            const lensExtra = item.prescription?.lensExtraPriceSdg || 0;
+            const unitTotal = item.unitPriceSdg + lensExtra;
+            const lineTotal = unitTotal * item.quantity;
+            const isExpanded = Boolean(expandedItemIds[item.id]);
+            const isRxEligible = isPrescriptionEligibleProduct(prod, categories);
+            const rx = item.prescription;
+            const hasCustomLens = hasCustomLensOrRx(rx);
+            const hasRxValues = Boolean(rx && rx.type !== 'none');
+            const itemVisionType = resolveVisionType(rx);
+            const itemExtras = resolveExtraOptions(rx);
+            const itemPricing = calculateLensPricingBreakdown(
+              itemVisionType,
+              itemExtras,
+              lensOptions
+            );
+            const effectiveVisionPrice =
+              rx?.visionTypePriceSdg ?? itemPricing.visionTypePriceSdg;
+            const mirrorMeta = rx?.mirrorColor
+              ? MIRROR_COLOR_OPTIONS.find((m) => m.id === rx.mirrorColor)
+              : undefined;
+            const lensSummaryLine = formatLensSummaryLine(rx, lensOptions, locale);
+            const matchedVariant = prod.variants.find((v) => v.id === item.variantId);
+            const itemImage = matchedVariant?.imageUrl || prod.images[0];
 
-              return (
-                <div key={item.id} className="p-4 space-y-3">
-                  <div className="flex gap-3.5 sm:gap-4">
-                    <div className="w-20 h-20 sm:w-24 sm:h-20 rounded-xl overflow-hidden bg-stone-100 dark:bg-zinc-900 shrink-0 border border-stone-200 dark:border-zinc-800">
-                      <ResilientImage
-                        src={prod.images[0]}
-                        alt={locale === 'ar' ? prod.titleAr : prod.titleEn}
-                        className="w-full h-full object-cover"
-                      />
+            return (
+              <div
+                key={item.id}
+                className="rounded-2xl bg-white dark:bg-[#131C2E] border border-slate-200 dark:border-slate-800 p-4 space-y-3 shadow-xs"
+              >
+                <div className="flex gap-3.5 sm:gap-4">
+                  <button
+                    type="button"
+                    onClick={() => openProduct(prod.id)}
+                    className="w-20 h-20 sm:w-24 sm:h-24 rounded-xl overflow-hidden bg-slate-100 dark:bg-slate-900 shrink-0 border border-slate-200/75 dark:border-slate-800"
+                  >
+                    <ResilientImage
+                      src={itemImage}
+                      alt={locale === 'ar' ? prod.titleAr : prod.titleEn}
+                      className="w-full h-full object-cover"
+                    />
+                  </button>
+
+                  <div className="flex-1 min-w-0 space-y-1.5">
+                    <div className="flex items-start justify-between gap-2">
+                      <button
+                        type="button"
+                        onClick={() => openProduct(prod.id)}
+                        className="text-start text-sm sm:text-base font-extrabold text-[#11223E] dark:text-white hover:text-[#B38B2D] transition-colors line-clamp-2"
+                      >
+                        {locale === 'ar' ? prod.titleAr : prod.titleEn}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => removeFromCart(item.id)}
+                        className="text-slate-400 hover:text-rose-600 min-w-[40px] min-h-[40px] flex items-center justify-center rounded-xl hover:bg-rose-50 dark:hover:bg-rose-950/30 shrink-0 transition-colors"
+                        aria-label={t('حذف', 'Remove')}
+                      >
+                        <Trash2 className="w-4 h-4" />
+                      </button>
                     </div>
-                    <div className="flex-1 min-w-0 space-y-1">
-                      <div className="flex items-start justify-between gap-2">
-                        <h3 className="text-sm font-bold leading-snug line-clamp-2">
-                          {locale === 'ar' ? prod.titleAr : prod.titleEn}
-                        </h3>
+
+                    {item.variantLabel && (
+                      <div className="inline-flex items-center gap-1.5 text-xs text-slate-500 dark:text-slate-400 font-medium">
+                        {matchedVariant?.colorHex && (
+                          <span
+                            className="w-3 h-3 rounded-full border border-black/15 shrink-0"
+                            style={{ backgroundColor: matchedVariant.colorHex }}
+                          />
+                        )}
+                        <span>{item.variantLabel}</span>
+                      </div>
+                    )}
+
+                    {/* Quantity stepper & price */}
+                    <div className="pt-1 flex flex-wrap items-center justify-between gap-2">
+                      <div className="inline-flex items-center rounded-xl bg-slate-100 dark:bg-slate-900 border border-slate-200 dark:border-slate-800">
                         <button
                           type="button"
-                          onClick={() => removeFromCart(item.id)}
-                          className="text-stone-400 hover:text-rose-600 p-1 min-w-[44px] min-h-[44px] flex items-center justify-center shrink-0"
-                          aria-label={t('حذف', 'Remove')}
+                          onClick={() => updateCartQty(item.id, -1)}
+                          className="min-w-[40px] min-h-[40px] text-sm font-bold hover:bg-slate-200/70 dark:hover:bg-slate-800 rounded-s-xl"
+                          aria-label={t('إنقاص', 'Decrease')}
                         >
-                          <Trash2 className="w-4 h-4" />
+                          −
+                        </button>
+                        <span className="px-3 font-mono-num text-xs font-extrabold tabular-nums">
+                          {item.quantity}
+                        </span>
+                        <button
+                          type="button"
+                          onClick={() => updateCartQty(item.id, 1)}
+                          className="min-w-[40px] min-h-[40px] text-sm font-bold hover:bg-slate-200/70 dark:hover:bg-slate-800 rounded-e-xl"
+                          aria-label={t('زيادة', 'Increase')}
+                        >
+                          +
                         </button>
                       </div>
 
-                      {item.variantLabel && (
-                        <p className="text-xs text-stone-500 dark:text-zinc-400">
-                          {t('اللون / الخيار:', 'Variant:')} {item.variantLabel}
-                        </p>
-                      )}
-
-                      <div className="pt-1.5 flex flex-wrap items-center justify-between gap-2">
-                        <div className="flex items-center border border-stone-200 dark:border-zinc-700 rounded-lg">
-                          <button
-                            type="button"
-                            onClick={() => updateCartQty(item.id, -1)}
-                            className="min-w-[40px] min-h-[40px] text-xs font-bold"
-                          >
-                            −
-                          </button>
-                          <span className="px-2.5 font-mono-num text-xs font-bold tabular-nums">
-                            {item.quantity}
-                          </span>
-                          <button
-                            type="button"
-                            onClick={() => updateCartQty(item.id, 1)}
-                            className="min-w-[40px] min-h-[40px] text-xs font-bold"
-                          >
-                            +
-                          </button>
-                        </div>
-                        <span className="font-mono-num text-sm font-extrabold text-[#11223E] dark:text-[#E2BD5B] tabular-nums">
+                      <div className="text-end">
+                        <span className="font-mono-num text-base font-extrabold text-[#11223E] dark:text-[#E2BD5B] tabular-nums">
                           {formatSdg(lineTotal)}
                         </span>
+                        {lensExtra > 0 && (
+                          <span className="block text-[10px] font-semibold text-emerald-700 dark:text-emerald-400 font-mono-num">
+                            {t('شامل العدسات', 'Incl. lenses')} (+{formatSdg(lensExtra)})
+                          </span>
+                        )}
                       </div>
                     </div>
                   </div>
+                </div>
 
-                  {/* Expandable Details Toggle (Collapsed by default) */}
-                  <div>
-                    <button
-                      type="button"
-                      onClick={() => toggleExpandItem(item.id)}
-                      className="min-h-[44px] px-3.5 py-1.5 rounded-lg bg-stone-50 dark:bg-zinc-900 border border-stone-200 dark:border-zinc-800 text-xs font-bold inline-flex items-center gap-1.5 hover:border-[#D9B24C] transition-colors"
-                    >
-                      <span>{t('عرض التفاصيل', 'Show Details')}</span>
-                      {isExpanded ? (
-                        <ChevronUp className="w-3.5 h-3.5" />
-                      ) : (
-                        <ChevronDown className="w-3.5 h-3.5" />
-                      )}
-                    </button>
+                {/* Compact Prescription & Details Action Strip */}
+                <div className="pt-2.5 border-t border-slate-100 dark:border-slate-800 flex flex-wrap items-center justify-between gap-2 text-xs">
+                  <div className="flex flex-wrap items-center gap-2 min-w-0">
+                    {isRxEligible && (
+                      <button
+                        type="button"
+                        onClick={() => setEditingRxTarget({ cartItem: item, product: prod })}
+                        className="min-h-[38px] px-3 rounded-xl bg-slate-100 dark:bg-slate-900 hover:border-[#D9B24C] border border-slate-200/80 dark:border-slate-700 font-bold text-[#11223E] dark:text-slate-200 inline-flex items-center gap-1.5 transition-colors"
+                      >
+                        <Eye className="w-3.5 h-3.5 text-[#B38B2D]" />
+                        <span>
+                          {hasCustomLens
+                            ? t('تعديل المقاس / العدسات', 'Edit Rx / Lenses')
+                            : t('إضافة مقاس (اختياري)', 'Add Rx (Optional)')}
+                        </span>
+                      </button>
+                    )}
 
-                    {isExpanded && (
-                      <div className="mt-3 p-3.5 rounded-xl bg-stone-50 dark:bg-zinc-900 border border-stone-200 dark:border-zinc-800 space-y-3 text-xs">
-                        {/* Price Breakdown */}
-                        <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 pb-2.5 border-b border-stone-200 dark:border-zinc-800">
-                          <div>
-                            <span className="text-[11px] text-stone-500 block">{t('سعر الوحدة', 'Unit Price')}</span>
-                            <span className="font-mono-num font-bold">{formatSdg(item.unitPriceSdg)}</span>
-                          </div>
-                          <div>
-                            <span className="text-[11px] text-stone-500 block">{t('سعر العدسة الإضافي', 'Lens Extra')}</span>
+                    {lensSummaryLine && (
+                      <span className="text-[11px] font-semibold text-slate-500 dark:text-slate-400 truncate max-w-[220px] sm:max-w-xs">
+                        {lensSummaryLine}
+                      </span>
+                    )}
+                  </div>
+
+                  <button
+                    type="button"
+                    onClick={() => toggleExpandItem(item.id)}
+                    className="min-h-[38px] px-3 rounded-xl border border-slate-200 dark:border-slate-700 text-xs font-bold inline-flex items-center gap-1 text-slate-600 dark:text-slate-300 hover:border-[#D9B24C] transition-colors ms-auto"
+                  >
+                    <span>{isExpanded ? t('إخفاء التفاصيل', 'Hide Details') : t('عرض التفاصيل', 'Show Details')}</span>
+                    {isExpanded ? (
+                      <ChevronUp className="w-3.5 h-3.5" />
+                    ) : (
+                      <ChevronDown className="w-3.5 h-3.5" />
+                    )}
+                  </button>
+                </div>
+
+                {isExpanded && (
+                  <div className="p-3.5 rounded-xl bg-slate-50 dark:bg-slate-900/75 border border-slate-200/80 dark:border-slate-800 space-y-3 text-xs">
+                    {/* Price Breakdown */}
+                    <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 pb-2.5 border-b border-slate-200 dark:border-slate-800">
+                      <div>
+                        <span className="text-[11px] text-slate-500 block">{t('سعر الوحدة', 'Unit Price')}</span>
+                        <span className="font-mono-num font-bold">{formatSdg(item.unitPriceSdg)}</span>
+                      </div>
+                      <div>
+                        <span className="text-[11px] text-slate-500 block">{t('إضافات العدسات', 'Lens Extra')}</span>
+                        <span className="font-mono-num font-bold">
+                          {lensExtra > 0 ? `+${formatSdg(lensExtra)}` : t('مجاني', 'Free')}
+                        </span>
+                      </div>
+                      <div>
+                        <span className="text-[11px] text-slate-500 block">{t('الكمية', 'Qty')}</span>
+                        <span className="font-mono-num font-bold">{item.quantity}</span>
+                      </div>
+                      <div>
+                        <span className="text-[11px] text-slate-500 block">{t('الإجمالي', 'Line Total')}</span>
+                        <span className="font-mono-num font-extrabold text-[#B38B2D]">{formatSdg(lineTotal)}</span>
+                      </div>
+                    </div>
+
+                    {/* Vision Type + Extra Options */}
+                    {(itemVisionType !== 'none' || itemExtras.length > 0) && (
+                      <div className="p-3 rounded-xl bg-white dark:bg-[#131C2E] border border-slate-200 dark:border-slate-700 space-y-1.5 text-[11px]">
+                        {itemVisionType !== 'none' && (
+                          <div className="flex items-center justify-between gap-2">
+                            <span>
+                              <span className="text-slate-500">{t('نوع الرؤية:', 'Vision Type:')}</span>{' '}
+                              <strong className="text-[#11223E] dark:text-[#E2BD5B]">
+                                {getVisionTypeLabel(itemVisionType, lensOptions, locale)}
+                              </strong>
+                            </span>
                             <span className="font-mono-num font-bold">
-                              {lensExtra > 0 ? `+${formatSdg(lensExtra)}` : t('مجاني', 'Free')}
+                              {effectiveVisionPrice > 0
+                                ? `+${formatSdg(effectiveVisionPrice)}`
+                                : t('مجاني', 'Free')}
                             </span>
                           </div>
-                          <div>
-                            <span className="text-[11px] text-stone-500 block">{t('الكمية', 'Qty')}</span>
-                            <span className="font-mono-num font-bold">{item.quantity}</span>
-                          </div>
-                          <div>
-                            <span className="text-[11px] text-stone-500 block">{t('الإجمالي', 'Line Total')}</span>
-                            <span className="font-mono-num font-extrabold text-[#B38B2D]">{formatSdg(lineTotal)}</span>
-                          </div>
-                        </div>
-
-                        {/* Selected Frame/Pack Options */}
-                        {(item.selectedOptions?.color || item.variantLabel || item.selectedOptions?.quantityPerBox) && (
-                          <div className="flex flex-wrap gap-2 text-[11px]">
-                            {(item.selectedOptions?.color || item.variantLabel) && (
-                              <span className="px-2 py-1 rounded bg-white dark:bg-[#181B1E] border border-stone-200 dark:border-zinc-700 font-semibold">
-                                {t('اللون:', 'Color:')} {item.selectedOptions?.color || item.variantLabel}
-                              </span>
-                            )}
-                            {item.selectedOptions?.quantityPerBox && (
-                              <span className="px-2 py-1 rounded bg-white dark:bg-[#181B1E] border border-stone-200 dark:border-zinc-700 font-semibold">
-                                {item.selectedOptions.quantityPerBox} {t('عدسة/علبة', 'lenses/box')}
-                              </span>
-                            )}
-                          </div>
                         )}
 
-                        {/* Vision Type + Extra Options Itemized List */}
-                        {(itemVisionType !== 'none' || itemExtras.length > 0) && (
-                          <div className="p-2.5 rounded-lg bg-white dark:bg-[#181B1E] border border-stone-200 dark:border-zinc-700 space-y-1.5 text-[11px]">
-                            {itemVisionType !== 'none' && (
-                              <div className="flex items-center justify-between gap-2">
-                                <span>
-                                  <span className="text-stone-500">{t('نوع الرؤية:', 'Vision Type:')}</span>{' '}
-                                  <strong className="text-[#11223E] dark:text-[#E2BD5B]">
-                                    {getVisionTypeLabel(itemVisionType, lensOptions, locale)}
-                                  </strong>
-                                </span>
-                                <span className="font-mono-num font-bold">
-                                  {effectiveVisionPrice > 0
-                                    ? `+${formatSdg(effectiveVisionPrice)}`
-                                    : t('مجاني', 'Free')}
-                                </span>
-                              </div>
-                            )}
-
-                            {itemExtras.map((extId) => {
-                              const extPrice =
-                                rx?.extraOptionsPricesSdg?.[extId] ??
-                                itemPricing.extraOptionsPricesSdg[extId] ??
-                                0;
-                              return (
-                                <div key={extId} className="flex items-center justify-between gap-2">
-                                  <span className="inline-flex items-center gap-1.5 flex-wrap">
-                                    <span>+ {getExtraOptionLabel(extId, lensOptions, locale)}</span>
-                                    {extId === 'mirror' && rx?.mirrorColor && (
-                                      <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-stone-100 dark:bg-zinc-800 font-bold">
-                                        {mirrorMeta && (
-                                          <span
-                                            className="w-2.5 h-2.5 rounded-full border border-black/20"
-                                            style={{ backgroundColor: mirrorMeta.swatchHex }}
-                                          />
-                                        )}
-                                        {getMirrorColorLabel(rx.mirrorColor, locale)}
-                                      </span>
+                        {itemExtras.map((extId) => {
+                          const extPrice =
+                            rx?.extraOptionsPricesSdg?.[extId] ??
+                            itemPricing.extraOptionsPricesSdg[extId] ??
+                            0;
+                          return (
+                            <div key={extId} className="flex items-center justify-between gap-2">
+                              <span className="inline-flex items-center gap-1.5 flex-wrap">
+                                <span>+ {getExtraOptionLabel(extId, lensOptions, locale)}</span>
+                                {extId === 'mirror' && rx?.mirrorColor && (
+                                  <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-slate-100 dark:bg-slate-800 font-bold">
+                                    {mirrorMeta && (
+                                      <span
+                                        className="w-2.5 h-2.5 rounded-full border border-black/20"
+                                        style={{ backgroundColor: mirrorMeta.swatchHex }}
+                                      />
                                     )}
+                                    {getMirrorColorLabel(rx.mirrorColor, locale)}
                                   </span>
-                                  <span className="font-mono-num font-bold">
-                                    {extPrice > 0 ? `+${formatSdg(extPrice)}` : t('مجاني', 'Free')}
-                                  </span>
-                                </div>
-                              );
-                            })}
-                          </div>
-                        )}
-
-                        {/* Prescription Display or Empty Chip */}
-                        {hasCustomLens && rx ? (
-                          <div className="space-y-2.5">
-                            {hasRxValues && rx.type === 'manual' && rx.values?.kind === 'contact_lenses' && (
-                              <div className="overflow-x-auto">
-                                <table className="w-full text-[11px] font-mono-num border border-stone-200 dark:border-zinc-700 rounded-lg overflow-hidden bg-white dark:bg-[#181B1E]">
-                                  <thead className="bg-stone-100 dark:bg-zinc-800 font-bold">
-                                    <tr>
-                                      <th className="p-1.5 text-start">{t('العين', 'Eye')}</th>
-                                      <th className="p-1.5">SPH</th>
-                                      <th className="p-1.5">CYL</th>
-                                      <th className="p-1.5">AXIS</th>
-                                      <th className="p-1.5">BC</th>
-                                      <th className="p-1.5">DIA</th>
-                                      <th className="p-1.5">{t('العلب', 'Boxes')}</th>
-                                    </tr>
-                                  </thead>
-                                  <tbody className="divide-y divide-stone-100 dark:divide-zinc-800">
-                                    {rx.values.contactRight && (
-                                      <tr>
-                                        <td className="p-1.5 font-bold">OD ({t('يمين', 'R')})</td>
-                                        <td className="p-1.5 text-center">{rx.values.contactRight.sph}</td>
-                                        <td className="p-1.5 text-center">{rx.values.contactRight.cyl}</td>
-                                        <td className="p-1.5 text-center">{rx.values.contactRight.axis}°</td>
-                                        <td className="p-1.5 text-center">{rx.values.contactRight.bc}</td>
-                                        <td className="p-1.5 text-center">{rx.values.contactRight.dia}</td>
-                                        <td className="p-1.5 text-center">{rx.values.contactRight.boxes}</td>
-                                      </tr>
-                                    )}
-                                    {rx.values.contactLeft && (
-                                      <tr>
-                                        <td className="p-1.5 font-bold">OS ({t('يسار', 'L')})</td>
-                                        <td className="p-1.5 text-center">{rx.values.contactLeft.sph}</td>
-                                        <td className="p-1.5 text-center">{rx.values.contactLeft.cyl}</td>
-                                        <td className="p-1.5 text-center">{rx.values.contactLeft.axis}°</td>
-                                        <td className="p-1.5 text-center">{rx.values.contactLeft.bc}</td>
-                                        <td className="p-1.5 text-center">{rx.values.contactLeft.dia}</td>
-                                        <td className="p-1.5 text-center">{rx.values.contactLeft.boxes}</td>
-                                      </tr>
-                                    )}
-                                  </tbody>
-                                </table>
-                              </div>
-                            )}
-
-                            {hasRxValues && rx.type === 'manual' && rx.values?.kind !== 'contact_lenses' && rx.rightEye && (
-                              <div className="space-y-1.5 overflow-x-auto">
-                                <table className="w-full text-[11px] font-mono-num border border-stone-200 dark:border-zinc-700 rounded-lg overflow-hidden bg-white dark:bg-[#181B1E]">
-                                  <thead className="bg-stone-100 dark:bg-zinc-800 font-bold">
-                                    <tr>
-                                      <th className="p-1.5 text-start">{t('العين', 'Eye')}</th>
-                                      <th className="p-1.5">SPH</th>
-                                      <th className="p-1.5">CYL</th>
-                                      <th className="p-1.5">AXIS</th>
-                                      <th className="p-1.5">ADD</th>
-                                    </tr>
-                                  </thead>
-                                  <tbody className="divide-y divide-stone-100 dark:divide-zinc-800">
-                                    <tr>
-                                      <td className="p-1.5 font-bold">OD ({t('يمين', 'Right')})</td>
-                                      <td className="p-1.5 text-center">{rx.rightEye.sph}</td>
-                                      <td className="p-1.5 text-center">{rx.rightEye.cyl}</td>
-                                      <td className="p-1.5 text-center">{rx.rightEye.axis}°</td>
-                                      <td className="p-1.5 text-center">{rx.rightEye.add || '—'}</td>
-                                    </tr>
-                                    {rx.leftEye && (
-                                      <tr>
-                                        <td className="p-1.5 font-bold">OS ({t('يسار', 'Left')})</td>
-                                        <td className="p-1.5 text-center">{rx.leftEye.sph}</td>
-                                        <td className="p-1.5 text-center">{rx.leftEye.cyl}</td>
-                                        <td className="p-1.5 text-center">{rx.leftEye.axis}°</td>
-                                        <td className="p-1.5 text-center">{rx.leftEye.add || '—'}</td>
-                                      </tr>
-                                    )}
-                                  </tbody>
-                                </table>
-                                {(rx.pd || rx.pdRight) && (
-                                  <div className="font-mono-num text-[11px] text-slate-600 dark:text-slate-300">
-                                    PD:{' '}
-                                    <strong>
-                                      {rx.pdMode === 'dual' && rx.pdRight
-                                        ? `OD ${rx.pdRight} mm / OS ${rx.pdLeft} mm`
-                                        : `${rx.pd} mm`}
-                                    </strong>
-                                  </div>
                                 )}
-                                {rx.fittingHeight && (
-                                  <div className="font-mono-num text-[11px] text-slate-600 dark:text-slate-300">
-                                    {t('ارتفاع التركيب (Fitting Height):', 'Fitting Height:')}{' '}
-                                    <strong>{rx.fittingHeight} mm</strong>
-                                  </div>
-                                )}
-                              </div>
-                            )}
-
-                            {rx.type === 'image' && rx.imageUrl && (
-                              <div className="flex items-center gap-3">
-                                <button
-                                  type="button"
-                                  onClick={() => setLightboxImage(rx.imageUrl || null)}
-                                  className="group relative rounded-lg overflow-hidden border border-stone-200 dark:border-zinc-700"
-                                >
-                                  <img
-                                    src={rx.imageUrl}
-                                    alt={t('صورة الروشتة', 'Rx photo')}
-                                    className="h-20 w-24 object-cover group-hover:opacity-85"
-                                  />
-                                  <span className="absolute inset-x-0 bottom-0 bg-black/60 text-white text-[10px] py-0.5 text-center">
-                                    {t('اضغط للتكبير', 'Tap to enlarge')}
-                                  </span>
-                                </button>
-                              </div>
-                            )}
-
-                            {rx.type === 'later' && (
-                              <div className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-emerald-50 dark:bg-emerald-950/30 border border-emerald-200 dark:border-emerald-900 text-emerald-700 dark:text-emerald-300 font-bold">
-                                <MessageCircle className="w-3.5 h-3.5" />
-                                <span>{t('سيتم الإرسال لاحقاً عبر الواتساب', 'Will send via WhatsApp later')}</span>
-                              </div>
-                            )}
-
-                            {rx.type === 'none' && (
-                              <div className="text-[11px] text-stone-500 dark:text-zinc-400">
-                                {t('تم حفظ خيارات العدسة بدون إدخال مقاس نظر', 'Lens options saved without prescription values')}
-                              </div>
-                            )}
-
-                            {rx.notes && (
-                              <p className="text-[11px] text-stone-600 dark:text-zinc-400">
-                                <strong>{t('ملاحظات:', 'Notes:')}</strong> {rx.notes}
-                              </p>
-                            )}
-
-                            <div className="flex flex-wrap items-center gap-2 pt-1">
-                              <button
-                                type="button"
-                                onClick={() => setEditingRxTarget({ cartItem: item, product: prod })}
-                                className="min-h-[44px] px-3.5 rounded-lg bg-white dark:bg-[#181B1E] border border-stone-200 dark:border-zinc-700 font-bold inline-flex items-center gap-1.5"
-                              >
-                                <Edit3 className="w-3.5 h-3.5" />
-                                {t('تعديل المقاس', 'Edit Prescription')}
-                              </button>
-                              <button
-                                type="button"
-                                onClick={() => updateCartItemPrescription(item.id, undefined)}
-                                className="min-h-[44px] px-3.5 rounded-lg bg-rose-50 dark:bg-rose-950/30 text-rose-700 dark:text-rose-400 font-bold inline-flex items-center gap-1.5"
-                              >
-                                <Trash2 className="w-3.5 h-3.5" />
-                                {t('حذف المقاس', 'Delete Prescription')}
-                              </button>
+                              </span>
+                              <span className="font-mono-num font-bold">
+                                {extPrice > 0 ? `+${formatSdg(extPrice)}` : t('مجاني', 'Free')}
+                              </span>
                             </div>
+                          );
+                        })}
+                      </div>
+                    )}
+
+                    {/* Prescription Table / Thumbnail / Later */}
+                    {hasCustomLens && rx ? (
+                      <div className="space-y-2.5">
+                        {hasRxValues && rx.type === 'manual' && rx.values?.kind === 'contact_lenses' && (
+                          <div className="overflow-x-auto">
+                            <table className="w-full text-[11px] font-mono-num border border-slate-200 dark:border-slate-700 rounded-xl overflow-hidden bg-white dark:bg-[#131C2E]">
+                              <thead className="bg-slate-100 dark:bg-slate-800 font-bold">
+                                <tr>
+                                  <th className="p-2 text-start">{t('العين', 'Eye')}</th>
+                                  <th className="p-2">SPH</th>
+                                  <th className="p-2">CYL</th>
+                                  <th className="p-2">AXIS</th>
+                                  <th className="p-2">BC</th>
+                                  <th className="p-2">DIA</th>
+                                  <th className="p-2">{t('العلب', 'Boxes')}</th>
+                                </tr>
+                              </thead>
+                              <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
+                                {rx.values.contactRight && (
+                                  <tr>
+                                    <td className="p-2 font-bold">OD ({t('يمين', 'R')})</td>
+                                    <td className="p-2 text-center">{rx.values.contactRight.sph}</td>
+                                    <td className="p-2 text-center">{rx.values.contactRight.cyl}</td>
+                                    <td className="p-2 text-center">{rx.values.contactRight.axis}°</td>
+                                    <td className="p-2 text-center">{rx.values.contactRight.bc}</td>
+                                    <td className="p-2 text-center">{rx.values.contactRight.dia}</td>
+                                    <td className="p-2 text-center">{rx.values.contactRight.boxes}</td>
+                                  </tr>
+                                )}
+                                {rx.values.contactLeft && (
+                                  <tr>
+                                    <td className="p-2 font-bold">OS ({t('يسار', 'L')})</td>
+                                    <td className="p-2 text-center">{rx.values.contactLeft.sph}</td>
+                                    <td className="p-2 text-center">{rx.values.contactLeft.cyl}</td>
+                                    <td className="p-2 text-center">{rx.values.contactLeft.axis}°</td>
+                                    <td className="p-2 text-center">{rx.values.contactLeft.bc}</td>
+                                    <td className="p-2 text-center">{rx.values.contactLeft.dia}</td>
+                                    <td className="p-2 text-center">{rx.values.contactLeft.boxes}</td>
+                                  </tr>
+                                )}
+                              </tbody>
+                            </table>
                           </div>
-                        ) : (
-                          <div className="flex flex-wrap items-center justify-between gap-2">
-                            <span className="px-2.5 py-1 rounded-lg bg-stone-200/80 dark:bg-zinc-800 text-stone-600 dark:text-zinc-300 font-bold text-[11px]">
-                              {t('بدون مقاس', 'No Prescription')}
-                            </span>
-                            {isRxEligible && (
-                              <button
-                                type="button"
-                                onClick={() => setEditingRxTarget({ cartItem: item, product: prod })}
-                                style={{
-                                  backgroundColor: appearance.secondaryColor,
-                                  color: appearance.primaryColor,
-                                }}
-                                className="min-h-[44px] px-3.5 rounded-lg font-extrabold inline-flex items-center gap-1.5"
-                              >
-                                <Eye className="w-3.5 h-3.5" />
-                                {t('إضافة مقاس', 'Add Prescription')}
-                              </button>
+                        )}
+
+                        {hasRxValues && rx.type === 'manual' && rx.values?.kind !== 'contact_lenses' && rx.rightEye && (
+                          <div className="space-y-1.5 overflow-x-auto">
+                            <table className="w-full text-[11px] font-mono-num border border-slate-200 dark:border-slate-700 rounded-xl overflow-hidden bg-white dark:bg-[#131C2E]">
+                              <thead className="bg-slate-100 dark:bg-slate-800 font-bold">
+                                <tr>
+                                  <th className="p-2 text-start">{t('العين', 'Eye')}</th>
+                                  <th className="p-2">SPH</th>
+                                  <th className="p-2">CYL</th>
+                                  <th className="p-2">AXIS</th>
+                                  <th className="p-2">ADD</th>
+                                </tr>
+                              </thead>
+                              <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
+                                <tr>
+                                  <td className="p-2 font-bold">OD ({t('يمين', 'Right')})</td>
+                                  <td className="p-2 text-center">{rx.rightEye.sph}</td>
+                                  <td className="p-2 text-center">{rx.rightEye.cyl}</td>
+                                  <td className="p-2 text-center">{rx.rightEye.axis}°</td>
+                                  <td className="p-2 text-center">{rx.rightEye.add || '—'}</td>
+                                </tr>
+                                {rx.leftEye && (
+                                  <tr>
+                                    <td className="p-2 font-bold">OS ({t('يسار', 'Left')})</td>
+                                    <td className="p-2 text-center">{rx.leftEye.sph}</td>
+                                    <td className="p-2 text-center">{rx.leftEye.cyl}</td>
+                                    <td className="p-2 text-center">{rx.leftEye.axis}°</td>
+                                    <td className="p-2 text-center">{rx.leftEye.add || '—'}</td>
+                                  </tr>
+                                )}
+                              </tbody>
+                            </table>
+                            {(rx.pd || rx.pdRight) && (
+                              <div className="font-mono-num text-[11px] text-slate-600 dark:text-slate-300">
+                                PD:{' '}
+                                <strong>
+                                  {rx.pdMode === 'dual' && rx.pdRight
+                                    ? `OD ${rx.pdRight} mm / OS ${rx.pdLeft} mm`
+                                    : `${rx.pd} mm`}
+                                </strong>
+                              </div>
+                            )}
+                            {rx.fittingHeight && (
+                              <div className="font-mono-num text-[11px] text-slate-600 dark:text-slate-300">
+                                {t('ارتفاع التركيب (Fitting Height):', 'Fitting Height:')}{' '}
+                                <strong>{rx.fittingHeight} mm</strong>
+                              </div>
                             )}
                           </div>
+                        )}
+
+                        {rx.type === 'image' && rx.imageUrl && (
+                          <div className="flex items-center gap-3">
+                            <button
+                              type="button"
+                              onClick={() => setLightboxImage(rx.imageUrl || null)}
+                              className="group relative rounded-xl overflow-hidden border border-slate-200 dark:border-slate-700"
+                            >
+                              <img
+                                src={rx.imageUrl}
+                                alt={t('صورة الروشتة', 'Rx photo')}
+                                className="h-20 w-24 object-cover group-hover:opacity-85"
+                              />
+                              <span className="absolute inset-x-0 bottom-0 bg-black/60 text-white text-[10px] py-0.5 text-center">
+                                {t('اضغط للتكبير', 'Tap to enlarge')}
+                              </span>
+                            </button>
+                          </div>
+                        )}
+
+                        {rx.type === 'later' && (
+                          <div className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-800 text-[#11223E] dark:text-amber-200 font-bold">
+                            <MessageCircle className="w-3.5 h-3.5 text-emerald-600" />
+                            <span>
+                              {t(
+                                'لا أعرف مقاسي — سيتواصل معي فريق البصريات لتأكيد المقاس',
+                                'Optician team will contact you to confirm prescription'
+                              )}
+                            </span>
+                          </div>
+                        )}
+
+                        {rx.type === 'none' && (
+                          <div className="text-[11px] text-slate-500 dark:text-slate-400">
+                            {t('تم حفظ خيارات العدسة بدون إدخال مقاس نظر', 'Lens options saved without Rx values')}
+                          </div>
+                        )}
+
+                        {rx.notes && (
+                          <p className="text-[11px] text-slate-600 dark:text-slate-400">
+                            <strong>{t('ملاحظات:', 'Notes:')}</strong> {rx.notes}
+                          </p>
+                        )}
+
+                        <div className="flex flex-wrap items-center gap-2 pt-1">
+                          <button
+                            type="button"
+                            onClick={() => setEditingRxTarget({ cartItem: item, product: prod })}
+                            className="min-h-[40px] px-3.5 rounded-xl bg-white dark:bg-[#131C2E] border border-slate-200 dark:border-slate-700 font-bold inline-flex items-center gap-1.5"
+                          >
+                            <Edit3 className="w-3.5 h-3.5" />
+                            {t('تعديل المقاس', 'Edit Prescription')}
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => updateCartItemPrescription(item.id, undefined)}
+                            className="min-h-[40px] px-3.5 rounded-xl bg-rose-50 dark:bg-rose-950/30 text-rose-700 dark:text-rose-400 font-bold inline-flex items-center gap-1.5"
+                          >
+                            <Trash2 className="w-3.5 h-3.5" />
+                            {t('حذف المقاس', 'Delete Prescription')}
+                          </button>
+                        </div>
+                      </div>
+                    ) : (
+                      <div className="flex flex-wrap items-center justify-between gap-2">
+                        <span className="text-slate-500 dark:text-slate-400 font-semibold text-xs">
+                          {t('بدون مقاس طبي حالياً', 'No prescription attached')}
+                        </span>
+                        {isRxEligible && (
+                          <button
+                            type="button"
+                            onClick={() => setEditingRxTarget({ cartItem: item, product: prod })}
+                            className="min-h-[40px] px-3.5 rounded-xl bg-[#11223E] text-white dark:bg-[#D9B24C] dark:text-[#11223E] font-extrabold inline-flex items-center gap-1.5"
+                          >
+                            <Eye className="w-3.5 h-3.5" />
+                            {t('إضافة مقاس', 'Add Prescription')}
+                          </button>
                         )}
                       </div>
                     )}
                   </div>
-                </div>
-              );
-            })}
-          </div>
+                )}
+              </div>
+            );
+          })}
+
+          {/* Optician Help CTA Card matching screenshot 2 */}
+          <button
+            type="button"
+            onClick={() => setActiveTab('consult')}
+            className="w-full min-h-[52px] rounded-2xl border-2 border-emerald-400/70 dark:border-emerald-700/80 bg-emerald-50/75 hover:bg-emerald-50 dark:bg-emerald-950/25 dark:hover:bg-emerald-950/40 px-4 py-3 flex items-center justify-center gap-2.5 text-sm font-extrabold text-[#11223E] dark:text-emerald-200 transition-colors"
+          >
+            <span className="w-7 h-7 rounded-full bg-emerald-500 text-white flex items-center justify-center shrink-0">
+              <MessageCircle className="w-4 h-4" />
+            </span>
+            <span>{t('استشر أخصائي البصريات قبل إتمام الطلب', 'Need help with your Rx? Consult Optician')}</span>
+          </button>
 
           {/* Payment Method Card */}
-          <div className="bg-white dark:bg-[#181B1E] border border-stone-200 dark:border-zinc-800 rounded-2xl p-5 space-y-4">
-            <h2 className="text-base font-bold">{t('طريقة الدفع', 'Payment Method')}</h2>
+          <div className="bg-white dark:bg-[#131C2E] border border-slate-200 dark:border-slate-800 rounded-2xl p-5 space-y-4 shadow-xs">
+            <h2 className="text-base font-extrabold text-[#11223E] dark:text-white">
+              {t('طريقة الدفع', 'Payment Method')}
+            </h2>
             <div className="grid sm:grid-cols-3 gap-3 text-xs">
               <button
                 type="button"
                 onClick={() => setPaymentMethod('bankak')}
-                className={`p-3 rounded-xl border text-start space-y-1 transition-colors ${
+                className={`p-3.5 rounded-xl border-2 text-start space-y-1 transition-colors ${
                   paymentMethod === 'bankak'
-                    ? 'border-[var(--vp-secondary)] bg-[#D9B24C]/15'
-                    : 'border-stone-200 dark:border-zinc-700'
+                    ? 'border-[#11223E] dark:border-[#D9B24C] bg-[#11223E]/5 dark:bg-[#D9B24C]/10'
+                    : 'border-slate-200 dark:border-slate-700'
                 }`}
               >
-                <Building2 className="w-5 h-5" style={{ color: appearance.secondaryColor }} />
-                <div className="font-bold">{t('تحويل بنكي (بنكك)', 'Bankak Transfer')}</div>
-                <div className="text-[11px] text-stone-500 dark:text-zinc-400">
+                <Building2 className="w-5 h-5 text-[#B38B2D]" />
+                <div className="font-extrabold">{t('تحويل بنكي (بنكك)', 'Bankak Transfer')}</div>
+                <div className="text-[11px] text-slate-500 dark:text-slate-400">
                   {t('بنك الخرطوم وباقي البنوك', 'Bank of Khartoum & local banks')}
                 </div>
               </button>
@@ -848,34 +935,34 @@ export const CartCheckoutView: React.FC = () => {
               <button
                 type="button"
                 onClick={() => setPaymentMethod('cod')}
-                className={`p-3 rounded-xl border text-start space-y-1 transition-colors ${
+                className={`p-3.5 rounded-xl border-2 text-start space-y-1 transition-colors ${
                   paymentMethod === 'cod'
-                    ? 'border-[var(--vp-secondary)] bg-[#D9B24C]/15'
-                    : 'border-stone-200 dark:border-zinc-700'
+                    ? 'border-[#11223E] dark:border-[#D9B24C] bg-[#11223E]/5 dark:bg-[#D9B24C]/10'
+                    : 'border-slate-200 dark:border-slate-700'
                 }`}
               >
-                <Banknote className="w-5 h-5" style={{ color: appearance.secondaryColor }} />
-                <div className="font-bold">{t('الدفع عند الاستلام', 'Cash on Delivery')}</div>
-                <div className="text-[11px] text-stone-500 dark:text-zinc-400">
+                <Banknote className="w-5 h-5 text-[#B38B2D]" />
+                <div className="font-extrabold">{t('الدفع عند الاستلام', 'Cash on Delivery')}</div>
+                <div className="text-[11px] text-slate-500 dark:text-slate-400">
                   {t('نقداً لمندوب التوصيل', 'Pay cash on delivery')}
                 </div>
               </button>
 
-              <div className="p-3 rounded-xl border border-dashed border-stone-200 dark:border-zinc-800 text-start space-y-1 opacity-65">
-                <CreditCard className="w-5 h-5 text-stone-400" />
+              <div className="p-3.5 rounded-xl border border-dashed border-slate-200 dark:border-slate-800 text-start space-y-1 opacity-65">
+                <CreditCard className="w-5 h-5 text-slate-400" />
                 <div className="font-bold">{t('الدفع الإلكتروني', 'Online Card Gateway')}</div>
-                <div className="text-[11px] text-stone-500 dark:text-zinc-400">
+                <div className="text-[11px] text-slate-500 dark:text-slate-400">
                   {t('بوابة الدفع جاهزة للتفعيل لاحقاً', 'Extensible gateway adapter ready')}
                 </div>
               </div>
             </div>
 
             {paymentMethod === 'bankak' && (
-              <div className="p-4 rounded-xl bg-stone-50 dark:bg-zinc-900 border border-stone-200 dark:border-zinc-800 space-y-3 text-xs">
+              <div className="p-4 rounded-xl bg-slate-50 dark:bg-slate-900/75 border border-slate-200 dark:border-slate-800 space-y-3 text-xs">
                 <div className="flex flex-wrap items-center justify-between gap-2">
                   <div>
-                    <div className="font-bold text-sm">{settings.bankakBranchAr}</div>
-                    <div className="text-stone-600 dark:text-zinc-400 mt-0.5">
+                    <div className="font-extrabold text-sm">{settings.bankakBranchAr}</div>
+                    <div className="text-slate-600 dark:text-slate-400 mt-0.5">
                       {t('اسم الحساب:', 'Account Name:')} {settings.bankakAccountName}
                     </div>
                   </div>
@@ -885,36 +972,36 @@ export const CartCheckoutView: React.FC = () => {
                       navigator.clipboard?.writeText(settings.bankakAccountNumber);
                       showToast(t('تم نسخ رقم حساب بنكك', 'Bankak account copied'));
                     }}
-                    className="min-h-[44px] px-3 py-1.5 rounded-lg bg-white dark:bg-[#181B1E] border border-stone-200 dark:border-zinc-700 font-mono-num font-bold flex items-center gap-1.5"
+                    className="min-h-[44px] px-3.5 py-1.5 rounded-xl bg-white dark:bg-[#131C2E] border border-slate-200 dark:border-slate-700 font-mono-num font-bold flex items-center gap-1.5"
                   >
                     <span>{settings.bankakAccountNumber}</span>
-                    <Copy className="w-3.5 h-3.5" style={{ color: appearance.secondaryColor }} />
+                    <Copy className="w-3.5 h-3.5 text-[#B38B2D]" />
                   </button>
                 </div>
 
                 {settings.otherBankDetailsAr && (
-                  <p className="text-[11px] text-stone-500 dark:text-zinc-400">
+                  <p className="text-[11px] text-slate-500 dark:text-slate-400">
                     {settings.otherBankDetailsAr}
                   </p>
                 )}
 
                 <div className="grid sm:grid-cols-2 gap-3 pt-2">
                   <div>
-                    <label className="block font-semibold mb-1">
+                    <label className="block font-bold mb-1">
                       {t('رقم العملية المرجعي', 'Transfer Reference ID')}
                     </label>
                     <input
                       value={bankRef}
                       onChange={(e) => setBankRef(e.target.value)}
                       placeholder="BNK-..."
-                      className="w-full min-h-[44px] px-3 py-2 rounded-lg border border-stone-200 dark:border-zinc-700 bg-white dark:bg-[#181B1E] font-mono-num text-base"
+                      className="w-full min-h-[44px] px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-[#131C2E] font-mono-num text-sm"
                     />
                   </div>
                   <div>
-                    <label className="block font-semibold mb-1">
+                    <label className="block font-bold mb-1">
                       {t('صورة إشعار التحويل (بنكك)', 'Upload Transfer Receipt')}
                     </label>
-                    <label className="min-h-[44px] flex items-center justify-center gap-2 px-3 py-2 rounded-lg border border-dashed border-[var(--vp-secondary)] bg-white dark:bg-[#181B1E] font-semibold cursor-pointer">
+                    <label className="min-h-[44px] flex items-center justify-center gap-2 px-3 py-2 rounded-xl border-2 border-dashed border-slate-300 dark:border-slate-700 hover:border-[#D9B24C] bg-white dark:bg-[#131C2E] font-bold cursor-pointer">
                       <Upload className="w-4 h-4" />
                       <span>
                         {receiptUrl ? t('تم رفع الإيصال ✓', 'Receipt Uploaded ✓') : t('اختر لقطة الشاشة', 'Select Screenshot')}
@@ -928,107 +1015,104 @@ export const CartCheckoutView: React.FC = () => {
           </div>
         </div>
 
-        {/* Order Summary Column — exact order:
-            Items subtotal -> Lens options total -> Coupon discount -> Delivery fee (state) -> Total -> Address Button & Selected Address Card -> Checkout Button */}
-        <div className="lg:col-span-5 bg-white dark:bg-[#181B1E] border border-stone-200 dark:border-zinc-800 rounded-2xl p-5 space-y-5 sticky top-28">
-          <h2 className="text-base font-bold">{t('ملخص الطلب', 'Order Summary')}</h2>
-
-          {settings.minimumOrderSdg > 0 && (
-            <p className="text-[11px] text-slate-500 dark:text-slate-400">
-              {t(
-                `الحد الأدنى للطلب: ${formatSdg(settings.minimumOrderSdg)}`,
-                `Minimum order: ${formatSdg(settings.minimumOrderSdg)}`
-              )}
-            </p>
-          )}
+        {/* Order Summary Column */}
+        <div className="lg:col-span-5 bg-white dark:bg-[#131C2E] border border-slate-200 dark:border-slate-800 rounded-2xl p-5 space-y-5 lg:sticky lg:top-28 shadow-xs">
+          <div className="flex items-center justify-between gap-2">
+            <h2 className="text-base font-extrabold text-[#11223E] dark:text-white">
+              {t('ملخص الطلب', 'Order Summary')}
+            </h2>
+            {settings.minimumOrderSdg > 0 && (
+              <span className="text-[11px] text-slate-500 dark:text-slate-400">
+                {t(`الحد الأدنى: ${formatSdg(settings.minimumOrderSdg)}`, `Min: ${formatSdg(settings.minimumOrderSdg)}`)}
+              </span>
+            )}
+          </div>
 
           {/* Coupon Input */}
           <div className="flex gap-2">
             <div className="relative flex-1">
-              <Tag className="w-4 h-4 absolute top-1/2 -translate-y-1/2 start-3 text-stone-400" />
+              <Tag className="w-4 h-4 absolute top-1/2 -translate-y-1/2 start-3 text-slate-400" />
               <input
                 type="text"
                 value={couponInput}
                 onChange={(e) => setCouponInput(e.target.value)}
                 placeholder={t('كود خصم (جرب NILE10)', 'Coupon code')}
-                className="w-full min-h-[44px] ps-9 pe-3 py-2 rounded-lg border border-stone-200 dark:border-zinc-700 bg-stone-50 dark:bg-zinc-900 text-xs font-mono-num uppercase"
+                className="w-full min-h-[44px] ps-9 pe-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-900 text-xs font-mono-num uppercase"
               />
             </div>
             <button
               type="button"
               onClick={handleApplyCoupon}
-              className="min-h-[44px] px-4 py-2 rounded-lg bg-stone-900 dark:bg-stone-100 text-white dark:text-stone-900 text-xs font-bold"
+              className="min-h-[44px] px-4 py-2 rounded-xl bg-[#11223E] text-white dark:bg-[#D9B24C] dark:text-[#11223E] text-xs font-extrabold"
             >
               {t('تطبيق', 'Apply')}
             </button>
           </div>
 
-          {/* Exact Ordered Summary Breakdown (all in SDG) */}
-          <div className="space-y-2.5 text-sm border-t border-stone-100 dark:border-zinc-800 pt-4">
-            {/* 1. Items Subtotal */}
+          {/* Ordered Breakdown */}
+          <div className="space-y-2.5 text-sm border-t border-slate-100 dark:border-slate-800 pt-4">
             <div className="flex justify-between">
-              <span className="text-stone-600 dark:text-zinc-400">
+              <span className="text-slate-600 dark:text-slate-400">
                 {t('المجموع الفرعي للمنتجات', 'Items Subtotal')}
               </span>
-              <span className="font-mono-num font-semibold tabular-nums">
+              <span className="font-mono-num font-bold tabular-nums">
                 {formatSdg(itemsSubtotalSdg)}
               </span>
             </div>
 
-            {/* 2. Lens Options Total */}
             <div className="flex justify-between">
-              <span className="text-stone-600 dark:text-zinc-400">
+              <span className="text-slate-600 dark:text-slate-400">
                 {t('إجمالي خيارات العدسات', 'Lens Options Total')}
               </span>
-              <span className="font-mono-num font-semibold tabular-nums">
+              <span className="font-mono-num font-bold tabular-nums">
                 {formatSdg(lensOptionsTotalSdg)}
               </span>
             </div>
 
-            {/* 3. Coupon Discount */}
             {discountSdg > 0 && (
               <div className="flex justify-between text-emerald-700 dark:text-emerald-400">
                 <span>
                   {t('الخصم', 'Discount')} ({activeCoupon?.code})
                 </span>
-                <span className="font-mono-num font-semibold tabular-nums">
+                <span className="font-mono-num font-bold tabular-nums">
                   − {formatSdg(discountSdg)}
                 </span>
               </div>
             )}
 
-            {/* 4. Delivery Fee (Sudan State) */}
             <div className="flex justify-between gap-2">
-              <span className="text-stone-600 dark:text-zinc-400">
-                {selectedState
-                  ? `${t('رسوم التوصيل', 'Delivery Fee')} (${locale === 'ar' ? selectedState.nameAr : selectedState.nameEn})`
-                  : t('رسوم التوصيل', 'Delivery Fee')}
+              <span className="text-slate-600 dark:text-slate-400 flex items-center gap-1.5">
+                <Truck className="w-3.5 h-3.5 text-[#B38B2D]" />
+                <span>
+                  {selectedState
+                    ? `${t('رسوم التوصيل', 'Delivery Fee')} (${locale === 'ar' ? selectedState.nameAr : selectedState.nameEn})`
+                    : t('رسوم التوصيل', 'Delivery Fee')}
+                </span>
               </span>
-              <span className="font-mono-num font-semibold tabular-nums text-end">
+              <span className="font-mono-num font-bold tabular-nums text-end">
                 {selectedState
                   ? formatSdg(deliveryFeeSdg)
-                  : t('اختر الولاية لحساب التوصيل', 'Select state to calculate fee')}
+                  : t('اختر الولاية', 'Select state')}
               </span>
             </div>
 
-            {/* 5. Total */}
-            <div className="flex justify-between text-base font-extrabold pt-3 border-t border-stone-200 dark:border-zinc-800">
+            <div className="flex justify-between text-base sm:text-lg font-extrabold pt-3 border-t border-slate-200 dark:border-slate-800">
               <span>{t('الإجمالي النهائي', 'Total')}</span>
-              <span className="font-mono-num text-[#B38B2D] dark:text-[#E2BD5B] tabular-nums">
+              <span className="font-mono-num text-[#11223E] dark:text-[#E2BD5B] tabular-nums">
                 {formatSdg(totalSdg)}
               </span>
             </div>
           </div>
 
-          {/* 6. Delivery Address Button & Selected Address Card */}
-          <div className="space-y-3 pt-2 border-t border-stone-100 dark:border-zinc-800">
+          {/* Delivery Address Button & Selected Address Card */}
+          <div className="space-y-3 pt-2 border-t border-slate-100 dark:border-slate-800">
             <button
               type="button"
               onClick={() => {
                 setEditingAddress(null);
                 setAddressSheetOpen(true);
               }}
-              className="w-full min-h-[48px] px-4 py-2.5 rounded-xl border-2 border-[#D9B24C] bg-[#D9B24C]/10 hover:bg-[#D9B24C]/20 text-xs font-extrabold flex items-center justify-between gap-2 transition-colors"
+              className="w-full min-h-[50px] px-4 py-2.5 rounded-xl border-2 border-[#D9B24C] bg-[#D9B24C]/10 hover:bg-[#D9B24C]/20 text-xs font-extrabold flex items-center justify-between gap-2 transition-colors"
             >
               <span className="flex items-center gap-2 min-w-0 text-start">
                 <MapPin className="w-4 h-4 text-[#B38B2D] shrink-0" />
@@ -1051,11 +1135,11 @@ export const CartCheckoutView: React.FC = () => {
             </button>
 
             {selectedAddress && selectedState && (
-              <div className="p-3.5 rounded-xl bg-stone-50 dark:bg-zinc-900 border border-stone-200 dark:border-zinc-800 text-xs space-y-1.5">
+              <div className="p-3.5 rounded-xl bg-slate-50 dark:bg-slate-900/75 border border-slate-200/80 dark:border-slate-800 text-xs space-y-1.5">
                 <div className="flex items-center justify-between gap-2">
                   <span className="font-extrabold text-[#11223E] dark:text-white">
                     {selectedAddress.recipientName || user.name}{' '}
-                    <span className="font-normal text-stone-500">({selectedAddress.label})</span>
+                    <span className="font-normal text-slate-500">({selectedAddress.label})</span>
                   </span>
                   <button
                     type="button"
@@ -1069,14 +1153,14 @@ export const CartCheckoutView: React.FC = () => {
                     {t('تعديل', 'Edit')}
                   </button>
                 </div>
-                <div className="font-mono-num text-stone-600 dark:text-zinc-300" dir="ltr">
+                <div className="font-mono-num text-slate-600 dark:text-slate-300" dir="ltr">
                   {selectedAddress.phone}
                 </div>
-                <div className="text-stone-700 dark:text-zinc-200 font-semibold">
+                <div className="text-slate-700 dark:text-slate-200 font-semibold">
                   {locale === 'ar' ? selectedState.nameAr : selectedState.nameEn} — {selectedAddress.city}،{' '}
                   {selectedAddress.area}
                 </div>
-                <div className="text-stone-500 dark:text-zinc-400">{selectedAddress.details}</div>
+                <div className="text-slate-500 dark:text-slate-400">{selectedAddress.details}</div>
                 {selectedAddress.mapUrl && (
                   <a
                     href={selectedAddress.mapUrl}
@@ -1092,15 +1176,14 @@ export const CartCheckoutView: React.FC = () => {
             )}
           </div>
 
-          {/* 7. Place Order Button */}
+          {/* Primary Place Order Button matching screenshot bottom navy bar aesthetic */}
           {isGuest ? (
             <button
               type="button"
               onClick={() => openAuthModal('choice', true)}
-              style={{ backgroundColor: appearance.secondaryColor, color: appearance.primaryColor }}
-              className="w-full min-h-[48px] py-3.5 px-6 rounded-xl font-extrabold text-sm flex items-center justify-center gap-2 transition-opacity hover:opacity-90"
+              className="w-full min-h-[52px] py-3.5 px-6 rounded-2xl bg-[#11223E] text-white dark:bg-[#D9B24C] dark:text-[#11223E] font-extrabold text-sm flex items-center justify-center gap-2.5 shadow-lg hover:opacity-95 transition-opacity"
             >
-              <CheckCircle2 className="w-4 h-4" />
+              <ShoppingBag className="w-4 h-4 text-[#D9B24C] dark:text-[#11223E]" />
               <span>{t('إتمام الطلب', 'Proceed to Checkout')}</span>
             </button>
           ) : (
@@ -1108,10 +1191,9 @@ export const CartCheckoutView: React.FC = () => {
               <button
                 type="submit"
                 disabled={submitting || requiresEmailVerification || !selectedAddress || !selectedState}
-                style={{ backgroundColor: appearance.secondaryColor, color: appearance.primaryColor }}
-                className="w-full min-h-[48px] py-3.5 px-6 rounded-xl font-extrabold text-sm flex items-center justify-center gap-2 transition-opacity hover:opacity-90 disabled:opacity-50 disabled:cursor-not-allowed"
+                className="w-full min-h-[52px] py-3.5 px-6 rounded-2xl bg-[#11223E] text-white dark:bg-[#D9B24C] dark:text-[#11223E] font-extrabold text-sm flex items-center justify-center gap-2.5 shadow-lg hover:opacity-95 transition-opacity disabled:opacity-50 disabled:cursor-not-allowed"
               >
-                <CheckCircle2 className="w-4 h-4" />
+                <CheckCircle2 className="w-4 h-4 text-[#D9B24C] dark:text-[#11223E]" />
                 <span>
                   {submitting
                     ? t('جارٍ إرسال الطلب...', 'Submitting Order...')

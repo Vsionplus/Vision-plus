@@ -46,6 +46,7 @@ export const ProfileView: React.FC = () => {
     savePrescription,
     deletePrescription,
     setActiveTab,
+    navigateToAdminPanel,
     showToast,
   } = useStore();
 
@@ -142,15 +143,15 @@ export const ProfileView: React.FC = () => {
         </div>
         <div className="flex flex-wrap items-center gap-2">
           <PWAInstallButton variant="profile" />
-          {(user.role === 'admin' || user.role === 'staff') && (
+          {user.role === 'admin' && (
             <button
               type="button"
-              onClick={() => setActiveTab('admin')}
+              onClick={() => navigateToAdminPanel('dashboard')}
               style={{ backgroundColor: appearance.secondaryColor, color: appearance.primaryColor }}
               className="min-h-[44px] px-3.5 py-2 rounded-lg text-xs font-extrabold inline-flex items-center gap-1.5"
             >
               <ShieldCheck className="w-4 h-4" />
-              {t('لوحة تحكم الإدارة', 'Admin Control Panel')}
+              {t('لوحة التحكم', 'Control Panel')}
             </button>
           )}
           <button
@@ -239,169 +240,208 @@ export const ProfileView: React.FC = () => {
       )}
 
       <div className="grid lg:grid-cols-12 gap-6 items-start">
-        <form
-          onSubmit={handleSaveProfile}
-          className="lg:col-span-4 bg-white dark:bg-[#181B1E] border border-stone-200 dark:border-zinc-800 rounded-xl p-5 space-y-4 text-xs"
-        >
+        <div className="lg:col-span-4 bg-white dark:bg-[#181B1E] border border-stone-200 dark:border-zinc-800 rounded-xl p-5 space-y-4 text-xs">
           <h2 className="text-base font-bold">{t('البيانات الشخصية', 'Account Details')}</h2>
-          <div>
-            <label className="block font-semibold mb-1">{t('الاسم', 'Name')}</label>
-            <input value={name} onChange={(e) => setName(e.target.value)} className="w-full min-h-[44px] px-3 py-2 rounded-lg border border-stone-200 dark:border-zinc-700 bg-stone-50 dark:bg-zinc-900 text-base" />
-          </div>
-          <div>
-            <label className="block font-semibold mb-1">{t('الهاتف (+249)', 'Phone (+249)')}</label>
-            <input dir="ltr" value={phone} onChange={(e) => setPhone(e.target.value)} className="w-full min-h-[44px] px-3 py-2 rounded-lg border border-stone-200 dark:border-zinc-700 bg-stone-50 dark:bg-zinc-900 font-mono-num text-base" />
-          </div>
-          <div>
-            <label className="block font-semibold mb-1">{t('البريد الإلكتروني', 'Email')}</label>
-            <input dir="ltr" type="email" value={email} onChange={(e) => setEmail(e.target.value)} className="w-full min-h-[44px] px-3 py-2 rounded-lg border border-stone-200 dark:border-zinc-700 bg-stone-50 dark:bg-zinc-900 text-base" />
-          </div>
-          <button type="submit" style={{ backgroundColor: appearance.primaryColor }} className="w-full min-h-[44px] py-2.5 rounded-lg text-white font-bold">
-            {t('حفظ التعديلات', 'Save Changes')}
-          </button>
-        </form>
-
-        <div className="lg:col-span-4 bg-white dark:bg-[#181B1E] border border-stone-200 dark:border-zinc-800 rounded-xl p-5 space-y-4 text-xs">
-          <h2 className="text-base font-bold">{t('العناوين المحفوظة', 'Saved Addresses')}</h2>
-          <div className="space-y-2">
-            {user.addresses.map((a) => {
-              const st = settings.deliveryFees.find((s) => s.id === a.stateId);
-              return (
-                <div key={a.id} className="p-3 rounded-lg bg-stone-50 dark:bg-zinc-900 border border-stone-200 dark:border-zinc-800 flex justify-between gap-2">
-                  <div className="space-y-0.5">
-                    <div className="font-bold flex items-center gap-1.5">
-                      <span>{a.recipientName || user.name} ({a.label})</span>
-                      {a.isDefault && (
-                        <span className="px-1.5 py-0.5 rounded bg-[#11223E] text-white text-[10px]">
-                          {t('افتراضي', 'Default')}
-                        </span>
-                      )}
-                    </div>
-                    <div className="font-mono-num text-[11px] text-stone-500" dir="ltr">{a.phone}</div>
-                    <div className="text-stone-500 dark:text-zinc-400">
-                      {locale === 'ar' ? st?.nameAr : st?.nameEn} — {a.city}, {a.area}
-                    </div>
-                    <div className="text-stone-500 dark:text-zinc-400">{a.details}</div>
-                    {!a.isDefault && (
-                      <button
-                        type="button"
-                        onClick={() => setDefaultAddress(a.id)}
-                        className="text-[11px] font-bold text-[#B38B2D] hover:underline pt-1"
-                      >
-                        {t('تعيين كافتراضي', 'Set Default')}
-                      </button>
-                    )}
-                  </div>
-                  <button type="button" onClick={() => deleteAddress(a.id)} className="text-stone-400 hover:text-rose-600 self-start">
-                    <Trash2 className="w-4 h-4" />
-                  </button>
-                </div>
-              );
-            })}
-          </div>
-
-          <form onSubmit={handleAddAddress} className="space-y-2 pt-3 border-t border-stone-100 dark:border-zinc-800">
-            <div className="grid grid-cols-2 gap-2">
-              <input required value={addrRecipient} onChange={(e) => setAddrRecipient(e.target.value)} placeholder={t('اسم المستلم', 'Recipient')} className="px-3 py-2 rounded-lg border border-stone-200 dark:border-zinc-700 bg-stone-50 dark:bg-zinc-900 text-base" />
-              <input required value={addrLabel} onChange={(e) => setAddrLabel(e.target.value)} placeholder={t('التسمية (المنزل)', 'Label')} className="px-3 py-2 rounded-lg border border-stone-200 dark:border-zinc-700 bg-stone-50 dark:bg-zinc-900 text-base" />
-            </div>
-            <input required dir="ltr" value={addrPhone} onChange={(e) => setAddrPhone(e.target.value)} placeholder="0912345678 / +249..." className="w-full px-3 py-2 rounded-lg border border-stone-200 dark:border-zinc-700 bg-stone-50 dark:bg-zinc-900 font-mono-num text-base" />
-            <select value={addrState} onChange={(e) => setAddrState(e.target.value)} className="w-full px-3 py-2 rounded-lg border border-stone-200 dark:border-zinc-700 bg-stone-50 dark:bg-zinc-900 text-base">
-              {settings.deliveryFees.map((s) => (
-                <option key={s.id} value={s.id}>
-                  {locale === 'ar' ? s.nameAr : s.nameEn} ({formatSdg(s.feeSdg)})
-                </option>
-              ))}
-            </select>
-            <div className="grid grid-cols-2 gap-2">
-              <input required value={addrCity} onChange={(e) => setAddrCity(e.target.value)} placeholder={t('المدينة', 'City')} className="px-3 py-2 rounded-lg border border-stone-200 dark:border-zinc-700 bg-stone-50 dark:bg-zinc-900 text-base" />
-              <input required value={addrArea} onChange={(e) => setAddrArea(e.target.value)} placeholder={t('الحي', 'Area')} className="px-3 py-2 rounded-lg border border-stone-200 dark:border-zinc-700 bg-stone-50 dark:bg-zinc-900 text-base" />
-            </div>
-            <input required value={addrDetails} onChange={(e) => setAddrDetails(e.target.value)} placeholder={t('الشارع وأقرب معلم', 'Details / Landmark')} className="w-full px-3 py-2 rounded-lg border border-stone-200 dark:border-zinc-700 bg-stone-50 dark:bg-zinc-900 text-base" />
-            <input dir="ltr" type="url" value={addrMapUrl} onChange={(e) => setAddrMapUrl(e.target.value)} placeholder={t('رابط الخريطة (اختياري)', 'Map URL (optional)')} className="w-full px-3 py-2 rounded-lg border border-stone-200 dark:border-zinc-700 bg-stone-50 dark:bg-zinc-900 text-base" />
-            <label className="flex items-center gap-2 cursor-pointer font-semibold">
-              <input type="checkbox" checked={addrDefault} onChange={(e) => setAddrDefault(e.target.checked)} className="accent-[#D9B24C]" />
-              <span>{t('اجعله العنوان الافتراضي', 'Set as default')}</span>
-            </label>
-            <button type="submit" className="w-full min-h-[44px] py-2 rounded-lg bg-stone-900 dark:bg-stone-100 text-white dark:text-stone-900 font-bold inline-flex items-center justify-center gap-1">
-              <Plus className="w-4 h-4" />
-              {t('إضافة عنوان', 'Add Address')}
-            </button>
-          </form>
-        </div>
-
-        <div className="lg:col-span-4 bg-white dark:bg-[#181B1E] border border-stone-200 dark:border-zinc-800 rounded-xl p-5 space-y-4 text-xs">
-          <h2 className="text-base font-bold">{t('وصفات النظر المحفوظة', 'Saved Prescriptions (Rx)')}</h2>
-          <div className="space-y-2">
-            {user.prescriptions.map((rx) => (
-              <div key={rx.id} className="p-3 rounded-lg bg-stone-50 dark:bg-zinc-900 border border-stone-200 dark:border-zinc-800 flex justify-between gap-2">
-                <div className="space-y-0.5">
-                  <div className="font-bold">{rx.label}</div>
-                  <div className="font-mono-num text-[11px] text-[#B38B2D]">
-                    OD: {rx.rightEye.sph} / {rx.rightEye.cyl} × {rx.rightEye.axis}°
-                  </div>
-                  <div className="font-mono-num text-[11px] text-[#B38B2D]">
-                    OS: {rx.leftEye.sph} / {rx.leftEye.cyl} × {rx.leftEye.axis}° · PD {rx.pd}
-                  </div>
-                </div>
-                <button type="button" onClick={() => deletePrescription(rx.id)} className="text-stone-400 hover:text-rose-600 self-start">
-                  <Trash2 className="w-4 h-4" />
-                </button>
-              </div>
-            ))}
-          </div>
-
           {isGuest ? (
-            <div className="p-3 rounded-lg bg-amber-50 dark:bg-amber-950/25 border border-amber-200 dark:border-amber-900/50 space-y-2">
-              <p className="font-bold">{t('سجّل دخولك لحفظ المقاس', 'Sign in to save prescription')}</p>
+            <div className="p-4 rounded-xl bg-amber-50 dark:bg-amber-950/25 border border-amber-200 dark:border-amber-900/50 space-y-3">
+              <p className="font-bold text-[#11223E] dark:text-amber-200">
+                {t('سجّل دخولك لاستخدام هذه الميزة', 'Sign in to use this feature')}
+              </p>
               <button
                 type="button"
                 onClick={() => openAuthModal('login', false)}
                 style={{ backgroundColor: appearance.primaryColor }}
-                className="min-h-[40px] px-3 rounded-lg text-white font-bold inline-flex items-center gap-1"
+                className="min-h-[44px] px-4 rounded-xl text-white font-bold inline-flex items-center gap-1.5"
               >
-                <LogIn className="w-3.5 h-3.5" />
+                <LogIn className="w-4 h-4" />
                 {t('تسجيل الدخول', 'Sign In')}
               </button>
             </div>
           ) : (
-            <form onSubmit={handleAddRx} className="space-y-2 pt-3 border-t border-stone-100 dark:border-zinc-800">
-              <input required value={rxLabel} onChange={(e) => setRxLabel(e.target.value)} placeholder={t('اسم الوصفة (مثلاً: كشف 2026)', 'Rx Label')} className="w-full px-3 py-2 rounded-lg border border-stone-200 dark:border-zinc-700 bg-stone-50 dark:bg-zinc-900 text-base" />
-              <div className="grid grid-cols-4 gap-1.5 items-center font-mono-num">
-                <span className="font-bold">OD</span>
-                <select value={odSph} onChange={(e) => setOdSph(e.target.value)} className="p-1.5 rounded border border-stone-200 dark:border-zinc-700 bg-stone-50 dark:bg-zinc-900 text-base">
-                  {SPH_OPTIONS.map((o) => <option key={o} value={o}>{o}</option>)}
-                </select>
-                <select value={odCyl} onChange={(e) => setOdCyl(e.target.value)} className="p-1.5 rounded border border-stone-200 dark:border-zinc-700 bg-stone-50 dark:bg-zinc-900 text-base">
-                  {CYL_OPTIONS.map((o) => <option key={o} value={o}>{o}</option>)}
-                </select>
-                <select disabled={!isNonZeroCyl(odCyl)} value={odAxis} onChange={(e) => setOdAxis(e.target.value)} className="p-1.5 rounded border border-stone-200 dark:border-zinc-700 bg-stone-50 dark:bg-zinc-900 text-base disabled:opacity-45">
-                  {AXIS_OPTIONS.map((o) => <option key={o} value={o}>{o}°</option>)}
-                </select>
+            <form onSubmit={handleSaveProfile} className="space-y-4">
+              <div>
+                <label className="block font-semibold mb-1">{t('الاسم', 'Name')}</label>
+                <input value={name} onChange={(e) => setName(e.target.value)} className="w-full min-h-[44px] px-3 py-2 rounded-lg border border-stone-200 dark:border-zinc-700 bg-stone-50 dark:bg-zinc-900 text-base" />
               </div>
-              <div className="grid grid-cols-4 gap-1.5 items-center font-mono-num">
-                <span className="font-bold">OS</span>
-                <select value={osSph} onChange={(e) => setOsSph(e.target.value)} className="p-1.5 rounded border border-stone-200 dark:border-zinc-700 bg-stone-50 dark:bg-zinc-900 text-base">
-                  {SPH_OPTIONS.map((o) => <option key={o} value={o}>{o}</option>)}
-                </select>
-                <select value={osCyl} onChange={(e) => setOsCyl(e.target.value)} className="p-1.5 rounded border border-stone-200 dark:border-zinc-700 bg-stone-50 dark:bg-zinc-900 text-base">
-                  {CYL_OPTIONS.map((o) => <option key={o} value={o}>{o}</option>)}
-                </select>
-                <select disabled={!isNonZeroCyl(osCyl)} value={osAxis} onChange={(e) => setOsAxis(e.target.value)} className="p-1.5 rounded border border-stone-200 dark:border-zinc-700 bg-stone-50 dark:bg-zinc-900 text-base disabled:opacity-45">
-                  {AXIS_OPTIONS.map((o) => <option key={o} value={o}>{o}°</option>)}
-                </select>
+              <div>
+                <label className="block font-semibold mb-1">{t('الهاتف (+249)', 'Phone (+249)')}</label>
+                <input dir="ltr" value={phone} onChange={(e) => setPhone(e.target.value)} className="w-full min-h-[44px] px-3 py-2 rounded-lg border border-stone-200 dark:border-zinc-700 bg-stone-50 dark:bg-zinc-900 font-mono-num text-base" />
               </div>
-              <div className="flex items-center gap-2">
-                <span className="font-bold">PD (mm)</span>
-                <select value={pd} onChange={(e) => setPd(e.target.value)} className="flex-1 p-1.5 rounded border border-stone-200 dark:border-zinc-700 bg-stone-50 dark:bg-zinc-900 font-mono-num text-base">
-                  {PD_SINGLE_OPTIONS.map((o) => <option key={o} value={o}>{o} mm</option>)}
-                </select>
+              <div>
+                <label className="block font-semibold mb-1">{t('البريد الإلكتروني', 'Email')}</label>
+                <input dir="ltr" type="email" value={email} onChange={(e) => setEmail(e.target.value)} className="w-full min-h-[44px] px-3 py-2 rounded-lg border border-stone-200 dark:border-zinc-700 bg-stone-50 dark:bg-zinc-900 text-base" />
               </div>
-              <button type="submit" className="w-full min-h-[44px] py-2 rounded-lg bg-stone-900 dark:bg-stone-100 text-white dark:text-stone-900 font-bold inline-flex items-center justify-center gap-1">
-                <Plus className="w-4 h-4" />
-                {t('حفظ وصفة جديدة', 'Save New Rx')}
+              <button type="submit" style={{ backgroundColor: appearance.primaryColor }} className="w-full min-h-[44px] py-2.5 rounded-lg text-white font-bold">
+                {t('حفظ التعديلات', 'Save Changes')}
               </button>
             </form>
+          )}
+        </div>
+
+        <div className="lg:col-span-4 bg-white dark:bg-[#181B1E] border border-stone-200 dark:border-zinc-800 rounded-xl p-5 space-y-4 text-xs">
+          <h2 className="text-base font-bold">{t('العناوين المحفوظة', 'Saved Addresses')}</h2>
+          {isGuest ? (
+            <div className="p-4 rounded-xl bg-amber-50 dark:bg-amber-950/25 border border-amber-200 dark:border-amber-900/50 space-y-3">
+              <p className="font-bold text-[#11223E] dark:text-amber-200">
+                {t('سجّل دخولك لاستخدام هذه الميزة', 'Sign in to use this feature')}
+              </p>
+              <button
+                type="button"
+                onClick={() => openAuthModal('login', false)}
+                style={{ backgroundColor: appearance.primaryColor }}
+                className="min-h-[44px] px-4 rounded-xl text-white font-bold inline-flex items-center gap-1.5"
+              >
+                <LogIn className="w-4 h-4" />
+                {t('تسجيل الدخول', 'Sign In')}
+              </button>
+            </div>
+          ) : (
+            <>
+              <div className="space-y-2">
+                {user.addresses.map((a) => {
+                  const st = settings.deliveryFees.find((s) => s.id === a.stateId);
+                  return (
+                    <div key={a.id} className="p-3 rounded-lg bg-stone-50 dark:bg-zinc-900 border border-stone-200 dark:border-zinc-800 flex justify-between gap-2">
+                      <div className="space-y-0.5">
+                        <div className="font-bold flex items-center gap-1.5">
+                          <span>{a.recipientName || user.name} ({a.label})</span>
+                          {a.isDefault && (
+                            <span className="px-1.5 py-0.5 rounded bg-[#11223E] text-white text-[10px]">
+                              {t('افتراضي', 'Default')}
+                            </span>
+                          )}
+                        </div>
+                        <div className="font-mono-num text-[11px] text-stone-500" dir="ltr">{a.phone}</div>
+                        <div className="text-stone-500 dark:text-zinc-400">
+                          {locale === 'ar' ? st?.nameAr : st?.nameEn} — {a.city}, {a.area}
+                        </div>
+                        <div className="text-stone-500 dark:text-zinc-400">{a.details}</div>
+                        {!a.isDefault && (
+                          <button
+                            type="button"
+                            onClick={() => setDefaultAddress(a.id)}
+                            className="min-h-[36px] text-[11px] font-bold text-[#B38B2D] hover:underline pt-1"
+                          >
+                            {t('تعيين كافتراضي', 'Set Default')}
+                          </button>
+                        )}
+                      </div>
+                      <button type="button" onClick={() => deleteAddress(a.id)} className="min-w-[44px] min-h-[44px] flex items-center justify-center text-stone-400 hover:text-rose-600 self-start">
+                        <Trash2 className="w-4 h-4" />
+                      </button>
+                    </div>
+                  );
+                })}
+              </div>
+
+              <form onSubmit={handleAddAddress} className="space-y-2 pt-3 border-t border-stone-100 dark:border-zinc-800">
+                <div className="grid grid-cols-2 gap-2">
+                  <input required value={addrRecipient} onChange={(e) => setAddrRecipient(e.target.value)} placeholder={t('اسم المستلم', 'Recipient')} className="min-h-[44px] px-3 py-2 rounded-lg border border-stone-200 dark:border-zinc-700 bg-stone-50 dark:bg-zinc-900 text-base" />
+                  <input required value={addrLabel} onChange={(e) => setAddrLabel(e.target.value)} placeholder={t('التسمية (المنزل)', 'Label')} className="min-h-[44px] px-3 py-2 rounded-lg border border-stone-200 dark:border-zinc-700 bg-stone-50 dark:bg-zinc-900 text-base" />
+                </div>
+                <input required dir="ltr" value={addrPhone} onChange={(e) => setAddrPhone(e.target.value)} placeholder="0912345678 / +249..." className="w-full min-h-[44px] px-3 py-2 rounded-lg border border-stone-200 dark:border-zinc-700 bg-stone-50 dark:bg-zinc-900 font-mono-num text-base" />
+                <select value={addrState} onChange={(e) => setAddrState(e.target.value)} className="w-full min-h-[44px] px-3 py-2 rounded-lg border border-stone-200 dark:border-zinc-700 bg-stone-50 dark:bg-zinc-900 text-base">
+                  {settings.deliveryFees.map((s) => (
+                    <option key={s.id} value={s.id}>
+                      {locale === 'ar' ? s.nameAr : s.nameEn} ({formatSdg(s.feeSdg)})
+                    </option>
+                  ))}
+                </select>
+                <div className="grid grid-cols-2 gap-2">
+                  <input required value={addrCity} onChange={(e) => setAddrCity(e.target.value)} placeholder={t('المدينة', 'City')} className="min-h-[44px] px-3 py-2 rounded-lg border border-stone-200 dark:border-zinc-700 bg-stone-50 dark:bg-zinc-900 text-base" />
+                  <input required value={addrArea} onChange={(e) => setAddrArea(e.target.value)} placeholder={t('الحي', 'Area')} className="min-h-[44px] px-3 py-2 rounded-lg border border-stone-200 dark:border-zinc-700 bg-stone-50 dark:bg-zinc-900 text-base" />
+                </div>
+                <input required value={addrDetails} onChange={(e) => setAddrDetails(e.target.value)} placeholder={t('الشارع وأقرب معلم', 'Details / Landmark')} className="w-full min-h-[44px] px-3 py-2 rounded-lg border border-stone-200 dark:border-zinc-700 bg-stone-50 dark:bg-zinc-900 text-base" />
+                <input dir="ltr" type="url" value={addrMapUrl} onChange={(e) => setAddrMapUrl(e.target.value)} placeholder={t('رابط الخريطة (اختياري)', 'Map URL (optional)')} className="w-full min-h-[44px] px-3 py-2 rounded-lg border border-stone-200 dark:border-zinc-700 bg-stone-50 dark:bg-zinc-900 text-base" />
+                <label className="min-h-[44px] flex items-center gap-2 cursor-pointer font-semibold">
+                  <input type="checkbox" checked={addrDefault} onChange={(e) => setAddrDefault(e.target.checked)} className="w-4 h-4 accent-[#D9B24C]" />
+                  <span>{t('اجعله العنوان الافتراضي', 'Set as default')}</span>
+                </label>
+                <button type="submit" className="w-full min-h-[44px] py-2 rounded-lg bg-stone-900 dark:bg-stone-100 text-white dark:text-stone-900 font-bold inline-flex items-center justify-center gap-1">
+                  <Plus className="w-4 h-4" />
+                  {t('إضافة عنوان', 'Add Address')}
+                </button>
+              </form>
+            </>
+          )}
+        </div>
+
+        <div className="lg:col-span-4 bg-white dark:bg-[#181B1E] border border-stone-200 dark:border-zinc-800 rounded-xl p-5 space-y-4 text-xs">
+          <h2 className="text-base font-bold">{t('وصفات النظر المحفوظة', 'Saved Prescriptions (Rx)')}</h2>
+          {isGuest ? (
+            <div className="p-4 rounded-xl bg-amber-50 dark:bg-amber-950/25 border border-amber-200 dark:border-amber-900/50 space-y-3">
+              <p className="font-bold text-[#11223E] dark:text-amber-200">
+                {t('سجّل دخولك لاستخدام هذه الميزة', 'Sign in to use this feature')}
+              </p>
+              <button
+                type="button"
+                onClick={() => openAuthModal('login', false)}
+                style={{ backgroundColor: appearance.primaryColor }}
+                className="min-h-[44px] px-4 rounded-xl text-white font-bold inline-flex items-center gap-1.5"
+              >
+                <LogIn className="w-4 h-4" />
+                {t('تسجيل الدخول', 'Sign In')}
+              </button>
+            </div>
+          ) : (
+            <>
+              <div className="space-y-2">
+                {user.prescriptions.map((rx) => (
+                  <div key={rx.id} className="p-3 rounded-lg bg-stone-50 dark:bg-zinc-900 border border-stone-200 dark:border-zinc-800 flex justify-between gap-2">
+                    <div className="space-y-0.5">
+                      <div className="font-bold">{rx.label}</div>
+                      <div className="font-mono-num text-[11px] text-[#B38B2D]">
+                        OD: {rx.rightEye.sph} / {rx.rightEye.cyl} × {rx.rightEye.axis}°
+                      </div>
+                      <div className="font-mono-num text-[11px] text-[#B38B2D]">
+                        OS: {rx.leftEye.sph} / {rx.leftEye.cyl} × {rx.leftEye.axis}° · PD {rx.pd}
+                      </div>
+                    </div>
+                    <button type="button" onClick={() => deletePrescription(rx.id)} className="min-w-[44px] min-h-[44px] flex items-center justify-center text-stone-400 hover:text-rose-600 self-start">
+                      <Trash2 className="w-4 h-4" />
+                    </button>
+                  </div>
+                ))}
+              </div>
+
+              <form onSubmit={handleAddRx} className="space-y-2 pt-3 border-t border-stone-100 dark:border-zinc-800">
+                <input required value={rxLabel} onChange={(e) => setRxLabel(e.target.value)} placeholder={t('اسم الوصفة (مثلاً: كشف 2026)', 'Rx Label')} className="w-full min-h-[44px] px-3 py-2 rounded-lg border border-stone-200 dark:border-zinc-700 bg-stone-50 dark:bg-zinc-900 text-base" />
+                <div className="grid grid-cols-4 gap-1.5 items-center font-mono-num">
+                  <span className="font-bold">OD</span>
+                  <select value={odSph} onChange={(e) => setOdSph(e.target.value)} className="min-h-[44px] p-1.5 rounded border border-stone-200 dark:border-zinc-700 bg-stone-50 dark:bg-zinc-900 text-base">
+                    {SPH_OPTIONS.map((o) => <option key={o} value={o}>{o}</option>)}
+                  </select>
+                  <select value={odCyl} onChange={(e) => setOdCyl(e.target.value)} className="min-h-[44px] p-1.5 rounded border border-stone-200 dark:border-zinc-700 bg-stone-50 dark:bg-zinc-900 text-base">
+                    {CYL_OPTIONS.map((o) => <option key={o} value={o}>{o}</option>)}
+                  </select>
+                  <select disabled={!isNonZeroCyl(odCyl)} value={odAxis} onChange={(e) => setOdAxis(e.target.value)} className="min-h-[44px] p-1.5 rounded border border-stone-200 dark:border-zinc-700 bg-stone-50 dark:bg-zinc-900 text-base disabled:opacity-45">
+                    {AXIS_OPTIONS.map((o) => <option key={o} value={o}>{o}°</option>)}
+                  </select>
+                </div>
+                <div className="grid grid-cols-4 gap-1.5 items-center font-mono-num">
+                  <span className="font-bold">OS</span>
+                  <select value={osSph} onChange={(e) => setOsSph(e.target.value)} className="min-h-[44px] p-1.5 rounded border border-stone-200 dark:border-zinc-700 bg-stone-50 dark:bg-zinc-900 text-base">
+                    {SPH_OPTIONS.map((o) => <option key={o} value={o}>{o}</option>)}
+                  </select>
+                  <select value={osCyl} onChange={(e) => setOsCyl(e.target.value)} className="min-h-[44px] p-1.5 rounded border border-stone-200 dark:border-zinc-700 bg-stone-50 dark:bg-zinc-900 text-base">
+                    {CYL_OPTIONS.map((o) => <option key={o} value={o}>{o}</option>)}
+                  </select>
+                  <select disabled={!isNonZeroCyl(osCyl)} value={osAxis} onChange={(e) => setOsAxis(e.target.value)} className="min-h-[44px] p-1.5 rounded border border-stone-200 dark:border-zinc-700 bg-stone-50 dark:bg-zinc-900 text-base disabled:opacity-45">
+                    {AXIS_OPTIONS.map((o) => <option key={o} value={o}>{o}°</option>)}
+                  </select>
+                </div>
+                <div className="flex items-center gap-2">
+                  <span className="font-bold">PD (mm)</span>
+                  <select value={pd} onChange={(e) => setPd(e.target.value)} className="flex-1 min-h-[44px] p-1.5 rounded border border-stone-200 dark:border-zinc-700 bg-stone-50 dark:bg-zinc-900 font-mono-num text-base">
+                    {PD_SINGLE_OPTIONS.map((o) => <option key={o} value={o}>{o} mm</option>)}
+                  </select>
+                </div>
+                <button type="submit" className="w-full min-h-[44px] py-2 rounded-lg bg-stone-900 dark:bg-stone-100 text-white dark:text-stone-900 font-bold inline-flex items-center justify-center gap-1">
+                  <Plus className="w-4 h-4" />
+                  {t('حفظ وصفة جديدة', 'Save New Rx')}
+                </button>
+              </form>
+            </>
           )}
         </div>
       </div>

@@ -19,6 +19,7 @@ import { Brand, Category, CategoryId, Product, ProductVariant } from '../../type
 import { formatSdg } from '../../utils/format';
 import { IMG_FRAME } from '../../data/seedData';
 import { ResilientImage } from '../ResilientImage';
+import { useAdminSecurity } from './AdminGuard';
 
 async function compressImageFile(file: File): Promise<string> {
   return new Promise((resolve) => {
@@ -66,6 +67,7 @@ export const AdminProductsModule: React.FC = () => {
     bulkUpdateProducts,
     showToast,
   } = useStore();
+  const { requireSensitiveReauth } = useAdminSecurity();
 
   const [search, setSearch] = useState('');
   const [catFilter, setCatFilter] = useState('all');
@@ -361,7 +363,20 @@ export const AdminProductsModule: React.FC = () => {
                 {t('نقل', 'Move')}
               </button>
             </div>
-            <button type="button" onClick={() => { bulkUpdateProducts(selectedIds, { type: 'delete' }); setSelectedIds([]); }} className="px-2.5 py-1 rounded bg-rose-600 font-bold">
+            <button
+              type="button"
+              onClick={() => {
+                const idsSnapshot = [...selectedIds];
+                requireSensitiveReauth(
+                  t('تأكيد أرشفة المنتجات المحددة', 'Confirm Bulk Product Archive'),
+                  () => {
+                    bulkUpdateProducts(idsSnapshot, { type: 'delete' });
+                    setSelectedIds([]);
+                  }
+                );
+              }}
+              className="px-2.5 py-1 rounded bg-rose-600 font-bold"
+            >
               {t('أرشفة المحدد', 'Delete')}
             </button>
             <button type="button" onClick={() => setSelectedIds([])} className="px-2 py-1 text-slate-300">
@@ -720,8 +735,12 @@ export const AdminProductsModule: React.FC = () => {
                 <button
                   type="button"
                   onClick={() => {
-                    deleteProduct(confirmDelete.id, false);
+                    const targetId = confirmDelete.id;
                     setConfirmDelete(null);
+                    requireSensitiveReauth(
+                      t('تأكيد أرشفة المنتج', 'Confirm Product Archive'),
+                      () => deleteProduct(targetId, false)
+                    );
                   }}
                   className="px-3 py-1.5 rounded-lg bg-amber-600 text-white font-bold"
                 >
@@ -731,8 +750,12 @@ export const AdminProductsModule: React.FC = () => {
               <button
                 type="button"
                 onClick={() => {
-                  deleteProduct(confirmDelete.id, true);
+                  const targetId = confirmDelete.id;
                   setConfirmDelete(null);
+                  requireSensitiveReauth(
+                    t('تأكيد الحذف النهائي للمنتج', 'Confirm Permanent Product Deletion'),
+                    () => deleteProduct(targetId, true)
+                  );
                 }}
                 className="px-3 py-1.5 rounded-lg bg-rose-600 text-white font-bold"
               >

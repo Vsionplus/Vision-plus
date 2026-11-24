@@ -1,5 +1,5 @@
 import React from 'react';
-import { RotateCcw, XCircle, Package } from 'lucide-react';
+import { RotateCcw, XCircle, Package, Lock, LogIn } from 'lucide-react';
 import { useStore } from '../store/StoreContext';
 import { OrderStatus } from '../types';
 import { formatSdg, formatShortDate, getOrderStatusLabel } from '../utils/format';
@@ -19,6 +19,8 @@ export const OrdersView: React.FC = () => {
   const {
     locale,
     t,
+    isGuest,
+    openAuthModal,
     orders,
     settings,
     lensOptions,
@@ -28,6 +30,38 @@ export const OrdersView: React.FC = () => {
     cancelOrder,
     openCatalog,
   } = useStore();
+
+  if (isGuest) {
+    return (
+      <div className="max-w-xl mx-auto px-4 py-16">
+        <div className="bg-white dark:bg-[#131C2E] border border-slate-200 dark:border-slate-800 rounded-2xl p-6 sm:p-8 text-center space-y-4 shadow-xs">
+          <div
+            style={{ backgroundColor: `${appearance.secondaryColor}26`, color: appearance.primaryColor }}
+            className="w-14 h-14 rounded-2xl mx-auto flex items-center justify-center dark:text-[#E2BD5B]"
+          >
+            <Lock className="w-7 h-7" />
+          </div>
+          <div className="space-y-1.5">
+            <h1 className="text-lg sm:text-xl font-extrabold text-[#11223E] dark:text-white">
+              {t('سجل الطلبات وتتبع الشحن', 'Orders & Order History')}
+            </h1>
+            <p className="text-sm font-bold text-slate-600 dark:text-slate-300">
+              {t('سجّل دخولك لاستخدام هذه الميزة', 'Sign in to use this feature')}
+            </p>
+          </div>
+          <button
+            type="button"
+            onClick={() => openAuthModal('login', false)}
+            style={{ backgroundColor: appearance.primaryColor }}
+            className="min-h-[44px] px-6 py-2.5 rounded-xl text-white text-sm font-extrabold inline-flex items-center justify-center gap-2 hover:opacity-95 transition-opacity"
+          >
+            <LogIn className="w-4 h-4" />
+            <span>{t('تسجيل الدخول', 'Sign In')}</span>
+          </button>
+        </div>
+      </div>
+    );
+  }
 
   if (orders.length === 0) {
     return (
@@ -40,7 +74,7 @@ export const OrdersView: React.FC = () => {
           type="button"
           onClick={() => openCatalog('all', '')}
           style={{ backgroundColor: appearance.primaryColor }}
-          className="px-5 py-2.5 rounded-xl text-white text-sm font-bold"
+          className="min-h-[44px] px-5 py-2.5 rounded-xl text-white text-sm font-bold"
         >
           {locale === 'ar' ? appTexts.btnStartShoppingAr : appTexts.btnStartShoppingEn}
         </button>

@@ -560,6 +560,7 @@ export interface AppUser {
   role: UserRole;
   permissions?: StaffPermission[];
   isBlocked?: boolean;
+  blocked?: boolean;
   isAnonymous?: boolean;
   emailVerified?: boolean;
   createdAt?: string;

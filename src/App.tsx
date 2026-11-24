@@ -13,9 +13,18 @@ import { CartCheckoutView } from './components/CartCheckoutView';
 import { OrdersView } from './components/OrdersView';
 import { ConsultView } from './components/ConsultView';
 import { ContactAboutView, ProfileView } from './components/ProfileContactView';
-import { AdminDashboardView } from './components/AdminDashboardView';
 import { AuthScreen } from './components/AuthScreen';
 import { VerifyEmailScreen } from './components/VerifyEmailScreen';
+
+const LazyAdminLoginView = React.lazy(() =>
+  import('./components/admin/AdminLoginView').then((m) => ({ default: m.AdminLoginView }))
+);
+const LazyAdminGuard = React.lazy(() =>
+  import('./components/admin/AdminGuard').then((m) => ({ default: m.AdminGuard }))
+);
+const LazyAdminDashboardView = React.lazy(() =>
+  import('./components/AdminDashboardView').then((m) => ({ default: m.AdminDashboardView }))
+);
 
 interface ErrorBoundaryState {
   hasError: boolean;
@@ -59,6 +68,16 @@ class AppErrorBoundary extends React.Component<{ children: React.ReactNode }, Er
   }
 }
 
+const AdminRouteFallback: React.FC = () => (
+  <div
+    dir="rtl"
+    className="min-h-[100dvh] flex flex-col items-center justify-center gap-3 bg-[#F8F9FA] dark:bg-[#0D131F] text-[#11223E] dark:text-slate-100 p-6"
+  >
+    <div className="w-10 h-10 rounded-full border-4 border-slate-200 dark:border-slate-700 border-t-[#D9B24C] animate-spin" />
+    <p className="text-sm font-bold">جارٍ التحميل...</p>
+  </div>
+);
+
 const AppRouter: React.FC = () => {
   const {
     authReady,
@@ -67,7 +86,7 @@ const AppRouter: React.FC = () => {
     authModal,
     closeAuthModal,
     activeTab,
-    user,
+    adminRoute,
     appearance,
     t,
   } = useStore();
@@ -86,6 +105,24 @@ const AppRouter: React.FC = () => {
           <p className="text-sm font-bold">{t('جارٍ التحميل...', 'Loading Vision Plus...')}</p>
         </div>
       </div>
+    );
+  }
+
+  if (adminRoute === 'admin_login') {
+    return (
+      <React.Suspense fallback={<AdminRouteFallback />}>
+        <LazyAdminLoginView />
+      </React.Suspense>
+    );
+  }
+
+  if (adminRoute === 'admin_panel') {
+    return (
+      <React.Suspense fallback={<AdminRouteFallback />}>
+        <LazyAdminGuard>
+          <LazyAdminDashboardView />
+        </LazyAdminGuard>
+      </React.Suspense>
     );
   }
 
@@ -108,8 +145,7 @@ const AppRouter: React.FC = () => {
         {activeTab === 'consult' && <ConsultView />}
         {activeTab === 'profile' && <ProfileView />}
         {activeTab === 'contact' && <ContactAboutView />}
-        {activeTab === 'admin' &&
-          (user.role === 'admin' || user.role === 'staff' ? <AdminDashboardView /> : <HomeView />)}
+        {activeTab === 'admin' && <HomeView />}
         <ProductDetailModal />
       </NavigationShell>
 

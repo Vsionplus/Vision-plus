@@ -1,57 +1,114 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import {
+  ArrowLeft,
+  ArrowRight,
+  Camera,
   Check,
   CheckCircle2,
-  Edit3,
+  ChevronDown,
+  ChevronUp,
+  Copy,
   Eye,
+  Globe,
   Heart,
+  HelpCircle,
+  ImagePlus,
+  Loader2,
+  LogIn,
+  MessageCircle,
   Share2,
   ShoppingBag,
   Sparkles,
   Star,
   Trash2,
-  X,
+  Truck,
   ZoomIn,
   ZoomOut,
 } from 'lucide-react';
-import { useStore } from '../store/StoreContext';
+import { hasLegacyBrandString, useStore } from '../store/StoreContext';
 import { formatSdg, formatShortDate } from '../utils/format';
 import {
+  ContactLensEyePrescription,
   ExtraLensOptionId,
+  EyePrescription,
   MirrorColorId,
   PrescriptionData,
   VisionType,
 } from '../types';
 import {
+  ADD_OPTIONS,
+  AXIS_OPTIONS,
+  BC_OPTIONS,
+  CYL_OPTIONS,
+  DIA_OPTIONS,
   EXTRA_OPTION_IDS,
+  FITTING_HEIGHT_OPTIONS,
   MIRROR_COLOR_OPTIONS,
+  PD_DUAL_OPTIONS,
+  PD_SINGLE_OPTIONS,
+  SPH_OPTIONS,
   VISION_TYPE_IDS,
   calculateLensPricingBreakdown,
+  compressPrescriptionImage,
   getExtraOptionLabel,
   getMirrorColorLabel,
   getVisionTypeLabel,
   hasCustomLensOrRx,
   isContactLensProduct,
+  isNonZeroCyl,
   isPrescriptionEligibleProduct,
-  resolveExtraOptions,
-  resolveVisionType,
+  validateContactEye,
+  validateEyeglassesEye,
 } from '../utils/prescription';
+import { auth, deletePrescriptionImage, uploadPrescriptionImage } from '../lib/firebase';
 import { ResilientImage } from './ResilientImage';
-import { PrescriptionSheet } from './PrescriptionSheet';
+
+const DEFAULT_EYE: EyePrescription = { sph: '0.00', cyl: '0.00', axis: '0', add: '' };
+const DEFAULT_CL_EYE: ContactLensEyePrescription = {
+  sph: '-1.00',
+  cyl: '0.00',
+  axis: '0',
+  bc: '8.6',
+  dia: '14.2',
+  boxes: 1,
+};
+
+const MATERIAL_LABELS: Record<string, { ar: string; en: string }> = {
+  acetate: { ar: 'أسيتات فاخر', en: 'Premium Acetate' },
+  titanium: { ar: 'تيتانيوم خفيف', en: 'Lightweight Titanium' },
+  metal: { ar: 'معدن متين', en: 'Durable Metal' },
+  tr90: { ar: 'TR90 مرن', en: 'Flexible TR90' },
+  hydrogel: { ar: 'سيليكون هيدروجيل', en: 'Silicone Hydrogel' },
+  sterile_solution: { ar: 'محلول معقم', en: 'Sterile Solution' },
+  leather: { ar: 'جلد طبيعي', en: 'Genuine Leather' },
+};
+
+const SHAPE_LABELS: Record<string, { ar: string; en: string }> = {
+  round: { ar: 'إطار دائري', en: 'Round Frame' },
+  square: { ar: 'إطار مربع', en: 'Square Frame' },
+  aviator: { ar: 'أفياتور', en: 'Aviator' },
+  cat_eye: { ar: 'عين القطة', en: 'Cat Eye' },
+  rectangle: { ar: 'إطار مستطيل', en: 'Rectangle Frame' },
+};
 
 export const ProductDetailModal: React.FC = () => {
   const {
     locale,
+    setLocale,
     t,
     selectedProductId,
     openProduct,
+    setActiveTab,
     products,
     brands,
     categories,
     lensOptions,
+    settings,
     appTexts,
     appearance,
     user,
+    isGuest,
+    openAuthModal,
     toggleFavorite,
     addReview,
     addToCart,
@@ -68,10 +125,34 @@ export const ProductDetailModal: React.FC = () => {
   const [variantId, setVariantId] = useState<string>('');
   const [qty, setQty] = useState(1);
 
-  const [draftPrescription, setDraftPrescription] = useState<PrescriptionData | undefined>(
-    undefined
-  );
-  const [rxSheetOpen, setRxSheetOpen] = useState(false);
+  // Inline Lens & Prescription State ("أدخل مقاسك" card)
+  const [rxCardOpen, setRxCardOpen] = useState(true);
+  const [visionType, setVisionType] = useState<VisionType>('none');
+  const [extraOptions, setExtraOptions] = useState<ExtraLensOptionId[]>([]);
+  const [mirrorColor, setMirrorColor] = useState<MirrorColorId>('silver');
+
+  const [dontKnowRx, setDontKnowRx] = useState(false);
+  const [manualTouched, setManualTouched] = useState(false);
+
+  const [rightEye, setRightEye] = useState<EyePrescription>(DEFAULT_EYE);
+  const [leftEye, setLeftEye] = useState<EyePrescription>(DEFAULT_EYE);
+  const [pdMode, setPdMode] = useState<'single' | 'dual'>('single');
+  const [pd, setPd] = useState('63');
+  const [pdRight, setPdRight] = useState('31.5');
+  const [pdLeft, setPdLeft] = useState('31.5');
+  const [fittingHeight, setFittingHeight] = useState('18');
+
+  const [clRight, setClRight] = useState<ContactLensEyePrescription>(DEFAULT_CL_EYE);
+  const [clLeft, setClLeft] = useState<ContactLensEyePrescription>(DEFAULT_CL_EYE);
+
+  const [imageUrl, setImageUrl] = useState('');
+  const [storagePath, setStoragePath] = useState('');
+  const [uploading, setUploading] = useState(false);
+  const [uploadProgress, setUploadProgress] = useState(0);
+  const [uploadError, setUploadError] = useState<string | null>(null);
+  const [showHowToRead, setShowHowToRead] = useState(false);
+  const [notes, setNotes] = useState('');
+  const [rxValidationError, setRxValidationError] = useState<string | null>(null);
 
   const [reviewRating, setReviewRating] = useState(5);
   const [reviewComment, setReviewComment] = useState('');
@@ -81,9 +162,48 @@ export const ProductDetailModal: React.FC = () => {
     setZoomed(false);
     setVariantId('');
     setQty(1);
-    setDraftPrescription(undefined);
-    setRxSheetOpen(false);
-  }, [selectedProductId]);
+    setRxCardOpen(true);
+    setVisionType('none');
+    setExtraOptions([]);
+    setMirrorColor('silver');
+    setDontKnowRx(false);
+    setManualTouched(false);
+    setRightEye({ ...DEFAULT_EYE });
+    setLeftEye({ ...DEFAULT_EYE });
+    setPdMode('single');
+    setPd('63');
+    setPdRight('31.5');
+    setPdLeft('31.5');
+    setFittingHeight('18');
+    setClRight(
+      product?.contactLensSpecs
+        ? {
+            ...DEFAULT_CL_EYE,
+            sph: product.contactLensSpecs.sphOptions[0] || '-1.00',
+            bc: product.contactLensSpecs.baseCurve || '8.6',
+            dia: product.contactLensSpecs.diameter || '14.2',
+          }
+        : DEFAULT_CL_EYE
+    );
+    setClLeft(
+      product?.contactLensSpecs
+        ? {
+            ...DEFAULT_CL_EYE,
+            sph: product.contactLensSpecs.sphOptions[0] || '-1.00',
+            bc: product.contactLensSpecs.baseCurve || '8.6',
+            dia: product.contactLensSpecs.diameter || '14.2',
+          }
+        : DEFAULT_CL_EYE
+    );
+    setImageUrl('');
+    setStoragePath('');
+    setUploading(false);
+    setUploadProgress(0);
+    setUploadError(null);
+    setShowHowToRead(false);
+    setNotes('');
+    setRxValidationError(null);
+  }, [selectedProductId, product?.contactLensSpecs]);
 
   const visibleVisionTypes = useMemo(
     () =>
@@ -106,6 +226,25 @@ export const ProductDetailModal: React.FC = () => {
     [lensOptions]
   );
 
+  const deliveryFeeSummary = useMemo(() => {
+    const fees = settings.deliveryFees.map((f) => f.feeSdg).filter((n) => Number.isFinite(n));
+    if (fees.length === 0) {
+      return t('يُحسب التوصيل عند إتمام الطلب', 'Delivery calculated at checkout');
+    }
+    const minFee = Math.min(...fees);
+    const maxFee = Math.max(...fees);
+    if (minFee === maxFee) {
+      return t(
+        `رسوم التوصيل الثابتة: ${formatSdg(minFee)} لجميع المدن`,
+        `Flat delivery fee: ${formatSdg(minFee)} for all cities`
+      );
+    }
+    return t(
+      `التوصيل لجميع الولايات يبدأ من ${formatSdg(minFee)}`,
+      `Nationwide delivery starting from ${formatSdg(minFee)}`
+    );
+  }, [settings.deliveryFees, t]);
+
   if (!product) return null;
 
   const isRxEligible = isPrescriptionEligibleProduct(product, categories);
@@ -118,81 +257,340 @@ export const ProductDetailModal: React.FC = () => {
   const category = categories.find((c) => c.id === product.categoryId);
   const title = locale === 'ar' ? product.titleAr : product.titleEn;
 
-  const activeVisionType = isContact ? 'none' : resolveVisionType(draftPrescription);
-  const activeExtraOptions = isContact ? [] : resolveExtraOptions(draftPrescription);
-  const activeMirrorColor: MirrorColorId = draftPrescription?.mirrorColor || 'silver';
+  const isProgressive = !isContact && visionType === 'progressive';
+  const isBifocal = !isContact && visionType === 'bifocal';
+  const showAddRequired = isBifocal || isProgressive;
+  const effectivePdMode = isProgressive ? 'dual' : pdMode;
 
   const pricing = isContact
     ? calculateLensPricingBreakdown('none', [], lensOptions)
-    : calculateLensPricingBreakdown(activeVisionType, activeExtraOptions, lensOptions);
+    : calculateLensPricingBreakdown(visionType, extraOptions, lensOptions);
 
   const lensExtraSdg = isContact ? 0 : pricing.totalExtraSdg;
   const unitFinalSdg = product.priceSdg + lensExtraSdg;
   const isUnavailable = Boolean(product.isOutOfStock) || product.stock <= 0;
 
-  const syncInlineLensSelection = (
-    nextVision: VisionType,
-    nextExtras: ExtraLensOptionId[],
-    nextMirror: MirrorColorId
-  ) => {
-    const nextPricing = calculateLensPricingBreakdown(nextVision, nextExtras, lensOptions);
-    const hasEnteredRx = Boolean(
-      draftPrescription &&
-        (draftPrescription.type === 'manual' ||
-          draftPrescription.type === 'image' ||
-          draftPrescription.type === 'later' ||
-          draftPrescription.notes)
-    );
-
-    if (
-      nextPricing.visionType === 'none' &&
-      nextPricing.extraOptions.length === 0 &&
-      !hasEnteredRx
-    ) {
-      setDraftPrescription(undefined);
-      return;
-    }
-
-    const base: PrescriptionData = draftPrescription
-      ? { ...draftPrescription }
-      : {
-          type: 'none',
-          mode: 'none',
-          lensOption: 'none',
-          lensExtraPriceSdg: 0,
-        };
-
-    setDraftPrescription({
-      ...base,
-      visionType: nextPricing.visionType,
-      visionTypePriceSdg: nextPricing.visionTypePriceSdg,
-      extraOptions:
-        nextPricing.extraOptions.length > 0 ? nextPricing.extraOptions : undefined,
-      extraOptionsPricesSdg:
-        nextPricing.extraOptions.length > 0 ? nextPricing.extraOptionsPricesSdg : undefined,
-      mirrorColor: nextPricing.extraOptions.includes('mirror') ? nextMirror : undefined,
-      lensOption:
-        nextPricing.visionType !== 'none'
-          ? nextPricing.visionType
-          : nextPricing.extraOptions[0] || 'none',
-      lensExtraPriceSdg: nextPricing.totalExtraSdg,
-    });
-  };
-
-  const handleToggleExtra = (id: ExtraLensOptionId) => {
-    const nextExtras = activeExtraOptions.includes(id)
-      ? activeExtraOptions.filter((x) => x !== id)
-      : [...activeExtraOptions, id];
-    syncInlineLensSelection(activeVisionType, nextExtras, activeMirrorColor);
-  };
+  const rawWordmark = (appearance.wordmarkText || '').trim();
+  const displayWordmark =
+    !rawWordmark || hasLegacyBrandString(rawWordmark) ? 'Vision Plus' : rawWordmark;
 
   const displayedMainImage =
     activeVariant?.imageUrl && imgIdx === 0
       ? activeVariant.imageUrl
       : product.images[imgIdx] || product.images[0];
 
+  const handleSelectVisionType = (nextVt: VisionType) => {
+    setVisionType(nextVt);
+    setRxValidationError(null);
+    if (nextVt === 'progressive') {
+      setPdMode('dual');
+      setRightEye((prev) => ({ ...prev, add: prev.add || '+1.50' }));
+      setLeftEye((prev) => ({ ...prev, add: prev.add || '+1.50' }));
+      if (!fittingHeight) setFittingHeight('18');
+    } else if (nextVt === 'bifocal') {
+      setRightEye((prev) => ({ ...prev, add: prev.add || '+1.50' }));
+      setLeftEye((prev) => ({ ...prev, add: prev.add || '+1.50' }));
+    }
+  };
+
+  const handleToggleExtra = (id: ExtraLensOptionId) => {
+    setExtraOptions((prev) =>
+      prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]
+    );
+  };
+
+  const handleCopyRightToLeft = () => {
+    if (isContact) {
+      setClLeft({ ...clRight });
+    } else {
+      setLeftEye({ ...rightEye });
+    }
+    setManualTouched(true);
+    showToast(t('تم نسخ مقاس العين اليمنى إلى اليسرى', 'Right eye copied to left eye'));
+  };
+
+  const handleApplySavedRx = (id: string) => {
+    const found = user.prescriptions.find((r) => r.id === id);
+    if (!found) return;
+    setDontKnowRx(false);
+    setManualTouched(true);
+    setRxValidationError(null);
+    if (found.kind === 'contact_lenses' && found.contactRight && found.contactLeft && isContact) {
+      setClRight(found.contactRight);
+      setClLeft(found.contactLeft);
+    } else {
+      setRightEye({
+        sph: found.rightEye?.sph || '0.00',
+        cyl: found.rightEye?.cyl || '0.00',
+        axis: found.rightEye?.axis || '0',
+        add: found.rightEye?.add || '',
+      });
+      setLeftEye({
+        sph: found.leftEye?.sph || '0.00',
+        cyl: found.leftEye?.cyl || '0.00',
+        axis: found.leftEye?.axis || '0',
+        add: found.leftEye?.add || '',
+      });
+      setPdMode(isProgressive ? 'dual' : found.pdMode || 'single');
+      setPd(found.pd || '63');
+      setPdRight(found.pdRight || '31.5');
+      setPdLeft(found.pdLeft || '31.5');
+    }
+    if (found.notes) setNotes(found.notes);
+    showToast(t('تم تعبئة المقاس المحفوظ بنجاح', 'Saved prescription loaded'));
+  };
+
+  const handleImagePick = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    e.target.value = '';
+    if (!file) return;
+    if (!file.type.startsWith('image/')) {
+      setUploadError(t('يرجى اختيار ملف صورة فقط (JPG أو PNG)', 'Please select an image file only'));
+      return;
+    }
+
+    const fbUid = auth.currentUser?.uid || user.uid;
+    if (!fbUid || fbUid === 'guest_pending') {
+      setUploadError(
+        t('يرجى الانتظار لحظة أو تسجيل الدخول لرفع الصورة', 'Please sign in first to upload image')
+      );
+      return;
+    }
+
+    setUploadError(null);
+    setUploading(true);
+    setUploadProgress(5);
+    try {
+      const compressedBlob = await compressPrescriptionImage(file, 1200);
+      if (compressedBlob.size > 5 * 1024 * 1024) {
+        setUploadError(t('حجم الصورة يتجاوز الحد الأقصى 5 ميجابايت', 'Image exceeds 5MB limit'));
+        setUploading(false);
+        return;
+      }
+      if (storagePath) {
+        await deletePrescriptionImage(storagePath);
+      }
+      const uploaded = await uploadPrescriptionImage(fbUid, compressedBlob, file.name, (pct) =>
+        setUploadProgress(pct)
+      );
+      setImageUrl(uploaded.url);
+      setStoragePath(uploaded.path);
+      setDontKnowRx(false);
+      showToast(t('تم رفع صورة الروشتة بنجاح', 'Prescription image uploaded'));
+    } catch {
+      setUploadError(
+        t(
+          'تعذر رفع الصورة إلى الخادم. تأكد من الاتصال بالإنترنت وحاول مرة أخرى.',
+          'Failed to upload image to Firebase Storage. Please check your connection and try again.'
+        )
+      );
+    } finally {
+      setUploading(false);
+    }
+  };
+
+  const handleDeleteUploadedImage = async () => {
+    if (storagePath) {
+      await deletePrescriptionImage(storagePath);
+    }
+    setImageUrl('');
+    setStoragePath('');
+    setUploadProgress(0);
+  };
+
+  const resetAllRx = () => {
+    setVisionType('none');
+    setExtraOptions([]);
+    setMirrorColor('silver');
+    setDontKnowRx(false);
+    setManualTouched(false);
+    setRightEye({ ...DEFAULT_EYE });
+    setLeftEye({ ...DEFAULT_EYE });
+    setPdMode('single');
+    setPd('63');
+    setPdRight('31.5');
+    setPdLeft('31.5');
+    setFittingHeight('18');
+    setImageUrl('');
+    setStoragePath('');
+    setNotes('');
+    setRxValidationError(null);
+  };
+
+  const buildDraftPrescription = (): { rx?: PrescriptionData; error?: string } => {
+    if (!isRxEligible) return { rx: undefined };
+
+    const lensFields = {
+      visionType: isContact ? ('none' as const) : pricing.visionType,
+      visionTypePriceSdg: isContact ? 0 : pricing.visionTypePriceSdg,
+      extraOptions:
+        !isContact && pricing.extraOptions.length > 0 ? pricing.extraOptions : undefined,
+      extraOptionsPricesSdg:
+        !isContact && pricing.extraOptions.length > 0 ? pricing.extraOptionsPricesSdg : undefined,
+      mirrorColor:
+        !isContact && pricing.extraOptions.includes('mirror') ? mirrorColor : undefined,
+      lensOption: isContact
+        ? ('none' as const)
+        : pricing.visionType !== 'none'
+        ? pricing.visionType
+        : pricing.extraOptions[0] || ('none' as const),
+      lensExtraPriceSdg: isContact ? 0 : pricing.totalExtraSdg,
+    };
+
+    if (dontKnowRx) {
+      return {
+        rx: {
+          type: 'later',
+          mode: 'later',
+          ...lensFields,
+          notes: notes.trim() || undefined,
+        },
+      };
+    }
+
+    if (imageUrl) {
+      return {
+        rx: {
+          type: 'image',
+          mode: 'image',
+          imageUrl,
+          storagePath,
+          ...lensFields,
+          notes: notes.trim() || undefined,
+        },
+      };
+    }
+
+    if (manualTouched) {
+      if (isContact) {
+        const errR = validateContactEye(clRight, 'العين اليمنى', 'Right Eye', locale);
+        if (errR) return { error: errR };
+        const errL = validateContactEye(clLeft, 'العين اليسرى', 'Left Eye', locale);
+        if (errL) return { error: errL };
+        if (clRight.boxes === 0 && clLeft.boxes === 0) {
+          return {
+            error: t(
+              'يرجى تحديد علبة واحدة على الأقل لإحدى العينين',
+              'Select at least 1 box for either eye'
+            ),
+          };
+        }
+        return {
+          rx: {
+            type: 'manual',
+            mode: 'manual',
+            ...lensFields,
+            rightEye: { sph: clRight.sph, cyl: clRight.cyl, axis: clRight.axis },
+            leftEye: { sph: clLeft.sph, cyl: clLeft.cyl, axis: clLeft.axis },
+            values: {
+              kind: 'contact_lenses',
+              contactRight: clRight,
+              contactLeft: clLeft,
+            },
+            notes: notes.trim() || undefined,
+          },
+        };
+      }
+
+      const normalizedRightEye: EyePrescription = {
+        sph: rightEye.sph,
+        cyl: rightEye.cyl,
+        axis: isNonZeroCyl(rightEye.cyl) ? rightEye.axis : '0',
+        add: rightEye.add || (showAddRequired ? '+1.50' : undefined),
+      };
+      const normalizedLeftEye: EyePrescription = {
+        sph: leftEye.sph,
+        cyl: leftEye.cyl,
+        axis: isNonZeroCyl(leftEye.cyl) ? leftEye.axis : '0',
+        add: leftEye.add || (showAddRequired ? '+1.50' : undefined),
+      };
+
+      const errR = validateEyeglassesEye(
+        normalizedRightEye,
+        'العين اليمنى (OD)',
+        'Right Eye (OD)',
+        locale
+      );
+      if (errR) return { error: errR };
+
+      const errL = validateEyeglassesEye(
+        normalizedLeftEye,
+        'العين اليسرى (OS)',
+        'Left Eye (OS)',
+        locale
+      );
+      if (errL) return { error: errL };
+
+      const computedPd = effectivePdMode === 'single' ? pd : `${pdRight}/${pdLeft}`;
+      const resolvedFittingHeight = isProgressive ? fittingHeight || '18' : undefined;
+
+      return {
+        rx: {
+          type: 'manual',
+          mode: 'manual',
+          ...lensFields,
+          rightEye: normalizedRightEye,
+          leftEye: normalizedLeftEye,
+          pd: computedPd,
+          pdMode: effectivePdMode,
+          pdRight: effectivePdMode === 'dual' ? pdRight : undefined,
+          pdLeft: effectivePdMode === 'dual' ? pdLeft : undefined,
+          fittingHeight: resolvedFittingHeight,
+          values: {
+            kind: 'eyeglasses',
+            rightEye: normalizedRightEye,
+            leftEye: normalizedLeftEye,
+            pdMode: effectivePdMode,
+            pd: computedPd,
+            pdRight: effectivePdMode === 'dual' ? pdRight : undefined,
+            pdLeft: effectivePdMode === 'dual' ? pdLeft : undefined,
+            fittingHeight: resolvedFittingHeight,
+          },
+          notes: notes.trim() || undefined,
+        },
+      };
+    }
+
+    // Skipped Rx values, keep lens choices or notes if any
+    if (
+      !isContact &&
+      (pricing.visionType !== 'none' || pricing.extraOptions.length > 0 || notes.trim())
+    ) {
+      return {
+        rx: {
+          type: 'none',
+          mode: 'none',
+          ...lensFields,
+          notes: notes.trim() || undefined,
+        },
+      };
+    }
+
+    if (notes.trim()) {
+      return {
+        rx: {
+          type: 'none',
+          mode: 'none',
+          ...lensFields,
+          notes: notes.trim(),
+        },
+      };
+    }
+
+    return { rx: undefined };
+  };
+
   const handleAddToCart = () => {
-    if (isUnavailable) return;
+    if (isUnavailable || uploading) return;
+    setRxValidationError(null);
+
+    const { rx, error } = buildDraftPrescription();
+    if (error) {
+      setRxValidationError(error);
+      setRxCardOpen(true);
+      showToast(error);
+      return;
+    }
 
     const variantColorLabel = activeVariant
       ? locale === 'ar'
@@ -200,9 +598,9 @@ export const ProductDetailModal: React.FC = () => {
         : activeVariant.colorNameEn
       : undefined;
 
-    const finalPrescription = hasCustomLensOrRx(draftPrescription)
+    const finalPrescription = hasCustomLensOrRx(rx)
       ? {
-          ...draftPrescription!,
+          ...rx!,
           lensExtraPriceSdg: lensExtraSdg,
         }
       : undefined;
@@ -225,29 +623,73 @@ export const ProductDetailModal: React.FC = () => {
     openProduct(null);
   };
 
-  const hasRxEntered = Boolean(draftPrescription && draftPrescription.type !== 'none');
-  const hasAnyLensChoices =
-    activeVisionType !== 'none' || activeExtraOptions.length > 0;
+  const specSummaryParts: string[] = [];
+  if (product.frameShape && SHAPE_LABELS[product.frameShape]) {
+    specSummaryParts.push(t(SHAPE_LABELS[product.frameShape].ar, SHAPE_LABELS[product.frameShape].en));
+  }
+  if (product.material && MATERIAL_LABELS[product.material]) {
+    specSummaryParts.push(t(MATERIAL_LABELS[product.material].ar, MATERIAL_LABELS[product.material].en));
+  }
+  if (product.contactLensSpecs) {
+    specSummaryParts.push(
+      `${product.contactLensSpecs.quantityPerBox} ${t('عدسة/علبة', 'lenses/box')}`,
+      `BC ${product.contactLensSpecs.baseCurve}`,
+      `DIA ${product.contactLensSpecs.diameter || '14.2'}`
+    );
+  }
+  if (product.lensSolutionSpecs) {
+    specSummaryParts.push(
+      `${product.lensSolutionSpecs.volumeMl} ml`,
+      `${t('ينتهي', 'Exp')} ${formatShortDate(product.lensSolutionSpecs.expiryDate, locale)}`
+    );
+  }
+  for (const tag of product.tags.slice(0, 3)) {
+    if (tag && !specSummaryParts.includes(tag)) specSummaryParts.push(tag);
+  }
+
+  const hasAnyRxInput =
+    dontKnowRx ||
+    Boolean(imageUrl) ||
+    manualTouched ||
+    visionType !== 'none' ||
+    extraOptions.length > 0;
 
   return (
-    <div className="fixed inset-0 z-[60] bg-black/60 backdrop-blur-xs overflow-y-auto p-3 sm:p-6 flex justify-center items-start">
-      <div className="w-full max-w-5xl bg-white dark:bg-[#181B1E] border border-stone-200 dark:border-zinc-800 rounded-2xl overflow-hidden shadow-2xl my-4">
-        <div className="px-5 py-3.5 border-b border-stone-200 dark:border-zinc-800 flex items-center justify-between">
-          <div className="flex items-center gap-2 text-xs text-stone-500 dark:text-zinc-400">
-            <span>{brand ? (locale === 'ar' ? brand.nameAr : brand.nameEn) : ''}</span>
-            <span aria-hidden="true">·</span>
-            <span>{category ? (locale === 'ar' ? category.nameAr : category.nameEn) : ''}</span>
-            <span aria-hidden="true">·</span>
-            <span className="font-mono-num">{product.sku}</span>
+    <div className="fixed inset-0 z-[60] bg-black/60 backdrop-blur-xs flex items-end sm:items-center justify-center sm:p-4">
+      <div className="w-full h-full sm:h-auto sm:max-h-[92vh] sm:max-w-5xl bg-white dark:bg-[#131C2E] sm:rounded-3xl border-t sm:border border-slate-200 dark:border-slate-800 flex flex-col overflow-hidden shadow-2xl">
+        {/* Top Navigation Bar matching screenshot */}
+        <header className="px-4 sm:px-6 py-3 border-b border-slate-100 dark:border-slate-800 bg-white dark:bg-[#131C2E] flex items-center justify-between gap-3 shrink-0">
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={() => openProduct(null)}
+              className="min-h-[44px] min-w-[44px] flex items-center justify-center rounded-xl text-[#11223E] dark:text-slate-100 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors"
+              aria-label={t('رجوع', 'Back')}
+            >
+              {locale === 'ar' ? <ArrowRight className="w-5 h-5" /> : <ArrowLeft className="w-5 h-5" />}
+            </button>
+            <span
+              className="text-base sm:text-lg font-extrabold tracking-tight text-[#11223E] dark:text-white"
+              dir="ltr"
+            >
+              {displayWordmark === 'Vision Plus' ? (
+                <>
+                  Vision <span style={{ color: appearance.secondaryColor }}>Plus</span>
+                </>
+              ) : (
+                displayWordmark
+              )}
+            </span>
           </div>
+
           <div className="flex items-center gap-1.5">
             <button
               type="button"
               onClick={() => toggleFavorite(product.id)}
-              className="min-h-[44px] min-w-[44px] flex items-center justify-center rounded-lg hover:bg-stone-100 dark:hover:bg-zinc-800"
+              className="min-h-[44px] min-w-[44px] flex items-center justify-center rounded-xl hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors"
               aria-label={t('المفضلة', 'Favorite')}
             >
-              <Heart className={`w-4 h-4 ${isFav ? 'fill-rose-600 text-rose-600' : ''}`} />
+              <Heart className={`w-5 h-5 ${isFav ? 'fill-rose-600 text-rose-600' : ''}`} />
             </button>
             <button
               type="button"
@@ -255,576 +697,1106 @@ export const ProductDetailModal: React.FC = () => {
                 if (navigator.clipboard) navigator.clipboard.writeText(window.location.href);
                 showToast(t('تم نسخ رابط المنتج', 'Product link copied'));
               }}
-              className="min-h-[44px] min-w-[44px] flex items-center justify-center rounded-lg hover:bg-stone-100 dark:hover:bg-zinc-800"
+              className="min-h-[44px] min-w-[44px] flex items-center justify-center rounded-xl hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors"
               aria-label={t('مشاركة', 'Share')}
             >
               <Share2 className="w-4 h-4" />
             </button>
             <button
               type="button"
-              onClick={() => openProduct(null)}
-              className="min-h-[44px] min-w-[44px] flex items-center justify-center rounded-lg hover:bg-stone-100 dark:hover:bg-zinc-800"
-              aria-label={t('إغلاق', 'Close')}
+              onClick={() => setLocale(locale === 'ar' ? 'en' : 'ar')}
+              className="min-h-[40px] px-3 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-900 text-xs font-extrabold flex items-center gap-1.5 hover:border-[#D9B24C] transition-colors"
             >
-              <X className="w-5 h-5" />
+              <Globe className="w-3.5 h-3.5 text-[#B38B2D] dark:text-[#E2BD5B]" />
+              <span>{locale === 'ar' ? 'EN' : 'AR'}</span>
             </button>
           </div>
-        </div>
+        </header>
 
-        <div className="grid lg:grid-cols-12 gap-6 p-5 sm:p-7">
-          {/* Gallery Column */}
-          <div className="lg:col-span-5 space-y-3">
-            <div className="relative aspect-[4/3] rounded-xl overflow-hidden bg-stone-100 dark:bg-zinc-900 border border-stone-200 dark:border-zinc-800">
-              <ResilientImage
-                src={displayedMainImage}
-                alt={title}
-                className={`w-full h-full object-cover transition-transform duration-300 ${
-                  zoomed ? 'scale-150 cursor-zoom-out' : 'cursor-zoom-in'
-                }`}
-              />
-              <button
-                type="button"
-                onClick={() => setZoomed(!zoomed)}
-                className="absolute bottom-3 end-3 px-2.5 py-1.5 rounded-lg bg-white/90 dark:bg-zinc-900/90 border border-stone-200 dark:border-zinc-700 text-xs font-medium flex items-center gap-1"
-              >
-                {zoomed ? <ZoomOut className="w-3.5 h-3.5" /> : <ZoomIn className="w-3.5 h-3.5" />}
-                {zoomed ? t('تصغير', 'Reset') : t('تكبير', 'Zoom')}
-              </button>
-            </div>
-
-            {product.images.length > 1 && (
-              <div className="flex gap-2">
-                {product.images.map((img, i) => (
-                  <button
-                    key={img + i}
-                    type="button"
-                    onClick={() => setImgIdx(i)}
-                    className={`w-20 aspect-[4/3] rounded-lg overflow-hidden border-2 ${
-                      imgIdx === i ? 'border-[var(--vp-secondary)]' : 'border-transparent'
-                    }`}
-                  >
-                    <ResilientImage src={img} alt="" className="w-full h-full object-cover" />
-                  </button>
-                ))}
-              </div>
-            )}
-
-            {/* Approved Reviews Section */}
-            <div className="pt-4 border-t border-stone-200 dark:border-zinc-800 space-y-3">
-              <div className="flex items-center justify-between">
-                <h3 className="text-sm font-bold">{t('تقييمات العملاء', 'Customer Reviews')}</h3>
-                <span className="flex items-center gap-1 text-xs font-semibold tabular-nums">
-                  <Star className="w-3.5 h-3.5 fill-amber-500 text-amber-500" />
-                  {product.rating.toFixed(1)} ({approvedReviews.length})
-                </span>
-              </div>
-
-              <div className="space-y-2 max-h-40 overflow-y-auto">
-                {approvedReviews.length === 0 ? (
-                  <p className="text-xs text-stone-500 dark:text-zinc-400">
-                    {t('كن أول من يقيّم هذا المنتج', 'Be the first to review this product')}
-                  </p>
-                ) : (
-                  approvedReviews.map((r) => (
-                    <div key={r.id} className="p-2.5 rounded-lg bg-stone-50 dark:bg-zinc-900 text-xs space-y-1">
-                      <div className="flex items-center justify-between font-semibold">
-                        <span>{r.userName}</span>
-                        <span className="text-amber-600 tabular-nums">{'★'.repeat(r.rating)}</span>
-                      </div>
-                      <p className="text-stone-600 dark:text-zinc-400">{r.comment}</p>
-                    </div>
-                  ))
-                )}
-              </div>
-
-              <form
-                onSubmit={(e) => {
-                  e.preventDefault();
-                  if (!reviewComment.trim()) return;
-                  addReview(product.id, reviewRating, reviewComment.trim());
-                  setReviewComment('');
-                }}
-                className="flex gap-2"
-              >
-                <select
-                  value={reviewRating}
-                  onChange={(e) => setReviewRating(Number(e.target.value))}
-                  className="px-2 py-1.5 rounded-lg border border-stone-200 dark:border-zinc-700 bg-stone-50 dark:bg-zinc-900 text-xs"
-                >
-                  {[5, 4, 3, 2, 1].map((n) => (
-                    <option key={n} value={n}>
-                      {n} ★
-                    </option>
-                  ))}
-                </select>
-                <input
-                  type="text"
-                  value={reviewComment}
-                  onChange={(e) => setReviewComment(e.target.value)}
-                  placeholder={t('أضف تقييمك...', 'Write a review...')}
-                  className="flex-1 px-3 py-1.5 rounded-lg border border-stone-200 dark:border-zinc-700 bg-stone-50 dark:bg-zinc-900 text-xs"
+        {/* Scrollable Content */}
+        <div className="flex-1 overflow-y-auto">
+          <div className="grid lg:grid-cols-12 gap-6 p-4 sm:p-6">
+            {/* Gallery Column */}
+            <div className="lg:col-span-5 space-y-3">
+              <div className="relative aspect-[4/3] rounded-2xl overflow-hidden bg-slate-100 dark:bg-slate-900 border border-slate-200/70 dark:border-slate-800">
+                <ResilientImage
+                  src={displayedMainImage}
+                  alt={title}
+                  className={`w-full h-full object-cover transition-transform duration-300 ${
+                    zoomed ? 'scale-150 cursor-zoom-out' : 'cursor-zoom-in'
+                  }`}
                 />
                 <button
-                  type="submit"
-                  className="px-3 py-1.5 rounded-lg bg-stone-900 dark:bg-stone-100 text-white dark:text-stone-900 text-xs font-semibold"
+                  type="button"
+                  onClick={() => setZoomed(!zoomed)}
+                  className="absolute bottom-3 end-3 min-h-[36px] px-3 py-1.5 rounded-xl bg-white/95 dark:bg-[#131C2E]/95 border border-slate-200 dark:border-slate-700 text-xs font-bold flex items-center gap-1 shadow-xs"
                 >
-                  {t('إرسال', 'Post')}
+                  {zoomed ? <ZoomOut className="w-3.5 h-3.5" /> : <ZoomIn className="w-3.5 h-3.5" />}
+                  {zoomed ? t('تصغير', 'Reset') : t('تكبير', 'Zoom')}
                 </button>
-              </form>
-            </div>
-          </div>
-
-          {/* Purchase & Optional Lens / Prescription Column */}
-          <div className="lg:col-span-7 space-y-5">
-            <div>
-              <h2 className="text-xl sm:text-2xl font-extrabold">{title}</h2>
-              <div className="mt-2 flex flex-wrap items-baseline gap-3">
-                <span className="font-mono-num text-2xl font-extrabold text-[#11223E] dark:text-[#E2BD5B] tabular-nums">
-                  {formatSdg(unitFinalSdg)}
-                </span>
-                {lensExtraSdg > 0 && (
-                  <span className="text-xs font-bold text-emerald-700 dark:text-emerald-400 font-mono-num">
-                    ({t('يشمل العدسات:', 'Incl. lenses:')} +{formatSdg(lensExtraSdg)})
-                  </span>
-                )}
-                {product.oldPriceSdg && product.oldPriceSdg > product.priceSdg && (
-                  <span className="font-mono-num text-sm text-stone-400 line-through tabular-nums">
-                    {formatSdg(product.oldPriceSdg)}
-                  </span>
-                )}
-                <span className="text-xs font-medium text-stone-500 dark:text-zinc-400">
-                  {!isUnavailable
-                    ? t(`متوفر (${product.stock} قطعة)`, `In stock (${product.stock})`)
-                    : locale === 'ar'
-                    ? appTexts.btnOutOfStockAr
-                    : appTexts.btnOutOfStockEn}
-                </span>
               </div>
-              <p className="mt-3 text-sm text-stone-600 dark:text-zinc-300 leading-relaxed">
-                {locale === 'ar' ? product.descriptionAr : product.descriptionEn}
-              </p>
+
+              {product.images.length > 1 && (
+                <div className="flex gap-2.5 overflow-x-auto pb-1">
+                  {product.images.map((img, i) => (
+                    <button
+                      key={img + i}
+                      type="button"
+                      onClick={() => setImgIdx(i)}
+                      className={`w-20 h-20 rounded-xl overflow-hidden bg-slate-100 dark:bg-slate-900 border-2 shrink-0 transition-all ${
+                        imgIdx === i
+                          ? 'border-[#11223E] dark:border-[#D9B24C] ring-2 ring-[#11223E]/15'
+                          : 'border-slate-200 dark:border-slate-800 opacity-80 hover:opacity-100'
+                      }`}
+                    >
+                      <ResilientImage src={img} alt="" className="w-full h-full object-cover" />
+                    </button>
+                  ))}
+                </div>
+              )}
+
+              {/* Desktop Reviews Block */}
+              <div className="hidden lg:block pt-4 border-t border-slate-100 dark:border-slate-800 space-y-3">
+                <div className="flex items-center justify-between">
+                  <h3 className="text-sm font-extrabold text-[#11223E] dark:text-white">
+                    {t('تقييمات العملاء', 'Customer Reviews')}
+                  </h3>
+                  <span className="flex items-center gap-1 text-xs font-bold tabular-nums">
+                    <Star className="w-3.5 h-3.5 fill-amber-500 text-amber-500" />
+                    {product.rating.toFixed(1)} ({approvedReviews.length})
+                  </span>
+                </div>
+
+                <div className="space-y-2 max-h-44 overflow-y-auto">
+                  {approvedReviews.length === 0 ? (
+                    <p className="text-xs text-slate-500 dark:text-slate-400">
+                      {t('كن أول من يقيّم هذا المنتج', 'Be the first to review this product')}
+                    </p>
+                  ) : (
+                    approvedReviews.map((r) => (
+                      <div
+                        key={r.id}
+                        className="p-3 rounded-xl bg-slate-50 dark:bg-slate-900 border border-slate-200/60 dark:border-slate-800 text-xs space-y-1"
+                      >
+                        <div className="flex items-center justify-between font-bold">
+                          <span>{r.userName}</span>
+                          <span className="text-amber-600 tabular-nums">{'★'.repeat(r.rating)}</span>
+                        </div>
+                        <p className="text-slate-600 dark:text-slate-400">{r.comment}</p>
+                      </div>
+                    ))
+                  )}
+                </div>
+
+                <form
+                  onSubmit={(e) => {
+                    e.preventDefault();
+                    if (!reviewComment.trim()) return;
+                    addReview(product.id, reviewRating, reviewComment.trim());
+                    setReviewComment('');
+                  }}
+                  className="flex gap-2"
+                >
+                  <select
+                    value={reviewRating}
+                    onChange={(e) => setReviewRating(Number(e.target.value))}
+                    className="min-h-[40px] px-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-900 text-xs"
+                  >
+                    {[5, 4, 3, 2, 1].map((n) => (
+                      <option key={n} value={n}>
+                        {n} ★
+                      </option>
+                    ))}
+                  </select>
+                  <input
+                    type="text"
+                    value={reviewComment}
+                    onChange={(e) => setReviewComment(e.target.value)}
+                    placeholder={t('أضف تقييمك...', 'Write a review...')}
+                    className="flex-1 min-h-[40px] px-3 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-900 text-xs"
+                  />
+                  <button
+                    type="submit"
+                    className="min-h-[40px] px-3.5 rounded-xl bg-[#11223E] text-white text-xs font-bold"
+                  >
+                    {t('إرسال', 'Post')}
+                  </button>
+                </form>
+              </div>
             </div>
 
-            {product.variants.length > 0 && (
+            {/* Product Info & Inline Prescription Column */}
+            <div className="lg:col-span-7 space-y-5">
+              {/* Metadata breadcrumb + Title + Price + Availability */}
               <div className="space-y-2">
-                <span className="block text-xs font-bold text-stone-700 dark:text-zinc-300">
-                  {t('اللون / الخيار', 'Color Variant')}:{' '}
-                  {activeVariant && (locale === 'ar' ? activeVariant.colorNameAr : activeVariant.colorNameEn)}
-                </span>
-                <div className="flex flex-wrap gap-2">
-                  {product.variants.map((v) => {
-                    const selected = activeVariant?.id === v.id;
-                    return (
-                      <button
-                        key={v.id}
-                        type="button"
-                        onClick={() => {
-                          setVariantId(v.id);
-                          setImgIdx(0);
-                        }}
-                        className={`min-h-[44px] px-3 py-1.5 rounded-lg border text-xs font-medium flex items-center gap-2 ${
-                          selected
-                            ? 'border-[var(--vp-secondary)] bg-[#D9B24C]/15 font-bold'
-                            : 'border-stone-200 dark:border-zinc-700'
-                        }`}
-                      >
-                        <span
-                          className="w-3.5 h-3.5 rounded-full border border-black/15"
+                <div className="flex flex-wrap items-center gap-1.5 text-xs font-medium text-slate-500 dark:text-slate-400">
+                  {brand && <span>{locale === 'ar' ? brand.nameAr : brand.nameEn}</span>}
+                  {brand && category && <span aria-hidden="true">·</span>}
+                  {category && <span>{locale === 'ar' ? category.nameAr : category.nameEn}</span>}
+                  <span aria-hidden="true">·</span>
+                  <span className="font-mono-num">{product.sku}</span>
+                </div>
+
+                <h2 className="text-xl sm:text-2xl font-extrabold text-[#11223E] dark:text-white leading-snug">
+                  {title}
+                </h2>
+
+                <div className="flex flex-wrap items-baseline gap-3 pt-0.5">
+                  <span className="font-mono-num text-2xl sm:text-[26px] font-extrabold text-[#11223E] dark:text-[#E2BD5B] tabular-nums">
+                    {formatSdg(unitFinalSdg)}
+                  </span>
+                  {product.oldPriceSdg && product.oldPriceSdg > product.priceSdg && (
+                    <span className="font-mono-num text-sm text-slate-400 line-through tabular-nums">
+                      {formatSdg(product.oldPriceSdg)}
+                    </span>
+                  )}
+                  {lensExtraSdg > 0 && (
+                    <span className="text-xs font-bold text-emerald-700 dark:text-emerald-400 font-mono-num">
+                      ({t('يشمل العدسات:', 'Incl. lenses:')} +{formatSdg(lensExtraSdg)})
+                    </span>
+                  )}
+                </div>
+
+                <div className="pt-0.5">
+                  {!isUnavailable ? (
+                    <div className="inline-flex items-center gap-1.5 text-xs sm:text-sm font-bold text-emerald-600 dark:text-emerald-400">
+                      <CheckCircle2 className="w-4 h-4 shrink-0" />
+                      <span>
+                        {t('متوفر للتوصيل السريع', 'Available for fast delivery')}
+                        <span className="text-slate-400 dark:text-slate-500 font-normal ms-1.5 tabular-nums">
+                          ({product.stock})
+                        </span>
+                      </span>
+                    </div>
+                  ) : (
+                    <div className="text-xs sm:text-sm font-bold text-rose-600">
+                      {locale === 'ar' ? appTexts.btnOutOfStockAr : appTexts.btnOutOfStockEn}
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              {/* Circular Color Swatches (matching screenshot 1) */}
+              {product.variants.length > 0 && (
+                <div className="pt-4 border-t border-slate-100 dark:border-slate-800 space-y-3">
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="text-sm font-extrabold text-[#11223E] dark:text-white">
+                      {t('اختر اللون', 'Choose Color')}
+                    </span>
+                    <span className="text-xs sm:text-sm font-semibold text-slate-500 dark:text-slate-400">
+                      {activeVariant
+                        ? locale === 'ar'
+                          ? activeVariant.colorNameAr
+                          : activeVariant.colorNameEn
+                        : ''}
+                    </span>
+                  </div>
+                  <div className="flex flex-wrap items-center gap-3">
+                    {product.variants.map((v) => {
+                      const selected = activeVariant?.id === v.id;
+                      const label = locale === 'ar' ? v.colorNameAr : v.colorNameEn;
+                      return (
+                        <button
+                          key={v.id}
+                          type="button"
+                          onClick={() => {
+                            setVariantId(v.id);
+                            setImgIdx(0);
+                          }}
+                          aria-label={label}
+                          title={label}
+                          className={`w-11 h-11 rounded-full transition-all flex items-center justify-center ${
+                            selected
+                              ? 'ring-2 ring-[#11223E] dark:ring-[#D9B24C] ring-offset-2 ring-offset-white dark:ring-offset-[#131C2E] scale-105'
+                              : 'border-2 border-slate-200 dark:border-slate-700 hover:scale-105'
+                          }`}
                           style={{ backgroundColor: v.colorHex }}
                         />
-                        {locale === 'ar' ? v.colorNameAr : v.colorNameEn}
-                      </button>
-                    );
-                  })}
+                      );
+                    })}
+                  </div>
                 </div>
-              </div>
-            )}
+              )}
 
-            {product.lensSolutionSpecs && (
-              <div className="p-4 rounded-xl bg-stone-50 dark:bg-zinc-900 border border-stone-200 dark:border-zinc-800 grid grid-cols-2 gap-4 text-xs">
+              {/* Description & Specs */}
+              <div className="pt-4 border-t border-slate-100 dark:border-slate-800 space-y-3 text-xs sm:text-sm">
                 <div>
-                  <span className="text-stone-500 dark:text-zinc-400 block">{t('حجم العبوة', 'Volume')}</span>
-                  <span className="font-mono-num font-bold text-sm">{product.lensSolutionSpecs.volumeMl} ml</span>
+                  <h3 className="font-extrabold text-[#11223E] dark:text-white mb-1">
+                    {t('الوصف', 'Description')}
+                  </h3>
+                  <p className="text-slate-600 dark:text-slate-300 leading-relaxed">
+                    {locale === 'ar' ? product.descriptionAr : product.descriptionEn}
+                  </p>
                 </div>
-                <div>
-                  <span className="text-stone-500 dark:text-zinc-400 block">{t('تاريخ الانتهاء', 'Expiry Date')}</span>
-                  <span className="font-mono-num font-bold text-sm">
-                    {formatShortDate(product.lensSolutionSpecs.expiryDate, locale)}
-                  </span>
-                </div>
-              </div>
-            )}
 
-            {product.contactLensSpecs && (
-              <div className="p-3.5 rounded-xl bg-stone-50 dark:bg-zinc-900 border border-stone-200 dark:border-zinc-800 flex flex-wrap items-center justify-between gap-2 text-xs">
-                <span className="font-bold">
-                  {t('مواصفات العبوة', 'Pack Specs')}: {product.contactLensSpecs.quantityPerBox}{' '}
-                  {t('عدسة/علبة', 'lenses/box')}
-                </span>
-                <span className="font-mono-num text-stone-500 dark:text-zinc-400">
-                  BC {product.contactLensSpecs.baseCurve} · DIA {product.contactLensSpecs.diameter || '14.2'}
-                </span>
+                {specSummaryParts.length > 0 && (
+                  <div>
+                    <h3 className="font-extrabold text-[#11223E] dark:text-white mb-1">
+                      {t('المواصفات', 'Specifications')}
+                    </h3>
+                    <p className="text-slate-500 dark:text-slate-400 leading-relaxed">
+                      {specSummaryParts.join(' · ')}
+                    </p>
+                  </div>
+                )}
               </div>
-            )}
 
-            {/* Pre-Cart Lens Type, Extra Options & Optional Prescription (eligible categories, never blocks Add to Cart) */}
-            {isRxEligible && (
-              <div className="space-y-3.5">
-                {!isContact && (
-                  <div className="p-4 rounded-2xl bg-stone-50 dark:bg-zinc-900 border border-stone-200 dark:border-zinc-800 space-y-4 text-xs">
-                    {/* 1) Vision Type (Choose One) */}
-                    <div className="space-y-2">
-                      <div className="flex flex-wrap items-center justify-between gap-2">
-                        <span className="font-extrabold text-[#11223E] dark:text-white">
-                          {t('1) نوع الرؤية (اختياري — اختر واحداً)', '1) Vision Type (Optional — Choose One)')}
-                        </span>
-                        <button
-                          type="button"
-                          onClick={() =>
-                            syncInlineLensSelection('none', activeExtraOptions, activeMirrorColor)
-                          }
-                          className={`min-h-[34px] px-2.5 rounded-lg border text-[11px] font-bold transition-colors ${
-                            activeVisionType === 'none'
-                              ? 'border-[#D9B24C] bg-[#D9B24C]/20 text-[#11223E] dark:text-[#E2BD5B]'
-                              : 'border-stone-200 dark:border-zinc-700 bg-white dark:bg-[#181B1E] text-stone-500'
-                          }`}
-                        >
-                          {t('بدون عدسات طبية (الإطار فقط)', 'Frame Only')}
-                        </button>
+              {/* Delivery Fee Info Strip (matching screenshot 1 & 2) */}
+              <div className="rounded-xl bg-slate-100/90 dark:bg-slate-900 border border-slate-200/70 dark:border-slate-800 px-4 py-3 flex items-center gap-2.5 text-xs sm:text-sm font-semibold text-[#11223E] dark:text-slate-200">
+                <Truck className="w-4 h-4 text-[#B38B2D] dark:text-[#E2BD5B] shrink-0" />
+                <span>{deliveryFeeSummary}</span>
+              </div>
+
+              {/* Optician Consult Green CTA Card (matching screenshot 2) */}
+              <button
+                type="button"
+                onClick={() => {
+                  openProduct(null);
+                  setActiveTab('consult');
+                }}
+                className="w-full min-h-[52px] rounded-2xl border-2 border-emerald-400/70 dark:border-emerald-700/80 bg-emerald-50/75 hover:bg-emerald-50 dark:bg-emerald-950/25 dark:hover:bg-emerald-950/40 px-4 py-3 flex items-center justify-center gap-2.5 text-sm font-extrabold text-[#11223E] dark:text-emerald-200 transition-colors"
+              >
+                <span className="w-7 h-7 rounded-full bg-emerald-500 text-white flex items-center justify-center shrink-0">
+                  <MessageCircle className="w-4 h-4" />
+                </span>
+                <span>{t('استشر أخصائي البصريات', 'Consult an Optician')}</span>
+              </button>
+
+              {/* Inline Collapsible "أدخل مقاسك" Card (Screenshots 2 & 3) */}
+              {isRxEligible && (
+                <div className="rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-[#131C2E] shadow-xs overflow-hidden">
+                  {/* Collapsible Header */}
+                  <button
+                    type="button"
+                    onClick={() => setRxCardOpen((prev) => !prev)}
+                    className="w-full px-4 py-3.5 flex items-center justify-between gap-3 text-start hover:bg-slate-50/70 dark:hover:bg-slate-900/40 transition-colors"
+                  >
+                    <div className="flex items-center gap-3 min-w-0">
+                      <div className="w-11 h-11 rounded-xl bg-[#11223E] text-[#D9B24C] flex items-center justify-center shrink-0">
+                        <Eye className="w-5 h-5" />
                       </div>
-
-                      <div className="grid grid-cols-2 gap-2">
-                        {visibleVisionTypes.map((opt) => {
-                          const selected = activeVisionType === opt.id;
-                          return (
-                            <button
-                              key={opt.id}
-                              type="button"
-                              onClick={() =>
-                                syncInlineLensSelection(
-                                  opt.id as VisionType,
-                                  activeExtraOptions,
-                                  activeMirrorColor
-                                )
-                              }
-                              className={`min-h-[44px] px-3 py-2 rounded-xl border text-start flex items-center justify-between gap-1.5 transition-colors ${
-                                selected
-                                  ? 'border-[#D9B24C] bg-[#D9B24C]/15 font-extrabold text-[#11223E] dark:text-white'
-                                  : 'border-stone-200 dark:border-zinc-700 bg-white dark:bg-[#181B1E] hover:border-stone-300'
-                              }`}
-                            >
-                              <span className="truncate">
-                                {locale === 'ar' ? opt.labelAr : opt.labelEn}
-                              </span>
-                              <span className="font-mono-num text-[11px] font-bold text-[#B38B2D] dark:text-[#E2BD5B] shrink-0">
-                                {opt.extraSdg === 0
-                                  ? t('مجاني', 'Free')
-                                  : `+${formatSdg(opt.extraSdg)}`}
-                              </span>
-                            </button>
-                          );
-                        })}
+                      <div className="min-w-0">
+                        <div className="text-sm sm:text-base font-extrabold text-[#11223E] dark:text-white flex items-center gap-2">
+                          <span>{t('أدخل مقاسك', 'Enter Your Prescription')}</span>
+                          {hasAnyRxInput && (
+                            <span className="text-[11px] font-bold text-emerald-600 dark:text-emerald-400">
+                              · {t('محدد', 'Selected')}
+                            </span>
+                          )}
+                        </div>
+                        <p className="text-xs text-slate-500 dark:text-slate-400 truncate">
+                          {isContact
+                            ? t('مقاسات العدسات اللاصقة (اختياري)', 'Contact lens measurements (optional)')
+                            : t('مقاسات النظارة الطبية (OD / OS)', 'Eyewear prescription (OD / OS)')}
+                        </p>
                       </div>
                     </div>
+                    <span className="text-slate-500 dark:text-slate-400 shrink-0">
+                      {rxCardOpen ? <ChevronUp className="w-5 h-5" /> : <ChevronDown className="w-5 h-5" />}
+                    </span>
+                  </button>
 
-                    {/* 2) Combinable Extra Options */}
-                    {visibleExtraOptions.length > 0 && (
-                      <div className="space-y-2 pt-3 border-t border-stone-200 dark:border-zinc-800">
-                        <div className="font-extrabold text-[#11223E] dark:text-white flex items-center gap-1.5">
-                          <Sparkles className="w-3.5 h-3.5 text-[#D9B24C]" />
-                          <span>
-                            {t(
-                              '2) خيارات إضافية للعدسة (اختياري — يمكن دمجها)',
-                              '2) Extra Lens Options (Optional — Combinable)'
-                            )}
-                          </span>
-                        </div>
-                        <div className="grid sm:grid-cols-2 gap-2">
-                          {visibleExtraOptions.map((opt) => {
-                            const extId = opt.id as ExtraLensOptionId;
-                            const checked = activeExtraOptions.includes(extId);
-                            return (
+                  {rxCardOpen && (
+                    <div className="px-4 pb-4 pt-1 space-y-4 text-xs border-t border-slate-100 dark:border-slate-800/80">
+                      {/* Vision Type & Combinable Extra Lens Options (for Glasses / Sunglasses) */}
+                      {!isContact && (
+                        <div className="p-3.5 rounded-xl bg-slate-50 dark:bg-slate-900/75 border border-slate-200/75 dark:border-slate-800 space-y-3.5 mt-3">
+                          <div className="space-y-2">
+                            <div className="flex flex-wrap items-center justify-between gap-2">
+                              <span className="font-extrabold text-[#11223E] dark:text-white">
+                                {t('نوع الرؤية (اختياري)', 'Vision Type (Optional)')}
+                              </span>
                               <button
-                                key={opt.id}
                                 type="button"
-                                onClick={() => handleToggleExtra(extId)}
-                                className={`min-h-[44px] px-3 py-2 rounded-xl border text-start flex items-center justify-between gap-2 transition-colors ${
-                                  checked
-                                    ? 'border-[#D9B24C] bg-[#D9B24C]/15 font-extrabold text-[#11223E] dark:text-white'
-                                    : 'border-stone-200 dark:border-zinc-700 bg-white dark:bg-[#181B1E] hover:border-stone-300'
+                                onClick={() => handleSelectVisionType('none')}
+                                className={`min-h-[34px] px-2.5 rounded-lg border text-[11px] font-bold transition-colors ${
+                                  visionType === 'none'
+                                    ? 'border-[#11223E] bg-[#11223E] text-white dark:border-[#D9B24C] dark:bg-[#D9B24C] dark:text-[#11223E]'
+                                    : 'border-slate-200 dark:border-slate-700 bg-white dark:bg-[#131C2E] text-slate-600 dark:text-slate-300'
                                 }`}
                               >
-                                <span className="flex items-center gap-2 min-w-0">
-                                  <span
-                                    className={`w-4 h-4 rounded flex items-center justify-center border shrink-0 ${
-                                      checked
-                                        ? 'border-[#B38B2D] bg-[#D9B24C] text-[#11223E]'
-                                        : 'border-stone-400 bg-white dark:bg-zinc-900'
-                                    }`}
-                                  >
-                                    {checked && <Check className="w-3 h-3 stroke-[3]" />}
-                                  </span>
-                                  <span className="leading-snug">
-                                    {locale === 'ar' ? opt.labelAr : opt.labelEn}
-                                  </span>
-                                </span>
-                                <span className="font-mono-num text-[11px] font-bold text-[#B38B2D] dark:text-[#E2BD5B] shrink-0">
-                                  {opt.extraSdg === 0
-                                    ? t('مجاني', 'Free')
-                                    : `+${formatSdg(opt.extraSdg)}`}
-                                </span>
+                                {t('بدون عدسات (الإطار فقط)', 'Frame Only')}
                               </button>
-                            );
-                          })}
-                        </div>
+                            </div>
 
-                        {activeExtraOptions.includes('mirror') && (
-                          <div className="p-3 rounded-xl bg-white dark:bg-[#181B1E] border border-[#D9B24C]/60 space-y-2">
-                            <span className="block text-[11px] font-extrabold text-[#11223E] dark:text-[#E2BD5B]">
-                              {t('لون العدسة العاكسة:', 'Mirror Lens Color:')}
-                            </span>
-                            <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
-                              {MIRROR_COLOR_OPTIONS.map((c) => {
-                                const active = activeMirrorColor === c.id;
+                            <div className="grid grid-cols-2 gap-2">
+                              {visibleVisionTypes.map((opt) => {
+                                const selected = visionType === opt.id;
                                 return (
                                   <button
-                                    key={c.id}
+                                    key={opt.id}
                                     type="button"
-                                    onClick={() =>
-                                      syncInlineLensSelection(
-                                        activeVisionType,
-                                        activeExtraOptions,
-                                        c.id
-                                      )
-                                    }
-                                    className={`min-h-[40px] px-2.5 py-1.5 rounded-lg border flex items-center gap-1.5 font-bold ${
-                                      active
-                                        ? 'border-[#D9B24C] bg-[#D9B24C]/15'
-                                        : 'border-stone-200 dark:border-zinc-700'
+                                    onClick={() => handleSelectVisionType(opt.id as VisionType)}
+                                    className={`min-h-[44px] px-3 py-2 rounded-xl border text-start flex items-center justify-between gap-1.5 transition-colors ${
+                                      selected
+                                        ? 'border-[#D9B24C] bg-[#D9B24C]/15 font-extrabold text-[#11223E] dark:text-white'
+                                        : 'border-slate-200 dark:border-slate-700 bg-white dark:bg-[#131C2E] hover:border-slate-300'
                                     }`}
                                   >
-                                    <span
-                                      className="w-3.5 h-3.5 rounded-full border border-black/20 shrink-0"
-                                      style={{ backgroundColor: c.swatchHex }}
-                                    />
-                                    <span>{locale === 'ar' ? c.labelAr : c.labelEn}</span>
+                                    <span className="truncate">
+                                      {locale === 'ar' ? opt.labelAr : opt.labelEn}
+                                    </span>
+                                    <span className="font-mono-num text-[11px] font-bold text-[#B38B2D] dark:text-[#E2BD5B] shrink-0">
+                                      {opt.extraSdg === 0
+                                        ? t('مجاني', 'Free')
+                                        : `+${formatSdg(opt.extraSdg)}`}
+                                    </span>
                                   </button>
                                 );
                               })}
                             </div>
                           </div>
+
+                          {visibleExtraOptions.length > 0 && (
+                            <div className="space-y-2 pt-3 border-t border-slate-200/80 dark:border-slate-800">
+                              <div className="font-extrabold text-[#11223E] dark:text-white flex items-center gap-1.5">
+                                <Sparkles className="w-3.5 h-3.5 text-[#D9B24C]" />
+                                <span>
+                                  {t('خيارات إضافية للعدسة (يمكن دمجها)', 'Extra Lens Options (Combinable)')}
+                                </span>
+                              </div>
+                              <div className="grid sm:grid-cols-2 gap-2">
+                                {visibleExtraOptions.map((opt) => {
+                                  const extId = opt.id as ExtraLensOptionId;
+                                  const checked = extraOptions.includes(extId);
+                                  return (
+                                    <button
+                                      key={opt.id}
+                                      type="button"
+                                      onClick={() => handleToggleExtra(extId)}
+                                      className={`min-h-[44px] px-3 py-2 rounded-xl border text-start flex items-center justify-between gap-2 transition-colors ${
+                                        checked
+                                          ? 'border-[#D9B24C] bg-[#D9B24C]/15 font-extrabold text-[#11223E] dark:text-white'
+                                          : 'border-slate-200 dark:border-slate-700 bg-white dark:bg-[#131C2E] hover:border-slate-300'
+                                      }`}
+                                    >
+                                      <span className="flex items-center gap-2 min-w-0">
+                                        <span
+                                          className={`w-4 h-4 rounded flex items-center justify-center border shrink-0 ${
+                                            checked
+                                              ? 'border-[#B38B2D] bg-[#D9B24C] text-[#11223E]'
+                                              : 'border-slate-400 bg-white dark:bg-slate-900'
+                                          }`}
+                                        >
+                                          {checked && <Check className="w-3 h-3 stroke-[3]" />}
+                                        </span>
+                                        <span className="leading-snug">
+                                          {locale === 'ar' ? opt.labelAr : opt.labelEn}
+                                        </span>
+                                      </span>
+                                      <span className="font-mono-num text-[11px] font-bold text-[#B38B2D] dark:text-[#E2BD5B] shrink-0">
+                                        {opt.extraSdg === 0
+                                          ? t('مجاني', 'Free')
+                                          : `+${formatSdg(opt.extraSdg)}`}
+                                      </span>
+                                    </button>
+                                  );
+                                })}
+                              </div>
+
+                              {extraOptions.includes('mirror') && (
+                                <div className="p-3 rounded-xl bg-white dark:bg-[#131C2E] border border-[#D9B24C]/60 space-y-2">
+                                  <span className="block text-[11px] font-extrabold text-[#11223E] dark:text-[#E2BD5B]">
+                                    {t('لون العدسة العاكسة:', 'Mirror Lens Color:')}
+                                  </span>
+                                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+                                    {MIRROR_COLOR_OPTIONS.map((c) => {
+                                      const active = mirrorColor === c.id;
+                                      return (
+                                        <button
+                                          key={c.id}
+                                          type="button"
+                                          onClick={() => setMirrorColor(c.id)}
+                                          className={`min-h-[40px] px-2.5 py-1.5 rounded-lg border flex items-center gap-1.5 font-bold ${
+                                            active
+                                              ? 'border-[#D9B24C] bg-[#D9B24C]/15'
+                                              : 'border-slate-200 dark:border-slate-700'
+                                          }`}
+                                        >
+                                          <span
+                                            className="w-3.5 h-3.5 rounded-full border border-black/20 shrink-0"
+                                            style={{ backgroundColor: c.swatchHex }}
+                                          />
+                                          <span>{locale === 'ar' ? c.labelAr : c.labelEn}</span>
+                                        </button>
+                                      );
+                                    })}
+                                  </div>
+                                </div>
+                              )}
+                            </div>
+                          )}
+                        </div>
+                      )}
+
+                      {/* Amber Checkbox Banner: "لا أعرف مقاسي، تواصلوا معي" (Screenshot 2) */}
+                      <label className="rounded-xl bg-amber-50/90 dark:bg-amber-950/25 border border-amber-200 dark:border-amber-800/60 p-3.5 flex items-start gap-3 cursor-pointer">
+                        <input
+                          type="checkbox"
+                          checked={dontKnowRx}
+                          onChange={(e) => {
+                            setDontKnowRx(e.target.checked);
+                            setRxValidationError(null);
+                          }}
+                          className="w-5 h-5 mt-0.5 rounded border-slate-300 accent-[#11223E] shrink-0"
+                        />
+                        <div className="space-y-0.5">
+                          <div className="text-sm font-extrabold text-[#11223E] dark:text-amber-200">
+                            {t('لا أعرف مقاسي، تواصلوا معي', "I don't know my prescription, contact me")}
+                          </div>
+                          <p className="text-xs text-slate-600 dark:text-slate-300 leading-relaxed">
+                            {t(
+                              'سيقوم فريقنا أو أخصائي البصريات بالتواصل معك لتأكيد المقاس المناسب قبل التجهيز.',
+                              'Our team or optician will contact you (including WhatsApp) to confirm your prescription before preparation.'
+                            )}
+                          </p>
+                        </div>
+                      </label>
+
+                      {!dontKnowRx && (
+                        <>
+                          {/* Saved Prescriptions Quick Fill */}
+                          {isGuest ? (
+                            <div className="p-3 rounded-xl bg-slate-50 dark:bg-slate-900/75 border border-slate-200/75 dark:border-slate-800 flex flex-wrap items-center justify-between gap-2">
+                              <span className="font-semibold text-slate-600 dark:text-slate-300">
+                                {t('المقاسات المحفوظة: سجّل دخولك لاستخدام هذه الميزة', 'Saved Rx: Sign in to use this feature')}
+                              </span>
+                              <button
+                                type="button"
+                                onClick={() => openAuthModal('login', false)}
+                                className="min-h-[44px] px-3.5 rounded-xl bg-[#11223E] text-white font-bold inline-flex items-center gap-1.5"
+                              >
+                                <LogIn className="w-3.5 h-3.5" />
+                                {t('تسجيل الدخول', 'Sign In')}
+                              </button>
+                            </div>
+                          ) : (
+                            user.prescriptions.length > 0 && (
+                              <div className="p-3 rounded-xl bg-slate-50 dark:bg-slate-900/75 border border-slate-200/75 dark:border-slate-800 space-y-1.5">
+                                <label className="block font-bold text-[#11223E] dark:text-slate-200">
+                                  {t('تعبئة سريعة من مقاساتك المحفوظة:', 'Quick-fill from saved prescriptions:')}
+                                </label>
+                                <select
+                                  defaultValue=""
+                                  onChange={(e) => e.target.value && handleApplySavedRx(e.target.value)}
+                                  className="w-full min-h-[42px] px-3 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-[#131C2E] text-sm"
+                                >
+                                  <option value="">{t('اختر مقاساً محفوظاً...', 'Select saved Rx...')}</option>
+                                  {user.prescriptions.map((rx) => (
+                                    <option key={rx.id} value={rx.id}>
+                                      {rx.label} (OD {rx.rightEye?.sph} / OS {rx.leftEye?.sph})
+                                    </option>
+                                  ))}
+                                </select>
+                              </div>
+                            )
+                          )}
+
+                          {isContact ? (
+                            /* Contact Lens OD / OS Cards matching the same visual design */
+                            <div className="space-y-3">
+                              {[
+                                {
+                                  key: 'right',
+                                  title: t('العين اليمنى (OD)', 'Right Eye (OD)'),
+                                  val: clRight,
+                                  setVal: setClRight,
+                                  showCopy: false,
+                                },
+                                {
+                                  key: 'left',
+                                  title: t('العين اليسرى (OS)', 'Left Eye (OS)'),
+                                  val: clLeft,
+                                  setVal: setClLeft,
+                                  showCopy: true,
+                                },
+                              ].map((eye) => {
+                                const axisRequired = isNonZeroCyl(eye.val.cyl);
+                                return (
+                                  <div
+                                    key={eye.key}
+                                    className="rounded-xl bg-slate-50 dark:bg-slate-900/75 border border-slate-200/75 dark:border-slate-800 p-3.5 sm:p-4 space-y-3"
+                                  >
+                                    <div className="flex items-center justify-between gap-2">
+                                      <span className="text-sm font-extrabold text-[#11223E] dark:text-white">
+                                        {eye.title}
+                                      </span>
+                                      {eye.showCopy && (
+                                        <button
+                                          type="button"
+                                          onClick={handleCopyRightToLeft}
+                                          className="min-h-[34px] px-2.5 rounded-lg text-xs font-bold text-[#11223E] dark:text-[#E2BD5B] hover:bg-white dark:hover:bg-slate-800 inline-flex items-center gap-1.5"
+                                        >
+                                          <Copy className="w-3.5 h-3.5" />
+                                          <span>{t('نسخ اليمنى إلى اليسرى', 'Copy Right to Left')}</span>
+                                        </button>
+                                      )}
+                                    </div>
+
+                                    <div className="grid grid-cols-3 gap-2">
+                                      <div>
+                                        <label className="block text-[11px] font-bold text-slate-600 dark:text-slate-300 mb-1">
+                                          SPH ({t('القوة', 'Power')})
+                                        </label>
+                                        <select
+                                          value={eye.val.sph}
+                                          onChange={(e) => {
+                                            setManualTouched(true);
+                                            eye.setVal({ ...eye.val, sph: e.target.value });
+                                          }}
+                                          className="w-full min-h-[44px] px-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-[#131C2E] font-mono-num text-sm"
+                                        >
+                                          {SPH_OPTIONS.map((o) => (
+                                            <option key={o} value={o}>{o}</option>
+                                          ))}
+                                        </select>
+                                      </div>
+
+                                      <div>
+                                        <label className="block text-[11px] font-bold text-slate-600 dark:text-slate-300 mb-1">
+                                          CYL ({t('الانحراف', 'Cyl')})
+                                        </label>
+                                        <select
+                                          value={eye.val.cyl}
+                                          onChange={(e) => {
+                                            setManualTouched(true);
+                                            eye.setVal({ ...eye.val, cyl: e.target.value });
+                                          }}
+                                          className="w-full min-h-[44px] px-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-[#131C2E] font-mono-num text-sm"
+                                        >
+                                          {CYL_OPTIONS.map((o) => (
+                                            <option key={o} value={o}>{o}</option>
+                                          ))}
+                                        </select>
+                                      </div>
+
+                                      <div>
+                                        <label className="block text-[11px] font-bold text-slate-600 dark:text-slate-300 mb-1">
+                                          AXIS ({t('المحور', 'Axis')})
+                                        </label>
+                                        <select
+                                          disabled={!axisRequired}
+                                          value={eye.val.axis}
+                                          onChange={(e) => {
+                                            setManualTouched(true);
+                                            eye.setVal({ ...eye.val, axis: e.target.value });
+                                          }}
+                                          className="w-full min-h-[44px] px-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-[#131C2E] font-mono-num text-sm disabled:opacity-45"
+                                        >
+                                          {AXIS_OPTIONS.map((o) => (
+                                            <option key={o} value={o}>{o}</option>
+                                          ))}
+                                        </select>
+                                      </div>
+                                    </div>
+
+                                    <div className="grid grid-cols-3 gap-2">
+                                      <div>
+                                        <label className="block text-[11px] font-bold text-slate-600 dark:text-slate-300 mb-1">
+                                          BC
+                                        </label>
+                                        <select
+                                          value={eye.val.bc}
+                                          onChange={(e) => {
+                                            setManualTouched(true);
+                                            eye.setVal({ ...eye.val, bc: e.target.value });
+                                          }}
+                                          className="w-full min-h-[44px] px-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-[#131C2E] font-mono-num text-sm"
+                                        >
+                                          {BC_OPTIONS.map((o) => (
+                                            <option key={o} value={o}>{o}</option>
+                                          ))}
+                                        </select>
+                                      </div>
+                                      <div>
+                                        <label className="block text-[11px] font-bold text-slate-600 dark:text-slate-300 mb-1">
+                                          DIA
+                                        </label>
+                                        <select
+                                          value={eye.val.dia}
+                                          onChange={(e) => {
+                                            setManualTouched(true);
+                                            eye.setVal({ ...eye.val, dia: e.target.value });
+                                          }}
+                                          className="w-full min-h-[44px] px-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-[#131C2E] font-mono-num text-sm"
+                                        >
+                                          {DIA_OPTIONS.map((o) => (
+                                            <option key={o} value={o}>{o}</option>
+                                          ))}
+                                        </select>
+                                      </div>
+                                      <div>
+                                        <label className="block text-[11px] font-bold text-slate-600 dark:text-slate-300 mb-1">
+                                          {t('العلب', 'Boxes')}
+                                        </label>
+                                        <select
+                                          value={eye.val.boxes}
+                                          onChange={(e) => {
+                                            setManualTouched(true);
+                                            eye.setVal({ ...eye.val, boxes: Number(e.target.value) });
+                                          }}
+                                          className="w-full min-h-[44px] px-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-[#131C2E] font-mono-num text-sm"
+                                        >
+                                          {Array.from({ length: 13 }, (_, n) => n).map((n) => (
+                                            <option key={n} value={n}>{n}</option>
+                                          ))}
+                                        </select>
+                                      </div>
+                                    </div>
+                                  </div>
+                                );
+                              })}
+                            </div>
+                          ) : (
+                            /* Eyeglasses / Sunglasses OD / OS / PD Cards matching Screenshots 2 & 3 */
+                            <div className="space-y-3">
+                              {[
+                                {
+                                  key: 'od',
+                                  title: t('العين اليمنى (OD)', 'Right Eye (OD)'),
+                                  val: rightEye,
+                                  setVal: setRightEye,
+                                  showCopy: false,
+                                },
+                                {
+                                  key: 'os',
+                                  title: t('العين اليسرى (OS)', 'Left Eye (OS)'),
+                                  val: leftEye,
+                                  setVal: setLeftEye,
+                                  showCopy: true,
+                                },
+                              ].map((eye) => {
+                                const axisRequired = isNonZeroCyl(eye.val.cyl);
+                                return (
+                                  <div
+                                    key={eye.key}
+                                    className="rounded-xl bg-slate-50 dark:bg-slate-900/75 border border-slate-200/75 dark:border-slate-800 p-3.5 sm:p-4 space-y-3"
+                                  >
+                                    <div className="flex items-center justify-between gap-2">
+                                      <span className="text-sm font-extrabold text-[#11223E] dark:text-white">
+                                        {eye.title}
+                                      </span>
+                                      {eye.showCopy && (
+                                        <button
+                                          type="button"
+                                          onClick={handleCopyRightToLeft}
+                                          className="min-h-[34px] px-2.5 rounded-lg text-xs font-bold text-[#11223E] dark:text-[#E2BD5B] hover:bg-white dark:hover:bg-slate-800 inline-flex items-center gap-1.5"
+                                        >
+                                          <Copy className="w-3.5 h-3.5" />
+                                          <span>{t('نسخ اليمنى إلى اليسرى', 'Copy Right to Left')}</span>
+                                        </button>
+                                      )}
+                                    </div>
+
+                                    <div className="grid grid-cols-3 gap-2">
+                                      <div>
+                                        <label className="block text-[11px] font-bold text-slate-600 dark:text-slate-300 mb-1">
+                                          SPH ({t('القوة', 'Power')})
+                                        </label>
+                                        <select
+                                          value={eye.val.sph}
+                                          onChange={(e) => {
+                                            setManualTouched(true);
+                                            eye.setVal({ ...eye.val, sph: e.target.value });
+                                          }}
+                                          className="w-full min-h-[44px] px-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-[#131C2E] font-mono-num text-sm"
+                                        >
+                                          {SPH_OPTIONS.map((o) => (
+                                            <option key={o} value={o}>{o}</option>
+                                          ))}
+                                        </select>
+                                      </div>
+
+                                      <div>
+                                        <label className="block text-[11px] font-bold text-slate-600 dark:text-slate-300 mb-1">
+                                          CYL ({t('الانحراف', 'Cyl')})
+                                        </label>
+                                        <select
+                                          value={eye.val.cyl}
+                                          onChange={(e) => {
+                                            setManualTouched(true);
+                                            eye.setVal({ ...eye.val, cyl: e.target.value });
+                                          }}
+                                          className="w-full min-h-[44px] px-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-[#131C2E] font-mono-num text-sm"
+                                        >
+                                          {CYL_OPTIONS.map((o) => (
+                                            <option key={o} value={o}>{o}</option>
+                                          ))}
+                                        </select>
+                                      </div>
+
+                                      <div>
+                                        <label className="block text-[11px] font-bold text-slate-600 dark:text-slate-300 mb-1">
+                                          AXIS ({t('المحور', 'Axis')})
+                                        </label>
+                                        <select
+                                          disabled={!axisRequired}
+                                          value={eye.val.axis}
+                                          onChange={(e) => {
+                                            setManualTouched(true);
+                                            eye.setVal({ ...eye.val, axis: e.target.value });
+                                          }}
+                                          className="w-full min-h-[44px] px-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-[#131C2E] font-mono-num text-sm disabled:opacity-45"
+                                        >
+                                          {AXIS_OPTIONS.map((o) => (
+                                            <option key={o} value={o}>{o}</option>
+                                          ))}
+                                        </select>
+                                      </div>
+                                    </div>
+
+                                    <div>
+                                      <label className="block text-[11px] font-bold text-slate-600 dark:text-slate-300 mb-1">
+                                        {showAddRequired
+                                          ? t('ADD (إضافة القراءة)', 'ADD (Reading Add)')
+                                          : t('ADD (اختياري)', 'ADD (Optional)')}
+                                      </label>
+                                      <select
+                                        value={eye.val.add || (showAddRequired ? '+1.50' : '')}
+                                        onChange={(e) => {
+                                          setManualTouched(true);
+                                          eye.setVal({ ...eye.val, add: e.target.value });
+                                        }}
+                                        className="w-full min-h-[44px] px-3 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-[#131C2E] font-mono-num text-sm"
+                                      >
+                                        {!showAddRequired && (
+                                          <option value="">{t('غير محدد (+1.50 اختياري)', 'None (+1.50 optional)')}</option>
+                                        )}
+                                        {ADD_OPTIONS.map((o) => (
+                                          <option key={o} value={o}>{o}</option>
+                                        ))}
+                                      </select>
+                                    </div>
+                                  </div>
+                                );
+                              })}
+
+                              {/* PD Card with Segmented Toggle [قيمة واحدة | عينين منفصلتين] (Screenshot 3) */}
+                              <div className="rounded-xl bg-slate-50 dark:bg-slate-900/75 border border-slate-200/75 dark:border-slate-800 p-3.5 sm:p-4 space-y-3">
+                                <div className="flex flex-wrap items-center justify-between gap-2">
+                                  <span className="text-sm font-extrabold text-[#11223E] dark:text-white">
+                                    {t('المسافة الحدقية (PD)', 'Pupillary Distance (PD)')}
+                                  </span>
+                                  {!isProgressive && (
+                                    <div className="bg-white dark:bg-[#131C2E] p-1 rounded-xl border border-slate-200 dark:border-slate-700 inline-flex items-center gap-1">
+                                      <button
+                                        type="button"
+                                        onClick={() => setPdMode('single')}
+                                        className={`min-h-[34px] px-3 rounded-lg text-xs font-bold transition-colors ${
+                                          pdMode === 'single'
+                                            ? 'bg-[#11223E] text-white dark:bg-[#D9B24C] dark:text-[#11223E]'
+                                            : 'text-slate-600 dark:text-slate-300'
+                                        }`}
+                                      >
+                                        {t('قيمة واحدة', 'Single')}
+                                      </button>
+                                      <button
+                                        type="button"
+                                        onClick={() => setPdMode('dual')}
+                                        className={`min-h-[34px] px-3 rounded-lg text-xs font-bold transition-colors ${
+                                          pdMode === 'dual'
+                                            ? 'bg-[#11223E] text-white dark:bg-[#D9B24C] dark:text-[#11223E]'
+                                            : 'text-slate-600 dark:text-slate-300'
+                                        }`}
+                                      >
+                                        {t('عينين منفصلتين', 'Dual Eyes')}
+                                      </button>
+                                    </div>
+                                  )}
+                                </div>
+
+                                {effectivePdMode === 'single' ? (
+                                  <select
+                                    value={pd}
+                                    onChange={(e) => {
+                                      setManualTouched(true);
+                                      setPd(e.target.value);
+                                    }}
+                                    className="w-full min-h-[44px] px-3 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-[#131C2E] font-mono-num text-sm"
+                                  >
+                                    {PD_SINGLE_OPTIONS.map((o) => (
+                                      <option key={o} value={o}>{o}</option>
+                                    ))}
+                                  </select>
+                                ) : (
+                                  <div className="grid grid-cols-2 gap-2.5">
+                                    <div>
+                                      <label className="block text-[11px] font-bold text-slate-600 dark:text-slate-300 mb-1">
+                                        PD {t('العين اليمنى (OD)', 'Right (OD)')}
+                                      </label>
+                                      <select
+                                        value={pdRight}
+                                        onChange={(e) => {
+                                          setManualTouched(true);
+                                          setPdRight(e.target.value);
+                                        }}
+                                        className="w-full min-h-[44px] px-3 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-[#131C2E] font-mono-num text-sm"
+                                      >
+                                        {PD_DUAL_OPTIONS.map((o) => (
+                                          <option key={o} value={o}>{o} mm</option>
+                                        ))}
+                                      </select>
+                                    </div>
+                                    <div>
+                                      <label className="block text-[11px] font-bold text-slate-600 dark:text-slate-300 mb-1">
+                                        PD {t('العين اليسرى (OS)', 'Left (OS)')}
+                                      </label>
+                                      <select
+                                        value={pdLeft}
+                                        onChange={(e) => {
+                                          setManualTouched(true);
+                                          setPdLeft(e.target.value);
+                                        }}
+                                        className="w-full min-h-[44px] px-3 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-[#131C2E] font-mono-num text-sm"
+                                      >
+                                        {PD_DUAL_OPTIONS.map((o) => (
+                                          <option key={o} value={o}>{o} mm</option>
+                                        ))}
+                                      </select>
+                                    </div>
+                                  </div>
+                                )}
+
+                                {isProgressive && (
+                                  <div>
+                                    <label className="block text-[11px] font-bold text-[#11223E] dark:text-[#E2BD5B] mb-1">
+                                      {t('ارتفاع التركيب (Fitting Height — مم)', 'Fitting Height (mm)')}
+                                    </label>
+                                    <select
+                                      value={fittingHeight}
+                                      onChange={(e) => {
+                                        setManualTouched(true);
+                                        setFittingHeight(e.target.value);
+                                      }}
+                                      className="w-full min-h-[44px] px-3 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-[#131C2E] font-mono-num text-sm"
+                                    >
+                                      {FITTING_HEIGHT_OPTIONS.map((o) => (
+                                        <option key={o} value={o}>{o} mm</option>
+                                      ))}
+                                    </select>
+                                  </div>
+                                )}
+                              </div>
+                            </div>
+                          )}
+
+                          {/* Divider: "أو ارفع صورة وصفة الطبيب" (Screenshot 3) */}
+                          <div className="flex items-center gap-3 pt-1">
+                            <div className="h-px flex-1 bg-slate-200 dark:bg-slate-800" />
+                            <span className="text-xs font-semibold text-slate-500 dark:text-slate-400">
+                              {t('أو ارفع صورة وصفة الطبيب', 'Or upload doctor prescription photo')}
+                            </span>
+                            <div className="h-px flex-1 bg-slate-200 dark:bg-slate-800" />
+                          </div>
+
+                          {/* Dashed Camera / Photo Upload Box (Screenshot 3) */}
+                          <div className="space-y-3">
+                            <div className="grid sm:grid-cols-2 gap-2">
+                              <label className="min-h-[52px] px-4 py-2.5 rounded-xl border-2 border-dashed border-slate-300 dark:border-slate-700 hover:border-[#11223E] dark:hover:border-[#D9B24C] bg-white dark:bg-[#131C2E] flex items-center justify-center gap-2 font-extrabold text-sm text-[#11223E] dark:text-white cursor-pointer transition-colors">
+                                <Camera className="w-4 h-4 text-slate-600 dark:text-slate-300" />
+                                <span>{t('رفع صورة المقاس / الوصفة', 'Upload Prescription Photo')}</span>
+                                <input
+                                  type="file"
+                                  accept="image/*"
+                                  onChange={handleImagePick}
+                                  className="hidden"
+                                />
+                              </label>
+
+                              <label className="min-h-[52px] px-4 py-2.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-900 hover:border-[#D9B24C] flex items-center justify-center gap-2 font-bold text-xs text-[#11223E] dark:text-slate-200 cursor-pointer transition-colors">
+                                <ImagePlus className="w-4 h-4 text-[#B38B2D]" />
+                                <span>{t('التقاط مباشر بالكاميرا', 'Take Photo Now')}</span>
+                                <input
+                                  type="file"
+                                  accept="image/*"
+                                  capture="environment"
+                                  onChange={handleImagePick}
+                                  className="hidden"
+                                />
+                              </label>
+                            </div>
+
+                            {uploading && (
+                              <div className="space-y-1.5">
+                                <div className="flex items-center justify-center gap-2 font-bold text-[#B38B2D]">
+                                  <Loader2 className="w-4 h-4 animate-spin" />
+                                  <span>{t(`جارٍ ضغط ورفع الصورة... ${uploadProgress}%`, `Uploading... ${uploadProgress}%`)}</span>
+                                </div>
+                                <div className="h-2 rounded-full bg-slate-200 dark:bg-slate-800 overflow-hidden max-w-xs mx-auto">
+                                  <div
+                                    className="h-full bg-[#D9B24C] transition-all duration-200"
+                                    style={{ width: `${uploadProgress}%` }}
+                                  />
+                                </div>
+                              </div>
+                            )}
+
+                            {uploadError && (
+                              <p className="text-rose-600 dark:text-rose-400 font-bold text-center">
+                                {uploadError}
+                              </p>
+                            )}
+
+                            {imageUrl && (
+                              <div className="p-3 rounded-xl bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 flex items-center justify-between gap-3">
+                                <img
+                                  src={imageUrl}
+                                  alt={t('معاينة الروشتة', 'Prescription preview')}
+                                  className="h-20 w-24 rounded-lg border border-slate-200 dark:border-slate-700 object-cover"
+                                />
+                                <button
+                                  type="button"
+                                  onClick={() => void handleDeleteUploadedImage()}
+                                  className="min-h-[40px] px-3 rounded-lg bg-rose-50 dark:bg-rose-950/30 text-rose-700 dark:text-rose-400 font-bold inline-flex items-center gap-1"
+                                >
+                                  <Trash2 className="w-3.5 h-3.5" />
+                                  {t('حذف الصورة', 'Delete Photo')}
+                                </button>
+                              </div>
+                            )}
+                          </div>
+                        </>
+                      )}
+
+                      {/* Optional Notes + Guide + Clear */}
+                      <div className="pt-2 border-t border-slate-100 dark:border-slate-800 space-y-2.5">
+                        <input
+                          type="text"
+                          value={notes}
+                          onChange={(e) => setNotes(e.target.value)}
+                          placeholder={t(
+                            'ملاحظات إضافية لفني البصريات (اختياري)...',
+                            'Optional notes for optician...'
+                          )}
+                          className="w-full min-h-[42px] px-3 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-900 text-xs sm:text-sm"
+                        />
+
+                        <div className="flex flex-wrap items-center justify-between gap-2">
+                          <button
+                            type="button"
+                            onClick={() => setShowHowToRead((prev) => !prev)}
+                            className="min-h-[36px] inline-flex items-center gap-1.5 font-bold text-[#B38B2D] dark:text-[#E2BD5B]"
+                          >
+                            <HelpCircle className="w-3.5 h-3.5" />
+                            <span>{t('كيف أقرأ روشتتي الطبية؟', 'How to read my Rx?')}</span>
+                          </button>
+
+                          {hasAnyRxInput && (
+                            <button
+                              type="button"
+                              onClick={resetAllRx}
+                              className="min-h-[36px] inline-flex items-center gap-1 text-rose-600 dark:text-rose-400 font-bold hover:underline"
+                            >
+                              <Trash2 className="w-3.5 h-3.5" />
+                              <span>{t('إلغاء تحديد المقاس', 'Reset / Skip Rx')}</span>
+                            </button>
+                          )}
+                        </div>
+
+                        {showHowToRead && (
+                          <div className="p-3 rounded-xl bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 space-y-1 text-[11px] leading-relaxed text-slate-600 dark:text-slate-300">
+                            <div>• {t('OD تعني العين اليمنى، وOS تعني العين اليسرى.', 'OD = Right Eye, OS = Left Eye.')}</div>
+                            <div>• {t('(-) في SPH تعني قصر نظر، و(+) تعني طول نظر.', '(-) SPH = nearsighted, (+) = farsighted.')}</div>
+                            <div>• {t('إذا كانت قيمة CYL تساوي 0.00، فلا يلزم تحديد زاوية AXIS.', 'When CYL is 0.00, AXIS is disabled.')}</div>
+                            <div>• {t('تخطي المقاس مسموح دائماً — لن يعيق إضافة المنتج للسلة.', 'Skipping prescription never blocks adding to cart.')}</div>
+                          </div>
                         )}
                       </div>
-                    )}
-                  </div>
-                )}
 
-                {/* 3) Optional Prescription Modal Trigger */}
-                <button
-                  type="button"
-                  onClick={() => setRxSheetOpen(true)}
-                  className="w-full min-h-[48px] px-4 py-2.5 rounded-xl border-2 border-dashed border-[#D9B24C] bg-[#D9B24C]/10 hover:bg-[#D9B24C]/20 text-[#11223E] dark:text-[#E2BD5B] font-extrabold text-xs sm:text-sm flex items-center justify-between gap-2 transition-colors"
-                >
-                  <span className="flex items-center gap-2">
-                    <Eye className="w-4 h-4 shrink-0" />
-                    <span>
-                      {hasRxEntered
-                        ? t('تم إرفاق مقاس النظر — تعديل المقاس', 'Prescription Added — Edit Rx')
-                        : isContact
-                        ? t('إضافة مقاس العدسات اللاصقة (اختياري)', 'Add Contact Lens Rx (Optional)')
-                        : t('3) إضافة مقاس النظر (اختياري)', '3) Add Prescription (Optional)')}
-                    </span>
-                  </span>
-                  {hasRxEntered ? (
-                    <Edit3 className="w-4 h-4 shrink-0" />
-                  ) : (
-                    <span className="text-[11px] font-semibold opacity-80">
-                      {t('يدوي / صورة / واتساب — قابل للتخطي', 'Manual / Photo / WhatsApp')}
-                    </span>
-                  )}
-                </button>
-
-                {/* Live Selection & Prescription Summary */}
-                {(hasAnyLensChoices || hasRxEntered) && (
-                  <div className="p-3.5 rounded-xl bg-stone-50 dark:bg-zinc-900 border border-stone-200 dark:border-zinc-800 text-xs space-y-2">
-                    <div className="flex items-center justify-between gap-2">
-                      <span className="font-bold text-emerald-700 dark:text-emerald-400 inline-flex items-center gap-1.5">
-                        <CheckCircle2 className="w-4 h-4" />
-                        {hasRxEntered && draftPrescription?.type === 'manual'
-                          ? t('مقاس نظر مُدخل يدوياً', 'Manual Prescription')
-                          : hasRxEntered && draftPrescription?.type === 'image'
-                          ? t('صورة روشتة مرفقة', 'Prescription Photo Attached')
-                          : hasRxEntered && draftPrescription?.type === 'later'
-                          ? t('سيُرسل المقاس لاحقاً عبر الواتساب', 'Will Send via WhatsApp Later')
-                          : t('تم تحديد مواصفات العدسات (بدون إدخال مقاس)', 'Lens Options Selected (No Rx Entered)')}
-                      </span>
-                      <button
-                        type="button"
-                        onClick={() => setDraftPrescription(undefined)}
-                        className="text-rose-600 font-bold inline-flex items-center gap-1 hover:underline"
-                      >
-                        <Trash2 className="w-3.5 h-3.5" />
-                        {t('حذف الكل', 'Clear')}
-                      </button>
+                      {rxValidationError && (
+                        <div className="p-3 rounded-xl bg-rose-50 dark:bg-rose-950/30 border border-rose-200 dark:border-rose-900 text-rose-700 dark:text-rose-300 font-bold">
+                          {rxValidationError}
+                        </div>
+                      )}
                     </div>
+                  )}
+                </div>
+              )}
 
-                    {!isContact && hasAnyLensChoices && (
-                      <div className="space-y-1 text-[11px] text-slate-600 dark:text-slate-300 border-t border-stone-200 dark:border-zinc-800 pt-2">
-                        {activeVisionType !== 'none' && (
-                          <div className="flex justify-between">
-                            <span>
-                              {t('نوع الرؤية:', 'Vision Type:')}{' '}
-                              <strong>{getVisionTypeLabel(activeVisionType, lensOptions, locale)}</strong>
-                            </span>
-                            <span className="font-mono-num font-bold text-[#B38B2D]">
-                              +{formatSdg(pricing.visionTypePriceSdg)}
-                            </span>
-                          </div>
-                        )}
-                        {activeExtraOptions.map((extId) => (
-                          <div key={extId} className="flex justify-between">
-                            <span>
-                              + {getExtraOptionLabel(extId, lensOptions, locale)}
-                              {extId === 'mirror'
-                                ? ` (${getMirrorColorLabel(activeMirrorColor, locale)})`
-                                : ''}
-                            </span>
-                            <span className="font-mono-num font-bold text-[#B38B2D]">
-                              +{formatSdg(pricing.extraOptionsPricesSdg[extId] || 0)}
-                            </span>
-                          </div>
-                        ))}
-                      </div>
-                    )}
-
-                    {draftPrescription?.type === 'manual' &&
-                      draftPrescription.values?.kind === 'contact_lenses' && (
-                        <div className="font-mono-num text-[11px] text-slate-600 dark:text-slate-300 space-y-0.5">
-                          {draftPrescription.values.contactRight && (
-                            <div>
-                              OD: SPH {draftPrescription.values.contactRight.sph} | CYL{' '}
-                              {draftPrescription.values.contactRight.cyl} | AXIS{' '}
-                              {draftPrescription.values.contactRight.axis}° | BC{' '}
-                              {draftPrescription.values.contactRight.bc} | DIA{' '}
-                              {draftPrescription.values.contactRight.dia} ({draftPrescription.values.contactRight.boxes}{' '}
-                              {t('علبة', 'box')})
-                            </div>
-                          )}
-                          {draftPrescription.values.contactLeft && (
-                            <div>
-                              OS: SPH {draftPrescription.values.contactLeft.sph} | CYL{' '}
-                              {draftPrescription.values.contactLeft.cyl} | AXIS{' '}
-                              {draftPrescription.values.contactLeft.axis}° | BC{' '}
-                              {draftPrescription.values.contactLeft.bc} | DIA{' '}
-                              {draftPrescription.values.contactLeft.dia} ({draftPrescription.values.contactLeft.boxes}{' '}
-                              {t('علبة', 'box')})
-                            </div>
-                          )}
-                        </div>
-                      )}
-
-                    {draftPrescription?.type === 'manual' &&
-                      draftPrescription.values?.kind !== 'contact_lenses' &&
-                      draftPrescription.rightEye && (
-                        <div className="font-mono-num text-[11px] text-slate-600 dark:text-slate-300 space-y-0.5">
-                          <div>
-                            OD: SPH {draftPrescription.rightEye.sph} | CYL{' '}
-                            {draftPrescription.rightEye.cyl} | AXIS{' '}
-                            {draftPrescription.rightEye.axis}°
-                            {draftPrescription.rightEye.add
-                              ? ` | ADD ${draftPrescription.rightEye.add}`
-                              : ''}
-                          </div>
-                          {draftPrescription.leftEye && (
-                            <div>
-                              OS: SPH {draftPrescription.leftEye.sph} | CYL{' '}
-                              {draftPrescription.leftEye.cyl} | AXIS{' '}
-                              {draftPrescription.leftEye.axis}°
-                              {draftPrescription.leftEye.add
-                                ? ` | ADD ${draftPrescription.leftEye.add}`
-                                : ''}
-                            </div>
-                          )}
-                          {(draftPrescription.pd || draftPrescription.pdRight) && (
-                            <div>
-                              PD:{' '}
-                              {draftPrescription.pdMode === 'dual' && draftPrescription.pdRight
-                                ? `OD ${draftPrescription.pdRight} mm / OS ${draftPrescription.pdLeft} mm`
-                                : `${draftPrescription.pd} mm`}
-                            </div>
-                          )}
-                          {draftPrescription.fittingHeight && (
-                            <div>
-                              {t('ارتفاع التركيب (Fitting Height):', 'Fitting Height:')}{' '}
-                              {draftPrescription.fittingHeight} mm
-                            </div>
-                          )}
-                        </div>
-                      )}
-
-                    {draftPrescription?.type === 'image' && draftPrescription.imageUrl && (
-                      <img
-                        src={draftPrescription.imageUrl}
-                        alt={t('صورة الروشتة', 'Rx thumbnail')}
-                        className="h-20 rounded-lg border border-stone-200 dark:border-zinc-700 object-cover"
-                      />
-                    )}
+              {/* Mobile Reviews Section */}
+              <div className="lg:hidden pt-4 border-t border-slate-100 dark:border-slate-800 space-y-3">
+                <div className="flex items-center justify-between">
+                  <h3 className="text-sm font-extrabold text-[#11223E] dark:text-white">
+                    {t('تقييمات العملاء', 'Customer Reviews')}
+                  </h3>
+                  <span className="flex items-center gap-1 text-xs font-bold tabular-nums">
+                    <Star className="w-3.5 h-3.5 fill-amber-500 text-amber-500" />
+                    {product.rating.toFixed(1)} ({approvedReviews.length})
+                  </span>
+                </div>
+                {approvedReviews.slice(0, 3).map((r) => (
+                  <div
+                    key={r.id}
+                    className="p-3 rounded-xl bg-slate-50 dark:bg-slate-900 border border-slate-200/60 dark:border-slate-800 text-xs space-y-1"
+                  >
+                    <div className="flex items-center justify-between font-bold">
+                      <span>{r.userName}</span>
+                      <span className="text-amber-600 tabular-nums">{'★'.repeat(r.rating)}</span>
+                    </div>
+                    <p className="text-slate-600 dark:text-slate-400">{r.comment}</p>
                   </div>
-                )}
+                ))}
               </div>
-            )}
-
-            <div className="flex items-center gap-3 pt-2">
-              <div className="flex items-center border border-stone-300 dark:border-zinc-700 rounded-lg">
-                <button
-                  type="button"
-                  onClick={() => setQty((q) => Math.max(1, q - 1))}
-                  className="min-h-[44px] px-3 text-sm font-bold hover:bg-stone-100 dark:hover:bg-zinc-800"
-                >
-                  −
-                </button>
-                <span className="px-4 font-mono-num text-sm font-bold tabular-nums">{qty}</span>
-                <button
-                  type="button"
-                  onClick={() => setQty((q) => Math.min(Math.max(1, product.stock), q + 1))}
-                  className="min-h-[44px] px-3 text-sm font-bold hover:bg-stone-100 dark:hover:bg-zinc-800"
-                >
-                  +
-                </button>
-              </div>
-
-              <button
-                type="button"
-                disabled={isUnavailable}
-                onClick={handleAddToCart}
-                style={{
-                  backgroundColor: appearance.secondaryColor,
-                  color: appearance.primaryColor,
-                }}
-                className="flex-1 min-h-[48px] py-3 px-6 rounded-xl disabled:opacity-50 font-extrabold text-sm flex items-center justify-center gap-2 transition-opacity hover:opacity-90"
-              >
-                <ShoppingBag className="w-4 h-4" />
-                <span>
-                  {isUnavailable
-                    ? locale === 'ar'
-                      ? appTexts.btnOutOfStockAr
-                      : appTexts.btnOutOfStockEn
-                    : `${locale === 'ar' ? appTexts.btnAddToCartAr : appTexts.btnAddToCartEn} · ${formatSdg(unitFinalSdg * qty)}`}
-                </span>
-              </button>
             </div>
           </div>
         </div>
-      </div>
 
-      <PrescriptionSheet
-        open={rxSheetOpen}
-        product={product}
-        initialPrescription={draftPrescription}
-        onClose={() => setRxSheetOpen(false)}
-        onSave={(rx) => setDraftPrescription(rx)}
-        onRemove={draftPrescription ? () => setDraftPrescription(undefined) : undefined}
-      />
+        {/* Clean Sticky Bottom Bar (Screenshot 1/2/3 — zero overlap!) */}
+        <div className="sticky bottom-0 z-20 bg-white/95 dark:bg-[#131C2E]/95 backdrop-blur-md border-t border-slate-200 dark:border-slate-800 px-4 sm:px-6 py-3 pb-[calc(12px+env(safe-area-inset-bottom))] flex items-center justify-between gap-3 shrink-0">
+          <div className="flex items-center gap-2 sm:gap-3 flex-1 min-w-0">
+            <div className="flex items-center border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-900 rounded-xl shrink-0">
+              <button
+                type="button"
+                onClick={() => setQty((q) => Math.max(1, q - 1))}
+                className="min-h-[46px] px-3 text-sm font-bold hover:bg-slate-100 dark:hover:bg-slate-800 rounded-s-xl"
+                aria-label={t('إنقاص الكمية', 'Decrease quantity')}
+              >
+                −
+              </button>
+              <span className="px-3 font-mono-num text-sm font-extrabold tabular-nums">{qty}</span>
+              <button
+                type="button"
+                onClick={() => setQty((q) => Math.min(Math.max(1, product.stock), q + 1))}
+                className="min-h-[46px] px-3 text-sm font-bold hover:bg-slate-100 dark:hover:bg-slate-800 rounded-e-xl"
+                aria-label={t('زيادة الكمية', 'Increase quantity')}
+              >
+                +
+              </button>
+            </div>
+
+            <button
+              type="button"
+              disabled={isUnavailable || uploading}
+              onClick={handleAddToCart}
+              className="flex-1 sm:flex-none sm:min-w-[200px] min-h-[50px] px-5 py-3 rounded-2xl bg-[#11223E] text-white dark:bg-[#D9B24C] dark:text-[#11223E] font-extrabold text-sm flex items-center justify-center gap-2.5 shadow-lg hover:opacity-95 active:scale-[0.99] transition-all disabled:opacity-50"
+            >
+              <ShoppingBag className="w-4 h-4 text-[#D9B24C] dark:text-[#11223E] shrink-0" />
+              <span className="truncate">
+                {isUnavailable
+                  ? locale === 'ar'
+                    ? appTexts.btnOutOfStockAr
+                    : appTexts.btnOutOfStockEn
+                  : locale === 'ar'
+                  ? appTexts.btnAddToCartAr
+                  : appTexts.btnAddToCartEn}
+              </span>
+            </button>
+          </div>
+
+          <div className="text-end shrink-0">
+            <div className="font-mono-num text-lg sm:text-xl font-extrabold text-[#11223E] dark:text-[#E2BD5B] tabular-nums">
+              {formatSdg(unitFinalSdg * qty)}
+            </div>
+            {(qty > 1 || lensExtraSdg > 0) && (
+              <div className="text-[11px] font-semibold text-slate-500 dark:text-slate-400 tabular-nums">
+                {qty > 1
+                  ? `${qty} × ${formatSdg(unitFinalSdg)}`
+                  : t('شامل العدسات المختارة', 'Includes selected lenses')}
+              </div>
+            )}
+          </div>
+        </div>
+      </div>
     </div>
   );
 };

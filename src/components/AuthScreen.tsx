@@ -261,9 +261,9 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({
                 type="button"
                 disabled={guestLoading}
                 onClick={handleGuest}
-                className="w-full min-h-[48px] px-5 py-3 rounded-2xl border-2 border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-[#0D131F] text-[#11223E] dark:text-slate-100 font-bold text-sm flex items-center justify-center gap-2.5 hover:border-[var(--vp-secondary)] transition-colors disabled:opacity-60"
+                className="w-full min-h-[44px] px-5 py-2.5 rounded-2xl border border-slate-200 dark:border-slate-700/80 bg-transparent hover:bg-slate-50 dark:hover:bg-slate-800/50 text-slate-600 dark:text-slate-300 font-semibold text-xs sm:text-sm flex items-center justify-center gap-2 transition-colors disabled:opacity-60"
               >
-                <UserCheck className="w-5 h-5" style={{ color: appearance.secondaryColor }} />
+                <UserCheck className="w-4 h-4 shrink-0 text-slate-400 dark:text-slate-400" />
                 <span>
                   {guestLoading
                     ? t('جارٍ الدخول كضيف...', 'Entering as Guest...')
@@ -282,14 +282,22 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({
               </button>
             )}
 
-            <div className="pt-2 flex items-center justify-center gap-2 text-[11px] text-slate-500 dark:text-slate-400">
-              <ShieldCheck className="w-4 h-4 shrink-0" style={{ color: appearance.secondaryColor }} />
-              <span>
+            <div className="pt-2 space-y-1.5 text-center text-[11px] text-slate-500 dark:text-slate-400">
+              <div className="flex items-center justify-center gap-2">
+                <ShieldCheck className="w-4 h-4 shrink-0" style={{ color: appearance.secondaryColor }} />
+                <span>
+                  {t(
+                    'تأكيد البريد الإلكتروني مطلوب قبل إتمام أي طلب لحماية حسابك',
+                    'Email verification is required before placing an order'
+                  )}
+                </span>
+              </div>
+              <p className="text-slate-400 dark:text-slate-500">
                 {t(
-                  'تأكيد البريد الإلكتروني مطلوب قبل إتمام أي طلب لحماية حسابك',
-                  'Email verification is required before placing an order'
+                  'يمكنك التصفح كضيف وتسجيل الدخول عند الشراء',
+                  'You can browse as a guest and sign in when checking out'
                 )}
-              </span>
+              </p>
             </div>
           </div>
         )}

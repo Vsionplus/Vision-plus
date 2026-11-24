@@ -4,6 +4,7 @@ import {
   Check,
   ChevronDown,
   ChevronUp,
+  Copy,
   Eye,
   FileText,
   HelpCircle,
@@ -64,7 +65,7 @@ interface PrescriptionSheetProps {
   onRemove?: () => void;
 }
 
-const DEFAULT_EYE: EyePrescription = { sph: '0.00', cyl: '0.00', axis: '0', add: '+1.50' };
+const DEFAULT_EYE: EyePrescription = { sph: '0.00', cyl: '0.00', axis: '0', add: '' };
 const DEFAULT_CL_EYE: ContactLensEyePrescription = {
   sph: '-1.00',
   cyl: '0.00',
@@ -118,35 +119,29 @@ export const PrescriptionSheet: React.FC<PrescriptionSheetProps> = ({
     [lensOptions]
   );
 
-  // Vision type & extra coatings state
   const [visionType, setVisionType] = useState<VisionType>('none');
   const [extraOptions, setExtraOptions] = useState<ExtraLensOptionId[]>([]);
   const [mirrorColor, setMirrorColor] = useState<MirrorColorId>('silver');
 
-  // Prescription input method state ('manual' | 'image' | 'later' | 'none')
   const [choice, setChoice] = useState<'manual' | 'image' | 'later' | 'none'>('manual');
 
-  // Eyeglasses / Sunglasses manual state
-  const [rightEye, setRightEye] = useState<EyePrescription>({ ...DEFAULT_EYE, add: '' });
-  const [leftEye, setLeftEye] = useState<EyePrescription>({ ...DEFAULT_EYE, add: '' });
+  const [rightEye, setRightEye] = useState<EyePrescription>({ ...DEFAULT_EYE });
+  const [leftEye, setLeftEye] = useState<EyePrescription>({ ...DEFAULT_EYE });
   const [pdMode, setPdMode] = useState<'single' | 'dual'>('single');
   const [pd, setPd] = useState('63');
   const [pdRight, setPdRight] = useState('31.5');
   const [pdLeft, setPdLeft] = useState('31.5');
   const [fittingHeight, setFittingHeight] = useState('18');
 
-  // Contact lens manual state
   const [clRight, setClRight] = useState<ContactLensEyePrescription>(DEFAULT_CL_EYE);
   const [clLeft, setClLeft] = useState<ContactLensEyePrescription>(DEFAULT_CL_EYE);
 
-  // Image upload state
   const [imageUrl, setImageUrl] = useState('');
   const [storagePath, setStoragePath] = useState('');
   const [uploading, setUploading] = useState(false);
   const [uploadProgress, setUploadProgress] = useState(0);
   const [uploadError, setUploadError] = useState<string | null>(null);
 
-  // Save & guide state
   const [notes, setNotes] = useState('');
   const [saveToAccount, setSaveToAccount] = useState(false);
   const [rxLabel, setRxLabel] = useState('');
@@ -191,7 +186,9 @@ export const PrescriptionSheet: React.FC<PrescriptionSheetProps> = ({
             axis: l.axis || '0',
             add: l.add || (initVision === 'bifocal' || initVision === 'progressive' ? '+1.50' : ''),
           });
-          setPdMode(initVision === 'progressive' ? 'dual' : init.values?.pdMode || init.pdMode || 'single');
+          setPdMode(
+            initVision === 'progressive' ? 'dual' : init.values?.pdMode || init.pdMode || 'single'
+          );
           setPd(init.values?.pd || init.pd || '63');
           setPdRight(init.values?.pdRight || init.pdRight || '31.5');
           setPdLeft(init.values?.pdLeft || init.pdLeft || '31.5');
@@ -224,12 +221,18 @@ export const PrescriptionSheet: React.FC<PrescriptionSheetProps> = ({
         setStoragePath('');
       }
     } else {
-      setVisionType(isContact ? 'none' : visibleVisionTypes[0]?.id ? (visibleVisionTypes[0].id as VisionType) : 'distance');
+      setVisionType(
+        isContact
+          ? 'none'
+          : visibleVisionTypes[0]?.id
+          ? (visibleVisionTypes[0].id as VisionType)
+          : 'distance'
+      );
       setExtraOptions([]);
       setMirrorColor('silver');
       setChoice('manual');
-      setRightEye({ sph: '0.00', cyl: '0.00', axis: '0', add: '' });
-      setLeftEye({ sph: '0.00', cyl: '0.00', axis: '0', add: '' });
+      setRightEye({ ...DEFAULT_EYE });
+      setLeftEye({ ...DEFAULT_EYE });
       setPdMode('single');
       setPd('63');
       setPdRight('31.5');
@@ -264,7 +267,6 @@ export const PrescriptionSheet: React.FC<PrescriptionSheetProps> = ({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, product.id]);
 
-  // Progressive requires per-eye PD and ADD + Fitting Height; Bifocal requires ADD
   const handleSelectVisionType = (nextVt: VisionType) => {
     setVisionType(nextVt);
     if (nextVt === 'progressive') {
@@ -284,11 +286,20 @@ export const PrescriptionSheet: React.FC<PrescriptionSheetProps> = ({
     );
   };
 
+  const handleCopyRightToLeft = () => {
+    if (isContact) {
+      setClLeft({ ...clRight });
+    } else {
+      setLeftEye({ ...rightEye });
+    }
+    showToast(t('تم نسخ مقاس العين اليمنى إلى اليسرى', 'Right eye copied to left eye'));
+  };
+
   if (!open) return null;
 
   const isProgressive = !isContact && visionType === 'progressive';
   const isBifocal = !isContact && visionType === 'bifocal';
-  const showAddField = isBifocal || isProgressive;
+  const showAddRequired = isBifocal || isProgressive;
   const effectivePdMode = isProgressive ? 'dual' : pdMode;
 
   const pricing = isContact
@@ -305,8 +316,8 @@ export const PrescriptionSheet: React.FC<PrescriptionSheetProps> = ({
       setClRight(found.contactRight);
       setClLeft(found.contactLeft);
     } else {
-      setRightEye(found.rightEye || { ...DEFAULT_EYE, add: '' });
-      setLeftEye(found.leftEye || { ...DEFAULT_EYE, add: '' });
+      setRightEye(found.rightEye || { ...DEFAULT_EYE });
+      setLeftEye(found.leftEye || { ...DEFAULT_EYE });
       setPdMode(isProgressive ? 'dual' : found.pdMode || 'single');
       setPd(found.pd || '63');
       setPdRight(found.pdRight || '31.5');
@@ -351,6 +362,7 @@ export const PrescriptionSheet: React.FC<PrescriptionSheetProps> = ({
       );
       setImageUrl(uploaded.url);
       setStoragePath(uploaded.path);
+      setChoice('image');
       showToast(t('تم رفع صورة الروشتة بنجاح', 'Prescription image uploaded'));
     } catch {
       setUploadError(
@@ -376,7 +388,8 @@ export const PrescriptionSheet: React.FC<PrescriptionSheetProps> = ({
   const buildBaseLensFields = () => ({
     visionType: isContact ? ('none' as const) : pricing.visionType,
     visionTypePriceSdg: isContact ? 0 : pricing.visionTypePriceSdg,
-    extraOptions: isContact ? undefined : pricing.extraOptions.length > 0 ? pricing.extraOptions : undefined,
+    extraOptions:
+      isContact ? undefined : pricing.extraOptions.length > 0 ? pricing.extraOptions : undefined,
     extraOptionsPricesSdg:
       !isContact && pricing.extraOptions.length > 0 ? pricing.extraOptionsPricesSdg : undefined,
     mirrorColor: !isContact && pricing.extraOptions.includes('mirror') ? mirrorColor : undefined,
@@ -392,7 +405,6 @@ export const PrescriptionSheet: React.FC<PrescriptionSheetProps> = ({
     setValidationError(null);
     const lensFields = buildBaseLensFields();
 
-    // If skipped entering prescription values
     if (choice === 'none') {
       if (isContact) {
         onSave(undefined);
@@ -467,13 +479,13 @@ export const PrescriptionSheet: React.FC<PrescriptionSheetProps> = ({
         sph: rightEye.sph,
         cyl: rightEye.cyl,
         axis: isNonZeroCyl(rightEye.cyl) ? rightEye.axis : '0',
-        add: showAddField ? rightEye.add || '+1.50' : undefined,
+        add: rightEye.add || (showAddRequired ? '+1.50' : undefined),
       };
       const normalizedLeftEye: EyePrescription = {
         sph: leftEye.sph,
         cyl: leftEye.cyl,
         axis: isNonZeroCyl(leftEye.cyl) ? leftEye.axis : '0',
-        add: showAddField ? leftEye.add || '+1.50' : undefined,
+        add: leftEye.add || (showAddRequired ? '+1.50' : undefined),
       };
 
       const errR = validateEyeglassesEye(
@@ -513,9 +525,7 @@ export const PrescriptionSheet: React.FC<PrescriptionSheetProps> = ({
           notes:
             [
               notes.trim(),
-              resolvedFittingHeight
-                ? `Fitting Height: ${resolvedFittingHeight} mm`
-                : '',
+              resolvedFittingHeight ? `Fitting Height: ${resolvedFittingHeight} mm` : '',
             ]
               .filter(Boolean)
               .join(' | ') || undefined,
@@ -568,7 +578,6 @@ export const PrescriptionSheet: React.FC<PrescriptionSheetProps> = ({
       return;
     }
 
-    // choice === 'later'
     onSave({
       type: 'later',
       mode: 'later',
@@ -584,18 +593,20 @@ export const PrescriptionSheet: React.FC<PrescriptionSheetProps> = ({
       role="dialog"
       aria-modal="true"
     >
-      <div className="w-full h-full sm:h-auto sm:max-h-[92vh] sm:max-w-3xl bg-white dark:bg-[#131C2E] sm:rounded-2xl border-t sm:border border-slate-200 dark:border-slate-800 flex flex-col overflow-hidden shadow-2xl">
-        {/* Sticky Header */}
-        <div className="px-4 sm:px-6 py-3.5 border-b border-slate-200 dark:border-slate-800 flex items-center justify-between gap-2 shrink-0 bg-white dark:bg-[#131C2E]">
-          <div className="flex items-center gap-2 min-w-0">
-            <Eye className="w-5 h-5 text-[#D9B24C] shrink-0" />
+      <div className="w-full h-full sm:h-auto sm:max-h-[92vh] sm:max-w-3xl bg-white dark:bg-[#131C2E] sm:rounded-3xl border-t sm:border border-slate-200 dark:border-slate-800 flex flex-col overflow-hidden shadow-2xl">
+        {/* Sticky Header matching "أدخل مقاسك" aesthetic */}
+        <div className="px-4 sm:px-6 py-3.5 border-b border-slate-100 dark:border-slate-800 flex items-center justify-between gap-2 shrink-0 bg-white dark:bg-[#131C2E]">
+          <div className="flex items-center gap-3 min-w-0">
+            <div className="w-10 h-10 rounded-xl bg-[#11223E] text-[#D9B24C] flex items-center justify-center shrink-0">
+              <Eye className="w-5 h-5" />
+            </div>
             <div className="min-w-0">
-              <h2 className="text-sm sm:text-base font-extrabold truncate">
+              <h2 className="text-sm sm:text-base font-extrabold text-[#11223E] dark:text-white truncate">
                 {isContact
                   ? t('مقاس العدسات اللاصقة (اختياري)', 'Contact Lens Prescription (Optional)')
-                  : t('اختيار العدسات ومقاس النظر (اختياري)', 'Lens Options & Prescription (Optional)')}
+                  : t('أدخل مقاسك وخيارات العدسات', 'Enter Prescription & Lens Options')}
               </h2>
-              <p className="text-[11px] text-slate-500 dark:text-slate-400 truncate">
+              <p className="text-xs text-slate-500 dark:text-slate-400 truncate">
                 {locale === 'ar' ? product.titleAr : product.titleEn}
               </p>
             </div>
@@ -611,38 +622,29 @@ export const PrescriptionSheet: React.FC<PrescriptionSheetProps> = ({
         </div>
 
         {/* Scrollable Body */}
-        <div className="flex-1 overflow-y-auto p-4 sm:p-6 space-y-6 text-xs">
-          {/* STEP 1 & 2: Eyeglasses / Sunglasses Vision Type & Extra Options */}
+        <div className="flex-1 overflow-y-auto p-4 sm:p-6 space-y-5 text-xs">
+          {/* 1 & 2: Vision Type & Extra Lens Options */}
           {!isContact && (
-            <div className="space-y-5">
-              {/* 1) Vision Type (Choose One) */}
-              <div className="p-4 rounded-2xl bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 space-y-3">
+            <div className="p-4 rounded-2xl bg-slate-50 dark:bg-slate-900/75 border border-slate-200/80 dark:border-slate-800 space-y-4">
+              <div className="space-y-2.5">
                 <div className="flex flex-wrap items-center justify-between gap-2">
-                  <div>
-                    <h3 className="text-sm font-extrabold text-[#11223E] dark:text-white">
-                      {t('1) نوع الرؤية المطلوب (اختر واحداً)', '1) Vision Type (Choose One)')}
-                    </h3>
-                    <p className="text-[11px] text-slate-500 dark:text-slate-400 mt-0.5">
-                      {t(
-                        'اختر نوع العدسة المناسب لاستخدامك اليومي أو تخطَّه للإطار فقط',
-                        'Select the vision type that matches your eyewear prescription or keep frame only'
-                      )}
-                    </p>
-                  </div>
+                  <span className="text-sm font-extrabold text-[#11223E] dark:text-white">
+                    {t('1) نوع الرؤية (اختياري)', '1) Vision Type (Optional)')}
+                  </span>
                   <button
                     type="button"
                     onClick={() => handleSelectVisionType('none')}
-                    className={`min-h-[40px] px-3 rounded-xl border text-[11px] font-bold transition-colors ${
+                    className={`min-h-[36px] px-3 rounded-xl border text-[11px] font-bold transition-colors ${
                       visionType === 'none'
-                        ? 'border-[#D9B24C] bg-[#D9B24C]/20 text-[#11223E] dark:text-[#E2BD5B]'
+                        ? 'border-[#11223E] bg-[#11223E] text-white dark:border-[#D9B24C] dark:bg-[#D9B24C] dark:text-[#11223E]'
                         : 'border-slate-200 dark:border-slate-700 bg-white dark:bg-[#131C2E] text-slate-600 dark:text-slate-300'
                     }`}
                   >
-                    {t('بدون عدسات طبية (الإطار فقط)', 'Frame Only (No Rx Lenses)')}
+                    {t('بدون عدسات طبية (الإطار فقط)', 'Frame Only')}
                   </button>
                 </div>
 
-                <div className="grid sm:grid-cols-2 gap-2.5">
+                <div className="grid grid-cols-2 gap-2">
                   {visibleVisionTypes.map((opt) => {
                     const selected = visionType === opt.id;
                     return (
@@ -650,24 +652,13 @@ export const PrescriptionSheet: React.FC<PrescriptionSheetProps> = ({
                         key={opt.id}
                         type="button"
                         onClick={() => handleSelectVisionType(opt.id as VisionType)}
-                        className={`min-h-[52px] p-3 rounded-xl border-2 text-start flex items-center justify-between gap-2 transition-colors ${
+                        className={`min-h-[48px] p-3 rounded-xl border text-start flex items-center justify-between gap-2 transition-colors ${
                           selected
                             ? 'border-[#D9B24C] bg-[#D9B24C]/15 font-extrabold text-[#11223E] dark:text-white'
                             : 'border-slate-200 dark:border-slate-700 bg-white dark:bg-[#131C2E] hover:border-slate-300'
                         }`}
                       >
-                        <div className="flex items-center gap-2 min-w-0">
-                          <span
-                            className={`w-4 h-4 rounded-full border-2 flex items-center justify-center shrink-0 ${
-                              selected ? 'border-[#B38B2D] bg-[#D9B24C]' : 'border-slate-400'
-                            }`}
-                          >
-                            {selected && <span className="w-1.5 h-1.5 rounded-full bg-[#11223E]" />}
-                          </span>
-                          <span className="truncate">
-                            {locale === 'ar' ? opt.labelAr : opt.labelEn}
-                          </span>
-                        </div>
+                        <span className="truncate">{locale === 'ar' ? opt.labelAr : opt.labelEn}</span>
                         <span className="font-mono-num text-[11px] font-bold text-[#B38B2D] dark:text-[#E2BD5B] shrink-0">
                           {opt.extraSdg === 0 ? t('مجاني', 'Free') : `+${formatSdg(opt.extraSdg)}`}
                         </span>
@@ -677,23 +668,14 @@ export const PrescriptionSheet: React.FC<PrescriptionSheetProps> = ({
                 </div>
               </div>
 
-              {/* 2) Extra Options (Optional, Combinable) */}
               {visibleExtraOptions.length > 0 && (
-                <div className="p-4 rounded-2xl bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 space-y-3">
-                  <div>
-                    <h3 className="text-sm font-extrabold text-[#11223E] dark:text-white flex items-center gap-1.5">
-                      <Sparkles className="w-4 h-4 text-[#D9B24C]" />
-                      {t('2) خيارات وطبقات إضافية (اختياري — يمكن دمج أكثر من خيار)', '2) Extra Lens Options (Optional — Combinable)')}
-                    </h3>
-                    <p className="text-[11px] text-slate-500 dark:text-slate-400 mt-0.5">
-                      {t(
-                        'أضف طبقات الحماية التي تناسبك؛ تُجمع أسعار الخيارات المختارة تلقائياً',
-                        'Combine any lens treatments below; prices add automatically'
-                      )}
-                    </p>
+                <div className="space-y-2.5 pt-3 border-t border-slate-200 dark:border-slate-800">
+                  <div className="text-sm font-extrabold text-[#11223E] dark:text-white flex items-center gap-1.5">
+                    <Sparkles className="w-4 h-4 text-[#D9B24C]" />
+                    <span>{t('2) خيارات إضافية للعدسة (يمكن دمجها)', '2) Extra Lens Options (Combinable)')}</span>
                   </div>
 
-                  <div className="grid sm:grid-cols-2 gap-2.5">
+                  <div className="grid sm:grid-cols-2 gap-2">
                     {visibleExtraOptions.map((opt) => {
                       const extId = opt.id as ExtraLensOptionId;
                       const checked = extraOptions.includes(extId);
@@ -702,13 +684,13 @@ export const PrescriptionSheet: React.FC<PrescriptionSheetProps> = ({
                           key={opt.id}
                           type="button"
                           onClick={() => toggleExtraOption(extId)}
-                          className={`min-h-[50px] p-3 rounded-xl border-2 text-start flex items-center justify-between gap-2 transition-colors ${
+                          className={`min-h-[46px] p-3 rounded-xl border text-start flex items-center justify-between gap-2 transition-colors ${
                             checked
                               ? 'border-[#D9B24C] bg-[#D9B24C]/15 font-extrabold text-[#11223E] dark:text-white'
                               : 'border-slate-200 dark:border-slate-700 bg-white dark:bg-[#131C2E] hover:border-slate-300'
                           }`}
                         >
-                          <div className="flex items-center gap-2 min-w-0">
+                          <span className="flex items-center gap-2 min-w-0">
                             <span
                               className={`w-4 h-4 rounded flex items-center justify-center border shrink-0 ${
                                 checked
@@ -721,7 +703,7 @@ export const PrescriptionSheet: React.FC<PrescriptionSheetProps> = ({
                             <span className="leading-snug">
                               {locale === 'ar' ? opt.labelAr : opt.labelEn}
                             </span>
-                          </div>
+                          </span>
                           <span className="font-mono-num text-[11px] font-bold text-[#B38B2D] dark:text-[#E2BD5B] shrink-0">
                             {opt.extraSdg === 0 ? t('مجاني', 'Free') : `+${formatSdg(opt.extraSdg)}`}
                           </span>
@@ -730,12 +712,11 @@ export const PrescriptionSheet: React.FC<PrescriptionSheetProps> = ({
                     })}
                   </div>
 
-                  {/* Mirror Lens Color Choice when 'mirror' is selected */}
                   {extraOptions.includes('mirror') && (
-                    <div className="p-3.5 rounded-xl bg-white dark:bg-[#131C2E] border border-[#D9B24C]/60 space-y-2.5">
-                      <div className="font-extrabold text-[#11223E] dark:text-[#E2BD5B]">
-                        {t('اختر لون العدسة العاكسة (Mirror Color):', 'Choose Mirror Lens Color:')}
-                      </div>
+                    <div className="p-3 rounded-xl bg-white dark:bg-[#131C2E] border border-[#D9B24C]/60 space-y-2">
+                      <span className="block text-[11px] font-extrabold text-[#11223E] dark:text-[#E2BD5B]">
+                        {t('لون العدسة العاكسة:', 'Mirror Lens Color:')}
+                      </span>
                       <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
                         {MIRROR_COLOR_OPTIONS.map((c) => {
                           const active = mirrorColor === c.id;
@@ -744,14 +725,14 @@ export const PrescriptionSheet: React.FC<PrescriptionSheetProps> = ({
                               key={c.id}
                               type="button"
                               onClick={() => setMirrorColor(c.id)}
-                              className={`min-h-[44px] px-3 py-2 rounded-xl border-2 flex items-center gap-2 font-bold transition-colors ${
+                              className={`min-h-[42px] px-3 py-1.5 rounded-xl border flex items-center gap-2 font-bold ${
                                 active
-                                  ? 'border-[#D9B24C] bg-[#D9B24C]/15 text-[#11223E] dark:text-white'
+                                  ? 'border-[#D9B24C] bg-[#D9B24C]/15'
                                   : 'border-slate-200 dark:border-slate-700'
                               }`}
                             >
                               <span
-                                className="w-4 h-4 rounded-full border border-black/20 shrink-0"
+                                className="w-3.5 h-3.5 rounded-full border border-black/20 shrink-0"
                                 style={{ backgroundColor: c.swatchHex }}
                               />
                               <span>{locale === 'ar' ? c.labelAr : c.labelEn}</span>
@@ -766,672 +747,624 @@ export const PrescriptionSheet: React.FC<PrescriptionSheetProps> = ({
             </div>
           )}
 
-          {/* STEP 3: Optional Prescription Method */}
-          <div className="space-y-4">
-            <div>
-              <h3 className="text-sm font-extrabold text-[#11223E] dark:text-white">
-                {isContact
-                  ? t('مقاس العدسات اللاصقة (اختياري — يمكنك التخطي)', 'Contact Lens Prescription (Optional — Skippable)')
-                  : t('3) مقاس النظر (اختياري — يمكنك الإضافة للسلة بدونه)', '3) Prescription Entry (Optional — Skippable)')}
-              </h3>
-            </div>
-
-            <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
-              <button
-                type="button"
-                onClick={() => setChoice('manual')}
-                className={`min-h-[50px] p-2.5 rounded-xl border text-start flex items-center gap-2 transition-colors ${
-                  choice === 'manual'
-                    ? 'border-[#D9B24C] bg-[#D9B24C]/15 font-extrabold text-[#11223E] dark:text-[#E2BD5B]'
-                    : 'border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-900'
-                }`}
-              >
-                <FileText className="w-4 h-4 shrink-0" />
-                <span>{t('إدخال المقاس يدوياً', 'Enter Manually')}</span>
-              </button>
-
-              <button
-                type="button"
-                onClick={() => setChoice('image')}
-                className={`min-h-[50px] p-2.5 rounded-xl border text-start flex items-center gap-2 transition-colors ${
-                  choice === 'image'
-                    ? 'border-[#D9B24C] bg-[#D9B24C]/15 font-extrabold text-[#11223E] dark:text-[#E2BD5B]'
-                    : 'border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-900'
-                }`}
-              >
-                <Camera className="w-4 h-4 shrink-0" />
-                <span>{t('رفع صورة الروشتة', 'Upload Rx Photo')}</span>
-              </button>
-
-              <button
-                type="button"
-                onClick={() => setChoice('later')}
-                className={`min-h-[50px] p-2.5 rounded-xl border text-start flex items-center gap-2 transition-colors ${
-                  choice === 'later'
-                    ? 'border-[#D9B24C] bg-[#D9B24C]/15 font-extrabold text-[#11223E] dark:text-[#E2BD5B]'
-                    : 'border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-900'
-                }`}
-              >
-                <MessageCircle className="w-4 h-4 shrink-0" />
-                <span>{t('إرسال لاحقاً بالواتساب', 'WhatsApp Later')}</span>
-              </button>
-
-              <button
-                type="button"
-                onClick={() => setChoice('none')}
-                className={`min-h-[50px] p-2.5 rounded-xl border text-start flex items-center gap-2 transition-colors ${
-                  choice === 'none'
-                    ? 'border-[#D9B24C] bg-[#D9B24C]/15 font-extrabold text-[#11223E] dark:text-[#E2BD5B]'
-                    : 'border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-900'
-                }`}
-              >
-                <SkipForward className="w-4 h-4 shrink-0" />
-                <span>{t('تخطي إدخال المقاس', 'Skip Rx Entry')}</span>
-              </button>
-            </div>
-
-            {choice === 'none' && (
-              <div className="p-3.5 rounded-xl bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 text-slate-600 dark:text-slate-300">
-                {isContact
-                  ? t(
-                      'يمكنك الإضافة للسلة الآن بدون إدخال مقاس، وسيتواصل معك فريقنا عند الحاجة.',
-                      'You can add to cart directly without entering prescription values.'
-                    )
-                  : t(
-                      'تم تخطي إدخال أرقام الكشف؛ سيتم حفظ نوع الرؤية والخيارات الإضافية المختارة أعلاه فقط.',
-                      'Prescription numbers skipped; only your selected vision type and extra lens options will be saved.'
-                    )}
+          {/* Amber Checkbox: "لا أعرف مقاسي، تواصلوا معي" */}
+          <label className="rounded-xl bg-amber-50/90 dark:bg-amber-950/25 border border-amber-200 dark:border-amber-800/60 p-3.5 flex items-start gap-3 cursor-pointer">
+            <input
+              type="checkbox"
+              checked={choice === 'later'}
+              onChange={(e) => setChoice(e.target.checked ? 'later' : 'manual')}
+              className="w-5 h-5 mt-0.5 rounded accent-[#11223E] shrink-0"
+            />
+            <div className="space-y-0.5">
+              <div className="text-sm font-extrabold text-[#11223E] dark:text-amber-200">
+                {t('لا أعرف مقاسي، تواصلوا معي', "I don't know my prescription, contact me")}
               </div>
-            )}
-
-            {/* Choice 1: Manual Entry */}
-            {choice === 'manual' && (
-              <div className="space-y-4">
-                {/* Saved Rx Quick Apply (Signed-in vs Guest notice) */}
-                {isGuest ? (
-                  <div className="p-3 rounded-xl bg-amber-50 dark:bg-amber-950/25 border border-amber-200 dark:border-amber-900/50 flex flex-wrap items-center justify-between gap-2">
-                    <span className="font-semibold text-[#11223E] dark:text-amber-200">
-                      {t('سجّل دخولك لحفظ المقاس واستخدام مقاساتك المحفوظة', 'Sign in to save or reuse prescriptions')}
-                    </span>
-                    <button
-                      type="button"
-                      onClick={() => openAuthModal('login', false)}
-                      style={{ backgroundColor: appearance.primaryColor }}
-                      className="min-h-[40px] px-3 rounded-lg text-white font-bold inline-flex items-center gap-1"
-                    >
-                      <LogIn className="w-3.5 h-3.5" />
-                      {t('تسجيل الدخول', 'Sign In')}
-                    </button>
-                  </div>
-                ) : (
-                  user.prescriptions.length > 0 && (
-                    <div className="p-3 rounded-xl bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 space-y-1.5">
-                      <label className="block font-bold">
-                        {t('تعبئة من المقاسات المحفوظة في حسابك:', 'Apply a saved prescription:')}
-                      </label>
-                      <select
-                        defaultValue=""
-                        onChange={(e) => e.target.value && handleApplySavedRx(e.target.value)}
-                        className="w-full min-h-[44px] px-3 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-[#131C2E] text-base"
-                      >
-                        <option value="">{t('اختر مقاساً محفوظاً...', 'Select saved Rx...')}</option>
-                        {user.prescriptions.map((rx) => (
-                          <option key={rx.id} value={rx.id}>
-                            {rx.label} (OD {rx.rightEye?.sph} / OS {rx.leftEye?.sph})
-                          </option>
-                        ))}
-                      </select>
-                    </div>
-                  )
+              <p className="text-xs text-slate-600 dark:text-slate-300 leading-relaxed">
+                {t(
+                  'سيقوم فريقنا أو أخصائي البصريات بالتواصل معك لتأكيد المقاس المناسب قبل التجهيز.',
+                  'Our team or optician will contact you via WhatsApp or phone to confirm your Rx before preparation.'
                 )}
+              </p>
+            </div>
+          </label>
 
-                {isContact ? (
-                  /* Contact Lenses Form (SPH, CYL, AXIS, BC, DIA per eye + helper text under EACH field) */
-                  <div className="grid sm:grid-cols-2 gap-3.5">
-                    {[
-                      {
-                        key: 'right',
-                        title: t('العين اليمنى (OD — Right Eye)', 'Right Eye (OD)'),
-                        val: clRight,
-                        setVal: setClRight,
-                      },
-                      {
-                        key: 'left',
-                        title: t('العين اليسرى (OS — Left Eye)', 'Left Eye (OS)'),
-                        val: clLeft,
-                        setVal: setClLeft,
-                      },
-                    ].map((eye) => {
-                      const axisRequired = isNonZeroCyl(eye.val.cyl);
-                      return (
-                        <div
-                          key={eye.key}
-                          className="p-3.5 rounded-xl bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 space-y-3"
-                        >
-                          <div className="font-extrabold text-sm text-[#11223E] dark:text-[#E2BD5B]">
+          {/* Method Switcher Tabs */}
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+            <button
+              type="button"
+              onClick={() => setChoice('manual')}
+              className={`min-h-[46px] p-2.5 rounded-xl border text-start flex items-center gap-2 transition-colors ${
+                choice === 'manual'
+                  ? 'border-[#11223E] bg-[#11223E] text-white dark:border-[#D9B24C] dark:bg-[#D9B24C] dark:text-[#11223E] font-extrabold'
+                  : 'border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-900'
+              }`}
+            >
+              <FileText className="w-4 h-4 shrink-0" />
+              <span>{t('إدخال يدوي', 'Manual Rx')}</span>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => setChoice('image')}
+              className={`min-h-[46px] p-2.5 rounded-xl border text-start flex items-center gap-2 transition-colors ${
+                choice === 'image'
+                  ? 'border-[#11223E] bg-[#11223E] text-white dark:border-[#D9B24C] dark:bg-[#D9B24C] dark:text-[#11223E] font-extrabold'
+                  : 'border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-900'
+              }`}
+            >
+              <Camera className="w-4 h-4 shrink-0" />
+              <span>{t('صورة الروشتة', 'Upload Photo')}</span>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => setChoice('later')}
+              className={`min-h-[46px] p-2.5 rounded-xl border text-start flex items-center gap-2 transition-colors ${
+                choice === 'later'
+                  ? 'border-[#11223E] bg-[#11223E] text-white dark:border-[#D9B24C] dark:bg-[#D9B24C] dark:text-[#11223E] font-extrabold'
+                  : 'border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-900'
+              }`}
+            >
+              <MessageCircle className="w-4 h-4 shrink-0" />
+              <span>{t('تواصلوا معي', 'WhatsApp Later')}</span>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => setChoice('none')}
+              className={`min-h-[46px] p-2.5 rounded-xl border text-start flex items-center gap-2 transition-colors ${
+                choice === 'none'
+                  ? 'border-[#11223E] bg-[#11223E] text-white dark:border-[#D9B24C] dark:bg-[#D9B24C] dark:text-[#11223E] font-extrabold'
+                  : 'border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-900'
+              }`}
+            >
+              <SkipForward className="w-4 h-4 shrink-0" />
+              <span>{t('تخطي المقاس', 'Skip Rx')}</span>
+            </button>
+          </div>
+
+          {choice === 'none' && (
+            <div className="p-3.5 rounded-xl bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 text-slate-600 dark:text-slate-300">
+              {isContact
+                ? t(
+                    'يمكنك المتابعة بدون إدخال مقاس، وسيتواصل معك فريقنا عند الحاجة.',
+                    'You can proceed without entering prescription values.'
+                  )
+                : t(
+                    'تم تخطي إدخال أرقام الكشف؛ سيتم حفظ نوع الرؤية والخيارات الإضافية المختارة أعلاه فقط.',
+                    'Prescription numbers skipped; selected vision type and extra lens options will be saved.'
+                  )}
+            </div>
+          )}
+
+          {/* Manual Input Cards (matching OD/OS + Copy button + PD segmented toggle) */}
+          {choice === 'manual' && (
+            <div className="space-y-4">
+              {isGuest ? (
+                <div className="p-3 rounded-xl bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 flex flex-wrap items-center justify-between gap-2">
+                  <span className="font-semibold text-slate-600 dark:text-slate-300">
+                    {t('المقاسات المحفوظة: سجّل دخولك لاستخدام هذه الميزة', 'Saved Rx: Sign in to use this feature')}
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => openAuthModal('login', false)}
+                    className="min-h-[44px] px-3.5 rounded-xl bg-[#11223E] text-white font-bold inline-flex items-center gap-1.5"
+                  >
+                    <LogIn className="w-3.5 h-3.5" />
+                    {t('تسجيل الدخول', 'Sign In')}
+                  </button>
+                </div>
+              ) : (
+                user.prescriptions.length > 0 && (
+                  <div className="p-3 rounded-xl bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 space-y-1.5">
+                    <label className="block font-bold">
+                      {t('تعبئة من المقاسات المحفوظة:', 'Apply saved prescription:')}
+                    </label>
+                    <select
+                      defaultValue=""
+                      onChange={(e) => e.target.value && handleApplySavedRx(e.target.value)}
+                      className="w-full min-h-[44px] px-3 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-[#131C2E] text-sm"
+                    >
+                      <option value="">{t('اختر مقاساً محفوظاً...', 'Select saved Rx...')}</option>
+                      {user.prescriptions.map((rx) => (
+                        <option key={rx.id} value={rx.id}>
+                          {rx.label} (OD {rx.rightEye?.sph} / OS {rx.leftEye?.sph})
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                )
+              )}
+
+              {isContact ? (
+                <div className="space-y-3">
+                  {[
+                    {
+                      key: 'right',
+                      title: t('العين اليمنى (OD)', 'Right Eye (OD)'),
+                      val: clRight,
+                      setVal: setClRight,
+                      showCopy: false,
+                    },
+                    {
+                      key: 'left',
+                      title: t('العين اليسرى (OS)', 'Left Eye (OS)'),
+                      val: clLeft,
+                      setVal: setClLeft,
+                      showCopy: true,
+                    },
+                  ].map((eye) => {
+                    const axisRequired = isNonZeroCyl(eye.val.cyl);
+                    return (
+                      <div
+                        key={eye.key}
+                        className="p-4 rounded-xl bg-slate-50 dark:bg-slate-900/75 border border-slate-200/80 dark:border-slate-800 space-y-3"
+                      >
+                        <div className="flex items-center justify-between gap-2">
+                          <span className="font-extrabold text-sm text-[#11223E] dark:text-white">
                             {eye.title}
+                          </span>
+                          {eye.showCopy && (
+                            <button
+                              type="button"
+                              onClick={handleCopyRightToLeft}
+                              className="min-h-[34px] px-2.5 rounded-lg text-xs font-bold text-[#11223E] dark:text-[#E2BD5B] hover:bg-white dark:hover:bg-slate-800 inline-flex items-center gap-1.5"
+                            >
+                              <Copy className="w-3.5 h-3.5" />
+                              <span>{t('نسخ اليمنى إلى اليسرى', 'Copy Right to Left')}</span>
+                            </button>
+                          )}
+                        </div>
+
+                        <div className="grid grid-cols-3 gap-2">
+                          <div>
+                            <label className="block text-[11px] font-bold mb-1">
+                              SPH ({t('القوة', 'Power')})
+                            </label>
+                            <select
+                              value={eye.val.sph}
+                              onChange={(e) => eye.setVal({ ...eye.val, sph: e.target.value })}
+                              className="w-full min-h-[44px] px-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-[#131C2E] font-mono-num text-sm"
+                            >
+                              {SPH_OPTIONS.map((o) => (
+                                <option key={o} value={o}>{o}</option>
+                              ))}
+                            </select>
                           </div>
 
-                          <div className="space-y-3">
-                            <div>
-                              <label className="block text-[11px] font-bold mb-1">
-                                SPH ({t('قوة العدسة', 'Power')})
-                              </label>
-                              <select
-                                value={eye.val.sph}
-                                onChange={(e) => eye.setVal({ ...eye.val, sph: e.target.value })}
-                                className="w-full min-h-[44px] px-2.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-[#131C2E] font-mono-num text-base"
-                              >
-                                {SPH_OPTIONS.map((o) => (
-                                  <option key={o} value={o}>{o}</option>
-                                ))}
-                              </select>
-                              <p className="mt-1 text-[11px] text-slate-500 dark:text-slate-400 leading-snug">
-                                {t('قوة النظر: (-) لقصر النظر، (+) لطول النظر', 'Lens power: (-) nearsighted, (+) farsighted')}
-                              </p>
-                            </div>
+                          <div>
+                            <label className="block text-[11px] font-bold mb-1">
+                              CYL ({t('الانحراف', 'Cyl')})
+                            </label>
+                            <select
+                              value={eye.val.cyl}
+                              onChange={(e) => eye.setVal({ ...eye.val, cyl: e.target.value })}
+                              className="w-full min-h-[44px] px-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-[#131C2E] font-mono-num text-sm"
+                            >
+                              {CYL_OPTIONS.map((o) => (
+                                <option key={o} value={o}>{o}</option>
+                              ))}
+                            </select>
+                          </div>
 
-                            <div>
-                              <label className="block text-[11px] font-bold mb-1">
-                                CYL ({t('الاستجماتيزم — اختياري', 'Astigmatism — Opt')})
-                              </label>
-                              <select
-                                value={eye.val.cyl}
-                                onChange={(e) => eye.setVal({ ...eye.val, cyl: e.target.value })}
-                                className="w-full min-h-[44px] px-2.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-[#131C2E] font-mono-num text-base"
-                              >
-                                {CYL_OPTIONS.map((o) => (
-                                  <option key={o} value={o}>{o}</option>
-                                ))}
-                              </select>
-                              <p className="mt-1 text-[11px] text-slate-500 dark:text-slate-400 leading-snug">
-                                {t('درجة انحراف القرنية؛ اتركه 0.00 للعدسات العادية', 'Astigmatism power; leave 0.00 if none')}
-                              </p>
-                            </div>
-
-                            <div>
-                              <label className="block text-[11px] font-bold mb-1">
-                                AXIS {axisRequired ? '*' : t('(يتفعل إذا CYL ≠ 0)', '(Active if CYL ≠ 0)')}
-                              </label>
-                              <select
-                                disabled={!axisRequired}
-                                value={eye.val.axis}
-                                onChange={(e) => eye.setVal({ ...eye.val, axis: e.target.value })}
-                                className="w-full min-h-[44px] px-2.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-[#131C2E] font-mono-num text-base disabled:opacity-45"
-                              >
-                                {AXIS_OPTIONS.map((o) => (
-                                  <option key={o} value={o}>{o}°</option>
-                                ))}
-                              </select>
-                              <p className="mt-1 text-[11px] text-slate-500 dark:text-slate-400 leading-snug">
-                                {t('زاوية الانحراف (0–180)، مطلوبة فقط عند وجود CYL', 'Axis angle (0–180), required only if CYL is not 0')}
-                              </p>
-                            </div>
-
-                            <div className="grid grid-cols-2 gap-2.5">
-                              <div>
-                                <label className="block text-[11px] font-bold mb-1">BC</label>
-                                <select
-                                  value={eye.val.bc}
-                                  onChange={(e) => eye.setVal({ ...eye.val, bc: e.target.value })}
-                                  className="w-full min-h-[44px] px-2.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-[#131C2E] font-mono-num text-base"
-                                >
-                                  {BC_OPTIONS.map((o) => (
-                                    <option key={o} value={o}>{o}</option>
-                                  ))}
-                                </select>
-                                <p className="mt-1 text-[11px] text-slate-500 dark:text-slate-400 leading-snug">
-                                  {t('انحناء قاعدة العدسة (غالباً 8.4–8.8)', 'Base curve (typically 8.4–8.8)')}
-                                </p>
-                              </div>
-
-                              <div>
-                                <label className="block text-[11px] font-bold mb-1">DIA</label>
-                                <select
-                                  value={eye.val.dia}
-                                  onChange={(e) => eye.setVal({ ...eye.val, dia: e.target.value })}
-                                  className="w-full min-h-[44px] px-2.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-[#131C2E] font-mono-num text-base"
-                                >
-                                  {DIA_OPTIONS.map((o) => (
-                                    <option key={o} value={o}>{o}</option>
-                                  ))}
-                                </select>
-                                <p className="mt-1 text-[11px] text-slate-500 dark:text-slate-400 leading-snug">
-                                  {t('قطر العدسة الكلي بالملم (غالباً 14.2)', 'Lens diameter in mm (typically 14.2)')}
-                                </p>
-                              </div>
-                            </div>
-
-                            <div>
-                              <label className="block text-[11px] font-bold mb-1">
-                                {t('عدد العلب لهذه العين', 'Boxes for this eye')}
-                              </label>
-                              <select
-                                value={eye.val.boxes}
-                                onChange={(e) =>
-                                  eye.setVal({ ...eye.val, boxes: Number(e.target.value) })
-                                }
-                                className="w-full min-h-[44px] px-2.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-[#131C2E] font-mono-num text-base"
-                              >
-                                {Array.from({ length: 13 }, (_, n) => n).map((n) => (
-                                  <option key={n} value={n}>{n}</option>
-                                ))}
-                              </select>
-                              <p className="mt-1 text-[11px] text-slate-500 dark:text-slate-400 leading-snug">
-                                {t('اختر 0 إذا كنت تطلب للعين الأخرى فقط', 'Select 0 if ordering for the other eye only')}
-                              </p>
-                            </div>
+                          <div>
+                            <label className="block text-[11px] font-bold mb-1">
+                              AXIS ({t('المحور', 'Axis')})
+                            </label>
+                            <select
+                              disabled={!axisRequired}
+                              value={eye.val.axis}
+                              onChange={(e) => eye.setVal({ ...eye.val, axis: e.target.value })}
+                              className="w-full min-h-[44px] px-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-[#131C2E] font-mono-num text-sm disabled:opacity-45"
+                            >
+                              {AXIS_OPTIONS.map((o) => (
+                                <option key={o} value={o}>{o}</option>
+                              ))}
+                            </select>
                           </div>
                         </div>
-                      );
-                    })}
-                  </div>
-                ) : (
-                  /* Eyeglasses & Sunglasses Manual Rx Form (Dynamic based on visionType) */
-                  <div className="space-y-4">
-                    <div className="grid sm:grid-cols-2 gap-3.5">
-                      {[
-                        {
-                          key: 'od',
-                          title: t('العين اليمنى (OD)', 'Right Eye (OD)'),
-                          val: rightEye,
-                          setVal: setRightEye,
-                        },
-                        {
-                          key: 'os',
-                          title: t('العين اليسرى (OS)', 'Left Eye (OS)'),
-                          val: leftEye,
-                          setVal: setLeftEye,
-                        },
-                      ].map((eye) => {
-                        const axisRequired = isNonZeroCyl(eye.val.cyl);
-                        return (
-                          <div
-                            key={eye.key}
-                            className="p-3.5 rounded-xl bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 space-y-3"
-                          >
-                            <div className="font-extrabold text-sm text-[#11223E] dark:text-[#E2BD5B]">
-                              {eye.title}
-                            </div>
 
-                            <div className="space-y-3">
-                              <div>
-                                <label className="block text-[11px] font-bold mb-1">SPH</label>
-                                <select
-                                  value={eye.val.sph}
-                                  onChange={(e) => eye.setVal({ ...eye.val, sph: e.target.value })}
-                                  className="w-full min-h-[44px] px-2.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-[#131C2E] font-mono-num text-base"
-                                >
-                                  {SPH_OPTIONS.map((o) => (
-                                    <option key={o} value={o}>{o}</option>
-                                  ))}
-                                </select>
-                                <p className="mt-1 text-[11px] text-slate-500 dark:text-slate-400 leading-snug">
-                                  {t(
-                                    'قوة تصحيح النظر: السالب (-) لقصر النظر والموجب (+) لطول النظر',
-                                    'Lens sphere power: (-) nearsighted, (+) farsighted'
-                                  )}
-                                </p>
-                              </div>
-
-                              <div>
-                                <label className="block text-[11px] font-bold mb-1">CYL</label>
-                                <select
-                                  value={eye.val.cyl}
-                                  onChange={(e) => eye.setVal({ ...eye.val, cyl: e.target.value })}
-                                  className="w-full min-h-[44px] px-2.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-[#131C2E] font-mono-num text-base"
-                                >
-                                  {CYL_OPTIONS.map((o) => (
-                                    <option key={o} value={o}>{o}</option>
-                                  ))}
-                                </select>
-                                <p className="mt-1 text-[11px] text-slate-500 dark:text-slate-400 leading-snug">
-                                  {t(
-                                    'درجة الاستجماتيزم (اللابؤرية)؛ اتركه 0.00 إن لم يكن لديك انحراف',
-                                    'Astigmatism degree; leave 0.00 if none'
-                                  )}
-                                </p>
-                              </div>
-
-                              <div>
-                                <label className="block text-[11px] font-bold mb-1">
-                                  AXIS {axisRequired ? '*' : t('(يتفعل إذا CYL ≠ 0)', '(Active if CYL ≠ 0)')}
-                                </label>
-                                <select
-                                  disabled={!axisRequired}
-                                  value={eye.val.axis}
-                                  onChange={(e) => eye.setVal({ ...eye.val, axis: e.target.value })}
-                                  className="w-full min-h-[44px] px-2.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-[#131C2E] font-mono-num text-base disabled:opacity-45"
-                                >
-                                  {AXIS_OPTIONS.map((o) => (
-                                    <option key={o} value={o}>{o}°</option>
-                                  ))}
-                                </select>
-                                <p className="mt-1 text-[11px] text-slate-500 dark:text-slate-400 leading-snug">
-                                  {t(
-                                    'زاوية اتجاه الاستجماتيزم (0–180°)، تُطلب فقط عندما لا يساوي CYL صفراً',
-                                    'Axis orientation (0–180°), required only when CYL is not 0'
-                                  )}
-                                </p>
-                              </div>
-
-                              {/* ADD per eye for Bifocal and Progressive */}
-                              {showAddField && (
-                                <div>
-                                  <label className="block text-[11px] font-bold mb-1">
-                                    ADD ({t('إضافة القراءة', 'Reading Add')})
-                                  </label>
-                                  <select
-                                    value={eye.val.add || '+1.50'}
-                                    onChange={(e) => eye.setVal({ ...eye.val, add: e.target.value })}
-                                    className="w-full min-h-[44px] px-2.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-[#131C2E] font-mono-num text-base"
-                                  >
-                                    {ADD_OPTIONS.map((o) => (
-                                      <option key={o} value={o}>{o}</option>
-                                    ))}
-                                  </select>
-                                  <p className="mt-1 text-[11px] text-slate-500 dark:text-slate-400 leading-snug">
-                                    {t(
-                                      'درجة التكبير الإضافية للقراءة والتركيز القريب في العدسات ثنائية البؤرة والتدريجية',
-                                      'Additional magnification power for reading in Bifocal & Progressive lenses'
-                                    )}
-                                  </p>
-                                </div>
-                              )}
-                            </div>
-                          </div>
-                        );
-                      })}
-                    </div>
-
-                    {/* PD Section (Progressive enforces per-eye Dual PD; others allow Single or Dual) */}
-                    <div className="p-3.5 rounded-xl bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 space-y-2.5">
-                      <div className="flex flex-wrap items-center justify-between gap-2">
-                        <span className="font-bold">
-                          {isProgressive
-                            ? t('المسافة بين الحدقتين لكل عين (PD per eye — مطلوب للعدسة التدريجية)', 'Per-Eye Pupillary Distance (PD mm — Progressive)')
-                            : t('المسافة بين الحدقتين (PD - مم)', 'Pupillary Distance (PD mm)')}
-                        </span>
-                        {!isProgressive && (
-                          <div className="flex items-center gap-1.5">
-                            <button
-                              type="button"
-                              onClick={() => setPdMode('single')}
-                              className={`min-h-[38px] px-3 rounded-lg text-[11px] font-bold border ${
-                                pdMode === 'single'
-                                  ? 'bg-[#11223E] text-white border-[#11223E]'
-                                  : 'bg-white dark:bg-[#131C2E] border-slate-200 dark:border-slate-700'
-                              }`}
+                        <div className="grid grid-cols-3 gap-2">
+                          <div>
+                            <label className="block text-[11px] font-bold mb-1">BC</label>
+                            <select
+                              value={eye.val.bc}
+                              onChange={(e) => eye.setVal({ ...eye.val, bc: e.target.value })}
+                              className="w-full min-h-[44px] px-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-[#131C2E] font-mono-num text-sm"
                             >
-                              {t('قيمة واحدة', 'Single PD')}
-                            </button>
-                            <button
-                              type="button"
-                              onClick={() => setPdMode('dual')}
-                              className={`min-h-[38px] px-3 rounded-lg text-[11px] font-bold border ${
-                                pdMode === 'dual'
-                                  ? 'bg-[#11223E] text-white border-[#11223E]'
-                                  : 'bg-white dark:bg-[#131C2E] border-slate-200 dark:border-slate-700'
-                              }`}
-                            >
-                              {t('لكل عين (يمين/يسار)', 'Dual PD')}
-                            </button>
+                              {BC_OPTIONS.map((o) => (
+                                <option key={o} value={o}>{o}</option>
+                              ))}
+                            </select>
                           </div>
-                        )}
+                          <div>
+                            <label className="block text-[11px] font-bold mb-1">DIA</label>
+                            <select
+                              value={eye.val.dia}
+                              onChange={(e) => eye.setVal({ ...eye.val, dia: e.target.value })}
+                              className="w-full min-h-[44px] px-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-[#131C2E] font-mono-num text-sm"
+                            >
+                              {DIA_OPTIONS.map((o) => (
+                                <option key={o} value={o}>{o}</option>
+                              ))}
+                            </select>
+                          </div>
+                          <div>
+                            <label className="block text-[11px] font-bold mb-1">
+                              {t('عدد العلب', 'Boxes')}
+                            </label>
+                            <select
+                              value={eye.val.boxes}
+                              onChange={(e) =>
+                                eye.setVal({ ...eye.val, boxes: Number(e.target.value) })
+                              }
+                              className="w-full min-h-[44px] px-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-[#131C2E] font-mono-num text-sm"
+                            >
+                              {Array.from({ length: 13 }, (_, n) => n).map((n) => (
+                                <option key={n} value={n}>{n}</option>
+                              ))}
+                            </select>
+                          </div>
+                        </div>
                       </div>
+                    );
+                  })}
+                </div>
+              ) : (
+                <div className="space-y-3">
+                  {[
+                    {
+                      key: 'od',
+                      title: t('العين اليمنى (OD)', 'Right Eye (OD)'),
+                      val: rightEye,
+                      setVal: setRightEye,
+                      showCopy: false,
+                    },
+                    {
+                      key: 'os',
+                      title: t('العين اليسرى (OS)', 'Left Eye (OS)'),
+                      val: leftEye,
+                      setVal: setLeftEye,
+                      showCopy: true,
+                    },
+                  ].map((eye) => {
+                    const axisRequired = isNonZeroCyl(eye.val.cyl);
+                    return (
+                      <div
+                        key={eye.key}
+                        className="p-4 rounded-xl bg-slate-50 dark:bg-slate-900/75 border border-slate-200/80 dark:border-slate-800 space-y-3"
+                      >
+                        <div className="flex items-center justify-between gap-2">
+                          <span className="font-extrabold text-sm text-[#11223E] dark:text-white">
+                            {eye.title}
+                          </span>
+                          {eye.showCopy && (
+                            <button
+                              type="button"
+                              onClick={handleCopyRightToLeft}
+                              className="min-h-[34px] px-2.5 rounded-lg text-xs font-bold text-[#11223E] dark:text-[#E2BD5B] hover:bg-white dark:hover:bg-slate-800 inline-flex items-center gap-1.5"
+                            >
+                              <Copy className="w-3.5 h-3.5" />
+                              <span>{t('نسخ اليمنى إلى اليسرى', 'Copy Right to Left')}</span>
+                            </button>
+                          )}
+                        </div>
 
-                      {effectivePdMode === 'single' ? (
+                        <div className="grid grid-cols-3 gap-2">
+                          <div>
+                            <label className="block text-[11px] font-bold mb-1">
+                              SPH ({t('القوة', 'Power')})
+                            </label>
+                            <select
+                              value={eye.val.sph}
+                              onChange={(e) => eye.setVal({ ...eye.val, sph: e.target.value })}
+                              className="w-full min-h-[44px] px-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-[#131C2E] font-mono-num text-sm"
+                            >
+                              {SPH_OPTIONS.map((o) => (
+                                <option key={o} value={o}>{o}</option>
+                              ))}
+                            </select>
+                          </div>
+
+                          <div>
+                            <label className="block text-[11px] font-bold mb-1">
+                              CYL ({t('الانحراف', 'Cyl')})
+                            </label>
+                            <select
+                              value={eye.val.cyl}
+                              onChange={(e) => eye.setVal({ ...eye.val, cyl: e.target.value })}
+                              className="w-full min-h-[44px] px-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-[#131C2E] font-mono-num text-sm"
+                            >
+                              {CYL_OPTIONS.map((o) => (
+                                <option key={o} value={o}>{o}</option>
+                              ))}
+                            </select>
+                          </div>
+
+                          <div>
+                            <label className="block text-[11px] font-bold mb-1">
+                              AXIS ({t('المحور', 'Axis')})
+                            </label>
+                            <select
+                              disabled={!axisRequired}
+                              value={eye.val.axis}
+                              onChange={(e) => eye.setVal({ ...eye.val, axis: e.target.value })}
+                              className="w-full min-h-[44px] px-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-[#131C2E] font-mono-num text-sm disabled:opacity-45"
+                            >
+                              {AXIS_OPTIONS.map((o) => (
+                                <option key={o} value={o}>{o}</option>
+                              ))}
+                            </select>
+                          </div>
+                        </div>
+
                         <div>
+                          <label className="block text-[11px] font-bold mb-1">
+                            {showAddRequired
+                              ? t('ADD (إضافة القراءة)', 'ADD (Reading Add)')
+                              : t('ADD (اختياري)', 'ADD (Optional)')}
+                          </label>
                           <select
-                            value={pd}
-                            onChange={(e) => setPd(e.target.value)}
-                            className="w-full min-h-[44px] px-3 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-[#131C2E] font-mono-num text-base"
+                            value={eye.val.add || (showAddRequired ? '+1.50' : '')}
+                            onChange={(e) => eye.setVal({ ...eye.val, add: e.target.value })}
+                            className="w-full min-h-[44px] px-3 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-[#131C2E] font-mono-num text-sm"
                           >
-                            {PD_SINGLE_OPTIONS.map((o) => (
-                              <option key={o} value={o}>{o} mm</option>
+                            {!showAddRequired && (
+                              <option value="">{t('غير محدد (+1.50 اختياري)', 'None (+1.50 optional)')}</option>
+                            )}
+                            {ADD_OPTIONS.map((o) => (
+                              <option key={o} value={o}>{o}</option>
                             ))}
                           </select>
-                          <p className="mt-1 text-[11px] text-slate-500 dark:text-slate-400 leading-snug">
-                            {t(
-                              'المسافة بالملم بين مركزي حدقتي العينين لتركيز البؤرة بدقة (غالباً 58–68 مم)',
-                              'Distance in mm between pupil centers (usually 58–68 mm)'
-                            )}
-                          </p>
                         </div>
-                      ) : (
-                        <div className="grid sm:grid-cols-2 gap-3">
-                          <div>
-                            <label className="block text-[11px] font-bold mb-1">
-                              PD {t('العين اليمنى (OD)', 'Right Eye (OD)')}
-                            </label>
-                            <select
-                              value={pdRight}
-                              onChange={(e) => setPdRight(e.target.value)}
-                              className="w-full min-h-[44px] px-2.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-[#131C2E] font-mono-num text-base"
-                            >
-                              {PD_DUAL_OPTIONS.map((o) => (
-                                <option key={o} value={o}>{o} mm</option>
-                              ))}
-                            </select>
-                            <p className="mt-1 text-[11px] text-slate-500 dark:text-slate-400 leading-snug">
-                              {t(
-                                'المسافة من منتصف الأنف إلى حدقة العين اليمنى بالملم (غالباً 29–34 مم)',
-                                'Half-PD from nose bridge to right pupil center (typically 29–34 mm)'
-                              )}
-                            </p>
-                          </div>
-                          <div>
-                            <label className="block text-[11px] font-bold mb-1">
-                              PD {t('العين اليسرى (OS)', 'Left Eye (OS)')}
-                            </label>
-                            <select
-                              value={pdLeft}
-                              onChange={(e) => setPdLeft(e.target.value)}
-                              className="w-full min-h-[44px] px-2.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-[#131C2E] font-mono-num text-base"
-                            >
-                              {PD_DUAL_OPTIONS.map((o) => (
-                                <option key={o} value={o}>{o} mm</option>
-                              ))}
-                            </select>
-                            <p className="mt-1 text-[11px] text-slate-500 dark:text-slate-400 leading-snug">
-                              {t(
-                                'المسافة من منتصف الأنف إلى حدقة العين اليسرى بالملم (غالباً 29–34 مم)',
-                                'Half-PD from nose bridge to left pupil center (typically 29–34 mm)'
-                              )}
-                            </p>
-                          </div>
+                      </div>
+                    );
+                  })}
+
+                  {/* PD Card with Segmented Control */}
+                  <div className="p-4 rounded-xl bg-slate-50 dark:bg-slate-900/75 border border-slate-200/80 dark:border-slate-800 space-y-3">
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <span className="text-sm font-extrabold text-[#11223E] dark:text-white">
+                        {isProgressive
+                          ? t('المسافة الحدقية لكل عين (PD — للعدسة التدريجية)', 'Per-Eye PD (Progressive)')
+                          : t('المسافة الحدقية (PD)', 'Pupillary Distance (PD)')}
+                      </span>
+                      {!isProgressive && (
+                        <div className="bg-white dark:bg-[#131C2E] p-1 rounded-xl border border-slate-200 dark:border-slate-700 inline-flex items-center gap-1">
+                          <button
+                            type="button"
+                            onClick={() => setPdMode('single')}
+                            className={`min-h-[34px] px-3 rounded-lg text-xs font-bold transition-colors ${
+                              pdMode === 'single'
+                                ? 'bg-[#11223E] text-white dark:bg-[#D9B24C] dark:text-[#11223E]'
+                                : 'text-slate-600 dark:text-slate-300'
+                            }`}
+                          >
+                            {t('قيمة واحدة', 'Single')}
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => setPdMode('dual')}
+                            className={`min-h-[34px] px-3 rounded-lg text-xs font-bold transition-colors ${
+                              pdMode === 'dual'
+                                ? 'bg-[#11223E] text-white dark:bg-[#D9B24C] dark:text-[#11223E]'
+                                : 'text-slate-600 dark:text-slate-300'
+                            }`}
+                          >
+                            {t('عينين منفصلتين', 'Dual Eyes')}
+                          </button>
                         </div>
                       )}
                     </div>
 
-                    {/* Fitting Height (Only for Progressive) */}
+                    {effectivePdMode === 'single' ? (
+                      <select
+                        value={pd}
+                        onChange={(e) => setPd(e.target.value)}
+                        className="w-full min-h-[44px] px-3 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-[#131C2E] font-mono-num text-sm"
+                      >
+                        {PD_SINGLE_OPTIONS.map((o) => (
+                          <option key={o} value={o}>{o}</option>
+                        ))}
+                      </select>
+                    ) : (
+                      <div className="grid grid-cols-2 gap-2.5">
+                        <div>
+                          <label className="block text-[11px] font-bold mb-1">
+                            PD {t('العين اليمنى (OD)', 'Right (OD)')}
+                          </label>
+                          <select
+                            value={pdRight}
+                            onChange={(e) => setPdRight(e.target.value)}
+                            className="w-full min-h-[44px] px-3 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-[#131C2E] font-mono-num text-sm"
+                          >
+                            {PD_DUAL_OPTIONS.map((o) => (
+                              <option key={o} value={o}>{o} mm</option>
+                            ))}
+                          </select>
+                        </div>
+                        <div>
+                          <label className="block text-[11px] font-bold mb-1">
+                            PD {t('العين اليسرى (OS)', 'Left (OS)')}
+                          </label>
+                          <select
+                            value={pdLeft}
+                            onChange={(e) => setPdLeft(e.target.value)}
+                            className="w-full min-h-[44px] px-3 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-[#131C2E] font-mono-num text-sm"
+                          >
+                            {PD_DUAL_OPTIONS.map((o) => (
+                              <option key={o} value={o}>{o} mm</option>
+                            ))}
+                          </select>
+                        </div>
+                      </div>
+                    )}
+
                     {isProgressive && (
-                      <div className="p-3.5 rounded-xl bg-slate-50 dark:bg-slate-900 border border-[#D9B24C]/50 space-y-2">
-                        <label className="block font-bold text-[#11223E] dark:text-[#E2BD5B]">
+                      <div>
+                        <label className="block text-[11px] font-bold text-[#11223E] dark:text-[#E2BD5B] mb-1">
                           {t('ارتفاع التركيب (Fitting Height — مم)', 'Fitting Height (mm)')}
                         </label>
                         <select
                           value={fittingHeight}
                           onChange={(e) => setFittingHeight(e.target.value)}
-                          className="w-full min-h-[44px] px-3 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-[#131C2E] font-mono-num text-base"
+                          className="w-full min-h-[44px] px-3 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-[#131C2E] font-mono-num text-sm"
                         >
                           {FITTING_HEIGHT_OPTIONS.map((o) => (
                             <option key={o} value={o}>{o} mm</option>
                           ))}
                         </select>
-                        <p className="text-[11px] text-slate-500 dark:text-slate-400 leading-snug">
-                          {t(
-                            'المسافة العمودية من مركز الحدقة إلى الحافة السفلية الداخلية للإطار بالملم لضبط التدرج البؤري بسلاسة (غالباً 16–22 مم)',
-                            'Vertical height from pupil center to lower inner frame rim (mm) to align progressive corridors (typically 16–22 mm)'
-                          )}
-                        </p>
                       </div>
                     )}
                   </div>
-                )}
-
-                {/* Quick "How to read my Rx" toggle */}
-                <div className="p-3 rounded-xl bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 space-y-2">
-                  <button
-                    type="button"
-                    onClick={() => setShowHowToRead((prev) => !prev)}
-                    className="min-h-[38px] inline-flex items-center gap-1.5 font-extrabold text-[#B38B2D] dark:text-[#E2BD5B]"
-                  >
-                    <HelpCircle className="w-4 h-4" />
-                    <span>{t('كيف أقرأ روشتتي الطبية؟', 'How to read my prescription?')}</span>
-                    {showHowToRead ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
-                  </button>
-
-                  {showHowToRead && (
-                    <div className="p-3 rounded-lg bg-white dark:bg-[#131C2E] border border-slate-200 dark:border-slate-700 space-y-1.5 text-[11px] leading-relaxed">
-                      <div className="font-bold text-[#11223E] dark:text-[#E2BD5B]">
-                        {t('دليل سريع لقراءة كشف النظر:', 'Quick guide to reading your Rx:')}
-                      </div>
-                      <ul className="space-y-1 list-disc list-inside text-slate-600 dark:text-slate-300">
-                        <li>{t('OD تعني العين اليمنى (Right)، وOS تعني العين اليسرى (Left).', 'OD = Right Eye, OS = Left Eye.')}</li>
-                        <li>{t('(-) في SPH تعني قصر نظر (للبعد)، و(+) تعني طول نظر (للقرب).', '(-) SPH corrects nearsightedness; (+) corrects farsightedness.')}</li>
-                        <li>{t('إذا كانت قيمة CYL تساوي 0.00، فلا يلزم تحديد زاوية AXIS.', 'When CYL is 0.00, AXIS is not needed.')}</li>
-                        <li>{t('قيمة ADD وارتفاع التركيب يظهران للعدسات ثنائية البؤرة والتدريجية فقط.', 'ADD and Fitting Height appear for Bifocal/Progressive lenses.')}</li>
-                      </ul>
-                    </div>
-                  )}
                 </div>
+              )}
 
-                {/* Save Rx to Account Option */}
-                {!isGuest && (
-                  <div className="p-3 rounded-xl border border-slate-200 dark:border-slate-800 space-y-2">
-                    <label className="flex items-center gap-2 cursor-pointer font-bold">
-                      <input
-                        type="checkbox"
-                        checked={saveToAccount}
-                        onChange={(e) => setSaveToAccount(e.target.checked)}
-                        className="w-4 h-4 accent-[#D9B24C]"
-                      />
-                      <span>{t('حفظ هذا المقاس في حسابي للطلبات القادمة', 'Save Rx to my account')}</span>
-                    </label>
-                    {saveToAccount && (
-                      <input
-                        type="text"
-                        value={rxLabel}
-                        onChange={(e) => setRxLabel(e.target.value)}
-                        placeholder={t('اسم المقاس (مثلاً: نظارة القراءة 2026)', 'Rx Label')}
-                        className="w-full min-h-[44px] px-3 rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-900 text-base"
-                      />
-                    )}
+              {/* Quick guide + Save Rx */}
+              <div className="p-3 rounded-xl bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 space-y-2">
+                <button
+                  type="button"
+                  onClick={() => setShowHowToRead((prev) => !prev)}
+                  className="min-h-[36px] inline-flex items-center gap-1.5 font-extrabold text-[#B38B2D] dark:text-[#E2BD5B]"
+                >
+                  <HelpCircle className="w-4 h-4" />
+                  <span>{t('كيف أقرأ روشتتي الطبية؟', 'How to read my prescription?')}</span>
+                  {showHowToRead ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
+                </button>
+
+                {showHowToRead && (
+                  <div className="p-3 rounded-xl bg-white dark:bg-[#131C2E] border border-slate-200 dark:border-slate-700 space-y-1 text-[11px] leading-relaxed text-slate-600 dark:text-slate-300">
+                    <div>• {t('OD تعني العين اليمنى، وOS تعني العين اليسرى.', 'OD = Right Eye, OS = Left Eye.')}</div>
+                    <div>• {t('(-) في SPH تعني قصر نظر، و(+) تعني طول نظر.', '(-) SPH = nearsighted, (+) = farsighted.')}</div>
+                    <div>• {t('إذا كانت قيمة CYL تساوي 0.00، فلا يلزم تحديد زاوية AXIS.', 'When CYL is 0.00, AXIS is disabled.')}</div>
                   </div>
                 )}
               </div>
-            )}
 
-            {/* Choice 2: Upload Rx Photo */}
-            {choice === 'image' && (
-              <div className="space-y-4">
-                <div className="p-4 rounded-xl border-2 border-dashed border-slate-300 dark:border-slate-700 bg-slate-50 dark:bg-slate-900 text-center space-y-3">
-                  <p className="text-slate-600 dark:text-slate-300 font-semibold">
-                    {t(
-                      'التقط صورة واضحة للروشتة أو اخترها من المعرض (يتم ضغطها تلقائياً حتى 1200px)',
-                      'Take a photo or choose from gallery (auto-compressed to max 1200px)'
-                    )}
-                  </p>
-
-                  <div className="flex flex-wrap justify-center gap-2.5">
-                    <label
-                      style={{ backgroundColor: appearance.primaryColor }}
-                      className="min-h-[44px] px-4 rounded-xl text-white font-bold inline-flex items-center gap-1.5 cursor-pointer"
-                    >
-                      <Camera className="w-4 h-4" />
-                      <span>{t('فتح الكاميرا', 'Take Photo')}</span>
-                      <input
-                        type="file"
-                        accept="image/*"
-                        capture="environment"
-                        onChange={handleImagePick}
-                        className="hidden"
-                      />
-                    </label>
-
-                    <label
-                      style={{ backgroundColor: appearance.secondaryColor, color: appearance.primaryColor }}
-                      className="min-h-[44px] px-4 rounded-xl font-extrabold inline-flex items-center gap-1.5 cursor-pointer"
-                    >
-                      <ImagePlus className="w-4 h-4" />
-                      <span>{t('اختيار من المعرض', 'From Gallery')}</span>
-                      <input
-                        type="file"
-                        accept="image/*"
-                        onChange={handleImagePick}
-                        className="hidden"
-                      />
-                    </label>
-                  </div>
-
-                  {uploading && (
-                    <div className="space-y-1.5 pt-2">
-                      <div className="flex items-center justify-center gap-2 font-bold text-[#B38B2D]">
-                        <Loader2 className="w-4 h-4 animate-spin" />
-                        <span>{t(`جارٍ رفع الصورة... ${uploadProgress}%`, `Uploading... ${uploadProgress}%`)}</span>
-                      </div>
-                      <div className="h-2 rounded-full bg-slate-200 dark:bg-slate-800 overflow-hidden max-w-xs mx-auto">
-                        <div
-                          className="h-full bg-[#D9B24C] transition-all duration-200"
-                          style={{ width: `${uploadProgress}%` }}
-                        />
-                      </div>
-                    </div>
-                  )}
-
-                  {uploadError && (
-                    <p className="text-rose-600 dark:text-rose-400 font-bold">{uploadError}</p>
-                  )}
-
-                  {imageUrl && (
-                    <div className="pt-2 space-y-2">
-                      <img
-                        src={imageUrl}
-                        alt={t('معاينة الروشتة', 'Prescription preview')}
-                        className="max-h-56 mx-auto rounded-xl border border-slate-200 dark:border-slate-700 object-contain"
-                      />
-                      <button
-                        type="button"
-                        onClick={() => void handleDeleteUploadedImage()}
-                        className="min-h-[40px] px-3 rounded-lg bg-rose-50 dark:bg-rose-950/30 text-rose-700 dark:text-rose-400 font-bold inline-flex items-center gap-1"
-                      >
-                        <Trash2 className="w-3.5 h-3.5" />
-                        {t('حذف الصورة', 'Delete Photo')}
-                      </button>
-                    </div>
+              {!isGuest && (
+                <div className="p-3 rounded-xl border border-slate-200 dark:border-slate-800 space-y-2">
+                  <label className="flex items-center gap-2 cursor-pointer font-bold">
+                    <input
+                      type="checkbox"
+                      checked={saveToAccount}
+                      onChange={(e) => setSaveToAccount(e.target.checked)}
+                      className="w-4 h-4 accent-[#11223E]"
+                    />
+                    <span>{t('حفظ هذا المقاس في حسابي للطلبات القادمة', 'Save Rx to my account')}</span>
+                  </label>
+                  {saveToAccount && (
+                    <input
+                      type="text"
+                      value={rxLabel}
+                      onChange={(e) => setRxLabel(e.target.value)}
+                      placeholder={t('اسم المقاس (مثلاً: نظارة القراءة 2026)', 'Rx Label')}
+                      className="w-full min-h-[44px] px-3 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-900 text-sm"
+                    />
                   )}
                 </div>
+              )}
+            </div>
+          )}
+
+          {/* Upload Rx Photo Section */}
+          {choice === 'image' && (
+            <div className="space-y-3">
+              <div className="flex items-center gap-3">
+                <div className="h-px flex-1 bg-slate-200 dark:bg-slate-800" />
+                <span className="text-xs font-semibold text-slate-500 dark:text-slate-400">
+                  {t('ارفع صورة وصفة الطبيب', 'Upload doctor prescription photo')}
+                </span>
+                <div className="h-px flex-1 bg-slate-200 dark:bg-slate-800" />
               </div>
-            )}
 
-            {/* Choice 3: Send Later via WhatsApp */}
-            {choice === 'later' && (
-              <div className="p-4 rounded-xl bg-emerald-50 dark:bg-emerald-950/25 border border-emerald-200 dark:border-emerald-900/50 space-y-2">
-                <div className="flex items-center gap-2 font-extrabold text-emerald-800 dark:text-emerald-300">
-                  <MessageCircle className="w-4 h-4" />
-                  {t('إرسال المقاس عبر الواتساب بعد الطلب', 'Send Prescription via WhatsApp Later')}
-                </div>
-                <p className="text-slate-600 dark:text-slate-300 leading-relaxed">
+              <div className="p-4 rounded-xl border-2 border-dashed border-slate-300 dark:border-slate-700 bg-slate-50 dark:bg-slate-900 text-center space-y-3">
+                <p className="text-slate-600 dark:text-slate-300 font-semibold">
                   {t(
-                    'لا تقلق! سيتم حفظ هذا الاختيار مع طلبك، ويمكنك إرسال صورة الكشف أو مقاساتك لفريق البصريات عبر الواتساب فور إتمام الطلب.',
-                    'Your choice will be noted on this item so you can share your Rx on WhatsApp right after checkout.'
+                    'التقط صورة واضحة للروشتة أو اخترها من المعرض (تُضغط تلقائياً حتى 1200px)',
+                    'Take a photo or choose from gallery (auto-compressed up to 1200px)'
                   )}
                 </p>
-              </div>
-            )}
-          </div>
 
-          {/* Live Price Breakdown */}
+                <div className="flex flex-wrap justify-center gap-2.5">
+                  <label className="min-h-[46px] px-4 rounded-xl bg-[#11223E] text-white font-bold inline-flex items-center gap-1.5 cursor-pointer">
+                    <Camera className="w-4 h-4" />
+                    <span>{t('فتح الكاميرا', 'Take Photo')}</span>
+                    <input
+                      type="file"
+                      accept="image/*"
+                      capture="environment"
+                      onChange={handleImagePick}
+                      className="hidden"
+                    />
+                  </label>
+
+                  <label className="min-h-[46px] px-4 rounded-xl border-2 border-dashed border-slate-300 dark:border-slate-600 bg-white dark:bg-[#131C2E] font-extrabold inline-flex items-center gap-1.5 cursor-pointer">
+                    <ImagePlus className="w-4 h-4" />
+                    <span>{t('رفع صورة المقاس / الوصفة', 'From Gallery')}</span>
+                    <input
+                      type="file"
+                      accept="image/*"
+                      onChange={handleImagePick}
+                      className="hidden"
+                    />
+                  </label>
+                </div>
+
+                {uploading && (
+                  <div className="space-y-1.5 pt-2">
+                    <div className="flex items-center justify-center gap-2 font-bold text-[#B38B2D]">
+                      <Loader2 className="w-4 h-4 animate-spin" />
+                      <span>{t(`جارٍ رفع الصورة... ${uploadProgress}%`, `Uploading... ${uploadProgress}%`)}</span>
+                    </div>
+                    <div className="h-2 rounded-full bg-slate-200 dark:bg-slate-800 overflow-hidden max-w-xs mx-auto">
+                      <div
+                        className="h-full bg-[#D9B24C] transition-all duration-200"
+                        style={{ width: `${uploadProgress}%` }}
+                      />
+                    </div>
+                  </div>
+                )}
+
+                {uploadError && (
+                  <p className="text-rose-600 dark:text-rose-400 font-bold">{uploadError}</p>
+                )}
+
+                {imageUrl && (
+                  <div className="pt-2 space-y-2">
+                    <img
+                      src={imageUrl}
+                      alt={t('معاينة الروشتة', 'Prescription preview')}
+                      className="max-h-56 mx-auto rounded-xl border border-slate-200 dark:border-slate-700 object-contain"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => void handleDeleteUploadedImage()}
+                      className="min-h-[40px] px-3 rounded-lg bg-rose-50 dark:bg-rose-950/30 text-rose-700 dark:text-rose-400 font-bold inline-flex items-center gap-1"
+                    >
+                      <Trash2 className="w-3.5 h-3.5" />
+                      {t('حذف الصورة', 'Delete Photo')}
+                    </button>
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
+
+          {/* Price Breakdown */}
           {!isContact && (
-            <div className="p-3.5 rounded-xl bg-[#11223E]/5 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 space-y-1.5">
+            <div className="p-3.5 rounded-xl bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 space-y-1.5">
               <div className="font-extrabold text-[#11223E] dark:text-[#E2BD5B]">
                 {t('ملخص تسعير العدسات المختارة:', 'Selected Lens Pricing Breakdown:')}
               </div>
               <div className="flex justify-between">
-                <span>{t('نوع الرؤية:', 'Vision Type:')} {getVisionTypeLabel(pricing.visionType, lensOptions, locale)}</span>
+                <span>
+                  {t('نوع الرؤية:', 'Vision Type:')}{' '}
+                  {getVisionTypeLabel(pricing.visionType, lensOptions, locale)}
+                </span>
                 <span className="font-mono-num font-bold">
-                  {pricing.visionTypePriceSdg > 0 ? `+${formatSdg(pricing.visionTypePriceSdg)}` : t('مجاني', 'Free')}
+                  {pricing.visionTypePriceSdg > 0
+                    ? `+${formatSdg(pricing.visionTypePriceSdg)}`
+                    : t('مجاني', 'Free')}
                 </span>
               </div>
               {pricing.extraOptions.map((extId) => {
@@ -1457,7 +1390,7 @@ export const PrescriptionSheet: React.FC<PrescriptionSheetProps> = ({
             </div>
           )}
 
-          {/* Optional Notes */}
+          {/* Notes */}
           <div>
             <label className="block font-bold mb-1">
               {t('ملاحظات إضافية لفني البصريات (اختياري)', 'Additional Optician Notes (Optional)')}
@@ -1466,18 +1399,20 @@ export const PrescriptionSheet: React.FC<PrescriptionSheetProps> = ({
               rows={2}
               value={notes}
               onChange={(e) => setNotes(e.target.value)}
-              placeholder={t('مثلاً: عدسة مضغوطة رفيعة، أو استخدام للقيادة الليلية...', 'e.g., high-index thin lenses...')}
-              className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-900 text-base"
+              placeholder={t(
+                'مثلاً: عدسة مضغوطة رفيعة، أو استخدام للقيادة الليلية...',
+                'e.g., high-index thin lenses...'
+              )}
+              className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-900 text-sm"
             />
           </div>
 
-          {/* Medical Disclaimer */}
           <div className="p-3 rounded-xl bg-slate-100 dark:bg-slate-900/80 border border-slate-200 dark:border-slate-800 flex items-start gap-2 text-[11px] text-slate-600 dark:text-slate-400">
             <ShieldAlert className="w-4 h-4 shrink-0 mt-0.5 text-amber-600" />
             <span>
               {t(
-                'تنبيه طبي: هذا المقاس يُستخدم لتجهيز عدساتك حسب وصفتك المعتمدة فقط، ولا يغني عن فحص العين الدوري لدى طبيب العيون أو أخصائي البصريات.',
-                'Medical Disclaimer: Entered prescription data is used solely to prepare your eyewear per your optometrist prescription and does not replace a clinical eye exam.'
+                'تنبيه طبي: هذا المقاس يُستخدم لتجهيز عدساتك حسب وصفتك المعتمدة فقط، ولا يغني عن فحص العين الدوري.',
+                'Medical Disclaimer: Prescription data is used solely to prepare your lenses and does not replace regular eye exams.'
               )}
             </span>
           </div>
@@ -1490,7 +1425,7 @@ export const PrescriptionSheet: React.FC<PrescriptionSheetProps> = ({
         </div>
 
         {/* Sticky Footer */}
-        <div className="px-4 sm:px-6 py-3.5 border-t border-slate-200 dark:border-slate-800 bg-white dark:bg-[#131C2E] flex flex-wrap items-center justify-between gap-2 shrink-0">
+        <div className="px-4 sm:px-6 py-3.5 border-t border-slate-200 dark:border-slate-800 bg-white dark:bg-[#131C2E] pb-[calc(14px+env(safe-area-inset-bottom))] flex flex-wrap items-center justify-between gap-2 shrink-0">
           <div className="flex items-center gap-2">
             {onRemove && (
               <button
@@ -1519,10 +1454,10 @@ export const PrescriptionSheet: React.FC<PrescriptionSheetProps> = ({
               type="button"
               disabled={uploading}
               onClick={handleConfirm}
-              style={{ backgroundColor: appearance.secondaryColor, color: appearance.primaryColor }}
-              className="min-h-[44px] px-5 rounded-xl text-xs font-extrabold inline-flex items-center gap-1.5 disabled:opacity-50"
+              style={{ backgroundColor: appearance.primaryColor }}
+              className="min-h-[46px] px-5 rounded-xl text-white dark:bg-[#D9B24C] dark:text-[#11223E] text-xs font-extrabold inline-flex items-center gap-1.5 disabled:opacity-50"
             >
-              <Check className="w-4 h-4" />
+              <Check className="w-4 h-4 text-[#D9B24C] dark:text-[#11223E]" />
               <span>
                 {t('حفظ الاختيارات والمقاس', 'Save Lens & Rx')}
                 {pricing.totalExtraSdg > 0 ? ` (+${formatSdg(pricing.totalExtraSdg)})` : ''}

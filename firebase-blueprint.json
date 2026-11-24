@@ -12,6 +12,7 @@
         "role": { "type": "string", "enum": ["customer", "staff", "admin"] },
         "permissions": { "type": "array" },
         "isBlocked": { "type": "boolean" },
+        "blocked": { "type": "boolean" },
         "isAnonymous": { "type": "boolean" },
         "emailVerified": { "type": "boolean" },
         "favoriteProductIds": { "type": "array" },
@@ -210,6 +211,17 @@
         "email": { "type": "string", "maxLength": 160 }
       },
       "required": ["uid", "role"]
+    },
+    "AdminLoginAttempt": {
+      "title": "AdminLoginAttempt",
+      "description": "Server-side rate limiting and 15-minute lockout counter keyed by SHA-256 email hash.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 64, "pattern": "^[a-f0-9]{64}$" },
+        "failedCount": { "type": "integer", "minimum": 1, "maximum": 5 },
+        "lastAttemptAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["id", "failedCount", "lastAttemptAt"]
     }
   },
   "firestore": {
@@ -264,6 +276,10 @@
     "/admins/{userId}": {
       "schema": { "$ref": "#/entities/AdminRecord" },
       "description": "Trusted admin and staff RBAC documents."
+    },
+    "/adminLoginAttempts/{attemptId}": {
+      "schema": { "$ref": "#/entities/AdminLoginAttempt" },
+      "description": "Server-side failed admin login attempt counters keyed by email hash."
     }
   }
 }
