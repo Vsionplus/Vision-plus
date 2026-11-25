@@ -236,7 +236,9 @@ export type OrderStatus =
   | 'delivered'
   | 'cancelled';
 
-export type PaymentMethod = 'cod' | 'bankak';
+export type PaymentMethod = 'cod' | 'bankak' | 'split';
+
+export type SplitPaymentMode = 'percent' | 'fixed';
 
 export type CancelRequestStatus = 'pending' | 'approved' | 'rejected';
 
@@ -304,6 +306,8 @@ export interface Order {
   totalSdg: number;
   couponCode?: string;
   paymentMethod: PaymentMethod;
+  bankakPaidSdg?: number;
+  codRemainingSdg?: number;
   bankTransferReceiptUrl?: string;
   bankTransferReference?: string;
   bankTransferVerified?: boolean;
@@ -539,6 +543,10 @@ export interface StoreSettings {
   bankakAccountNumber: string;
   bankakBranchAr: string;
   otherBankDetailsAr: string;
+  splitPaymentEnabled?: boolean;
+  splitPaymentMode?: SplitPaymentMode;
+  splitPaymentPercent?: number;
+  splitPaymentFixedSdg?: number;
   minimumOrderSdg: number;
   requireEmailVerification: boolean;
   maintenanceMode: boolean;

@@ -1,4 +1,4 @@
-import { Locale, OrderStatus } from '../types';
+import { Locale, Order, OrderStatus, PaymentMethod, StoreSettings } from '../types';
 
 /**
  * Formats Sudanese Pound (SDG) values with thousands separators and NO decimals:
@@ -62,4 +62,61 @@ export function getOrderStatusLabel(status: OrderStatus, locale: Locale): string
     cancelled: { ar: 'ملغي', en: 'Cancelled' },
   };
   return labels[status][locale];
+}
+
+export function getPaymentMethodLabel(method: PaymentMethod, locale: Locale): string {
+  if (method === 'bankak') {
+    return locale === 'ar' ? 'تحويل بنكك' : 'Bankak Transfer';
+  }
+  if (method === 'split') {
+    return locale === 'ar' ? 'دفع مقسّم (بنكك + عند الاستلام)' : 'Split (Bankak + COD)';
+  }
+  return locale === 'ar' ? 'الدفع عند الاستلام' : 'Cash on Delivery';
+}
+
+export function calculateSplitAmounts(
+  totalSdg: number,
+  settings: Pick<
+    StoreSettings,
+    'splitPaymentMode' | 'splitPaymentPercent' | 'splitPaymentFixedSdg'
+  >
+): { bankakAmount: number; codAmount: number } {
+  const cleanTotal = Math.max(0, Math.round(totalSdg || 0));
+  if (cleanTotal <= 0) {
+    return { bankakAmount: 0, codAmount: 0 };
+  }
+
+  let bankakAmount = 0;
+  if (settings.splitPaymentMode === 'fixed') {
+    const rawFixed = Math.max(0, Math.round(settings.splitPaymentFixedSdg ?? 15000));
+    bankakAmount = Math.min(cleanTotal, rawFixed);
+  } else {
+    const pct = Math.max(1, Math.min(99, Math.round(settings.splitPaymentPercent ?? 50)));
+    bankakAmount = Math.min(cleanTotal, Math.max(0, Math.round((cleanTotal * pct) / 100)));
+  }
+
+  const codAmount = Math.max(0, cleanTotal - bankakAmount);
+  return { bankakAmount, codAmount };
+}
+
+export function getOrderPaymentBreakdown(
+  order: Pick<Order, 'paymentMethod' | 'totalSdg' | 'bankakPaidSdg' | 'codRemainingSdg'>
+): { bankakSdg: number; codSdg: number } {
+  const total = Math.max(0, Math.round(order.totalSdg || 0));
+  if (order.paymentMethod === 'bankak') {
+    const bankakSdg = Math.min(total, Math.max(0, Math.round(order.bankakPaidSdg ?? total)));
+    return {
+      bankakSdg,
+      codSdg: Math.max(0, Math.round(order.codRemainingSdg ?? total - bankakSdg)),
+    };
+  }
+  if (order.paymentMethod === 'split') {
+    const bankakSdg = Math.min(total, Math.max(0, Math.round(order.bankakPaidSdg ?? 0)));
+    const codSdg = Math.max(0, Math.round(order.codRemainingSdg ?? total - bankakSdg));
+    return { bankakSdg, codSdg };
+  }
+  return {
+    bankakSdg: Math.max(0, Math.round(order.bankakPaidSdg ?? 0)),
+    codSdg: Math.max(0, Math.round(order.codRemainingSdg ?? total)),
+  };
 }

@@ -293,6 +293,8 @@ service cloud.firestore {
           'totalSdg',
           'couponCode',
           'paymentMethod',
+          'bankakPaidSdg',
+          'codRemainingSdg',
           'bankTransferReference',
           'bankTransferReceiptUrl',
           'bankTransferVerified',
@@ -329,7 +331,10 @@ service cloud.firestore {
         && data.deliveryFeeSdg is number && data.deliveryFeeSdg >= 0
         && data.totalSdg is number && data.totalSdg >= 0
         && (!('couponCode' in data) || (data.couponCode is string && data.couponCode.size() <= 40))
-        && data.paymentMethod is string && data.paymentMethod in ['cod', 'bankak']
+        && data.paymentMethod is string && data.paymentMethod in ['cod', 'bankak', 'split']
+        && (!('bankakPaidSdg' in data) || (data.bankakPaidSdg is number && data.bankakPaidSdg >= 0 && data.bankakPaidSdg <= data.totalSdg))
+        && (!('codRemainingSdg' in data) || (data.codRemainingSdg is number && data.codRemainingSdg >= 0 && data.codRemainingSdg <= data.totalSdg))
+        && (data.paymentMethod != 'split' || ('bankakPaidSdg' in data && 'codRemainingSdg' in data && data.bankakPaidSdg + data.codRemainingSdg == data.totalSdg))
         && (!('bankTransferReference' in data) || (data.bankTransferReference is string && data.bankTransferReference.size() <= 120))
         && (!('bankTransferReceiptUrl' in data) || (data.bankTransferReceiptUrl is string && data.bankTransferReceiptUrl.size() <= 800000))
         && (!('bankTransferVerified' in data) || data.bankTransferVerified is bool)
@@ -748,6 +753,8 @@ service cloud.firestore {
             'totalSdg',
             'couponCode',
             'paymentMethod',
+            'bankakPaidSdg',
+            'codRemainingSdg',
             'bankTransferReference',
             'bankTransferReceiptUrl',
             'status',
@@ -806,6 +813,8 @@ service cloud.firestore {
               'subtotalSdg',
               'deliveryFeeSdg',
               'totalSdg',
+              'bankakPaidSdg',
+              'codRemainingSdg',
               'bankTransferReference',
               'bankTransferReceiptUrl',
               'customerNote',

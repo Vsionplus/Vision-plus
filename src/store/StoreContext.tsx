@@ -87,7 +87,7 @@ import {
   stripUndefined,
 } from '../lib/firebase';
 import { hasCustomLensOrRx, resolveExtraOptions, resolveVisionType } from '../utils/prescription';
-import { getOrderStatusLabel } from '../utils/format';
+import { calculateSplitAmounts, formatSdg, getOrderStatusLabel } from '../utils/format';
 import {
   AdminLoginAttemptStatus,
   clearAdminAttempts,
@@ -261,6 +261,8 @@ export interface AdminEditOrderPayload {
   discountSdg: number;
   deliveryFeeSdg: number;
   paymentMethod: PaymentMethod;
+  bankakPaidSdg?: number;
+  codRemainingSdg?: number;
   bankTransferReference?: string;
   adminNote?: string;
 }
@@ -458,6 +460,10 @@ export function normalizeStoreSettings(raw?: Partial<StoreSettings>): StoreSetti
     ...STORE_SETTINGS_SEED,
     ...(raw || {}),
     requireEmailVerification: raw?.requireEmailVerification ?? true,
+    splitPaymentEnabled: raw?.splitPaymentEnabled ?? true,
+    splitPaymentMode: raw?.splitPaymentMode === 'fixed' ? 'fixed' : 'percent',
+    splitPaymentPercent: Math.max(1, Math.min(99, Math.round(raw?.splitPaymentPercent ?? 50))),
+    splitPaymentFixedSdg: Math.max(0, Math.round(raw?.splitPaymentFixedSdg ?? 15000)),
     email: raw?.email ?? STORE_SETTINGS_SEED.email,
     contactVisibility: {
       ...STORE_SETTINGS_SEED.contactVisibility,
@@ -2473,9 +2479,17 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         return null;
       }
 
-      const totalSdg = Math.max(0, subtotalSdg - payload.discountSdg + payload.deliveryFeeSdg);
-      const initialStatus: OrderStatus =
-        payload.paymentMethod === 'bankak' ? 'awaiting_payment_verification' : 'pending';
+      const totalSdg = Math.max(0, Math.round(subtotalSdg - payload.discountSdg + payload.deliveryFeeSdg));
+      const hasBankakPart = payload.paymentMethod === 'bankak' || payload.paymentMethod === 'split';
+      const initialStatus: OrderStatus = hasBankakPart
+        ? 'awaiting_payment_verification'
+        : 'pending';
+      const splitCalc =
+        payload.paymentMethod === 'split'
+          ? calculateSplitAmounts(totalSdg, stateRef.current.settings)
+          : payload.paymentMethod === 'bankak'
+          ? { bankakAmount: totalSdg, codAmount: 0 }
+          : { bankakAmount: 0, codAmount: totalSdg };
       const orderId = `ORD-2026-${Math.floor(1050 + Math.random() * 8900)}`;
       const nowIso = new Date().toISOString();
 
@@ -2522,6 +2536,8 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         totalSdg,
         couponCode: payload.couponCode,
         paymentMethod: payload.paymentMethod,
+        bankakPaidSdg: splitCalc.bankakAmount,
+        codRemainingSdg: splitCalc.codAmount,
         bankTransferReference: payload.bankTransferReference,
         bankTransferReceiptUrl: payload.bankTransferReceiptUrl,
         customerNote: payload.customerNote?.trim() || undefined,
@@ -2549,19 +2565,27 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         customerUid: current.uid,
         titleAr:
           initialStatus === 'awaiting_payment_verification'
-            ? `تم استلام طلبك #${orderId} وإشعار بنكك`
+            ? payload.paymentMethod === 'split'
+              ? `تم استلام طلبك #${orderId} وعربون بنكك`
+              : `تم استلام طلبك #${orderId} وإشعار بنكك`
             : `تم تأكيد استلام طلبك #${orderId}`,
         titleEn:
           initialStatus === 'awaiting_payment_verification'
-            ? `Order #${orderId} & Bankak Receipt Received`
+            ? payload.paymentMethod === 'split'
+              ? `Order #${orderId} & Bankak Deposit Received`
+              : `Order #${orderId} & Bankak Receipt Received`
             : `Order #${orderId} Received`,
         bodyAr:
           initialStatus === 'awaiting_payment_verification'
-            ? 'سيقوم فريقنا بمراجعة إيصال التحويل البنكي وتأكيد الطلب قريباً.'
+            ? payload.paymentMethod === 'split'
+              ? `نراجع الآن إيصال عربون بنكك (${formatSdg(splitCalc.bankakAmount)})، والمتبقي عند الاستلام ${formatSdg(splitCalc.codAmount)}.`
+              : 'سيقوم فريقنا بمراجعة إيصال التحويل البنكي وتأكيد الطلب قريباً.'
             : 'طلبك الآن قيد المراجعة وسيتواصل معك المندوب.',
         bodyEn:
           initialStatus === 'awaiting_payment_verification'
-            ? 'Our team is verifying your Bankak transfer receipt.'
+            ? payload.paymentMethod === 'split'
+              ? `We are verifying your Bankak deposit (${formatSdg(splitCalc.bankakAmount)}). Remaining COD: ${formatSdg(splitCalc.codAmount)}.`
+              : 'Our team is verifying your Bankak transfer receipt.'
             : 'Your COD order is pending confirmation.',
         isRead: false,
         createdAt: nowIso,
@@ -2639,7 +2663,24 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
           0
         );
         const subtotalSdg = itemsSubtotalSdg + lensOptionsTotalSdg;
-        const totalSdg = Math.max(0, subtotalSdg - order.discountSdg + deliveryFeeSdg);
+        const totalSdg = Math.max(0, Math.round(subtotalSdg - order.discountSdg + deliveryFeeSdg));
+        const hasBankakPart = order.paymentMethod === 'bankak' || order.paymentMethod === 'split';
+        const nextBankakPaidSdg =
+          order.paymentMethod === 'bankak'
+            ? totalSdg
+            : order.paymentMethod === 'split'
+            ? Math.min(
+                totalSdg,
+                Math.max(
+                  0,
+                  Math.round(
+                    order.bankakPaidSdg ??
+                      calculateSplitAmounts(totalSdg, stateRef.current.settings).bankakAmount
+                  )
+                )
+              )
+            : 0;
+        const nextCodRemainingSdg = Math.max(0, totalSdg - nextBankakPaidSdg);
 
         const patch: Partial<Order> = stripUndefined({
           customerName: payload.customerName.trim(),
@@ -2665,14 +2706,14 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
           subtotalSdg,
           deliveryFeeSdg,
           totalSdg,
-          bankTransferReference:
-            order.paymentMethod === 'bankak'
-              ? payload.bankTransferReference?.trim() || order.bankTransferReference
-              : order.bankTransferReference,
-          bankTransferReceiptUrl:
-            order.paymentMethod === 'bankak'
-              ? payload.bankTransferReceiptUrl || order.bankTransferReceiptUrl
-              : order.bankTransferReceiptUrl,
+          bankakPaidSdg: nextBankakPaidSdg,
+          codRemainingSdg: nextCodRemainingSdg,
+          bankTransferReference: hasBankakPart
+            ? payload.bankTransferReference?.trim() || order.bankTransferReference
+            : order.bankTransferReference,
+          bankTransferReceiptUrl: hasBankakPart
+            ? payload.bankTransferReceiptUrl || order.bankTransferReceiptUrl
+            : order.bankTransferReceiptUrl,
           customerNote: payload.customerNote?.trim() || undefined,
           lastEditedAt: nowIso,
           lastEditedBy: current.uid,
@@ -2689,14 +2730,13 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
             doc(db, 'orders', orderId),
             stripUndefined({
               ...patch,
-              bankTransferReference:
-                order.paymentMethod === 'bankak'
-                  ? payload.bankTransferReference?.trim()
-                    ? payload.bankTransferReference.trim()
-                    : order.bankTransferReference
-                    ? deleteField()
-                    : undefined
-                  : undefined,
+              bankTransferReference: hasBankakPart
+                ? payload.bankTransferReference?.trim()
+                  ? payload.bankTransferReference.trim()
+                  : order.bankTransferReference
+                  ? deleteField()
+                  : undefined
+                : undefined,
               customerNote: payload.customerNote?.trim()
                 ? payload.customerNote.trim()
                 : order.customerNote
@@ -2794,8 +2834,24 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       const subtotalSdg = itemsSubtotalSdg + lensOptionsTotalSdg;
       const cleanDiscount = Math.max(0, Math.round(payload.discountSdg || 0));
       const cleanDelivery = Math.max(0, Math.round(payload.deliveryFeeSdg || 0));
-      const totalSdg = Math.max(0, subtotalSdg - cleanDiscount + cleanDelivery);
+      const totalSdg = Math.max(0, Math.round(subtotalSdg - cleanDiscount + cleanDelivery));
       const cleanAdminNote = payload.adminNote?.trim() || undefined;
+      const adminBankakPaidSdg =
+        payload.paymentMethod === 'bankak'
+          ? totalSdg
+          : payload.paymentMethod === 'split'
+          ? Math.min(
+              totalSdg,
+              Math.max(
+                0,
+                Math.round(
+                  payload.bankakPaidSdg ??
+                    calculateSplitAmounts(totalSdg, stateRef.current.settings).bankakAmount
+                )
+              )
+            )
+          : 0;
+      const adminCodRemainingSdg = Math.max(0, totalSdg - adminBankakPaidSdg);
 
       const patch: Partial<Order> = stripUndefined({
         customerName: payload.customerName.trim(),
@@ -2823,6 +2879,8 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         deliveryFeeSdg: cleanDelivery,
         totalSdg,
         paymentMethod: payload.paymentMethod,
+        bankakPaidSdg: adminBankakPaidSdg,
+        codRemainingSdg: adminCodRemainingSdg,
         bankTransferReference: payload.bankTransferReference?.trim() || undefined,
         adminNote: cleanAdminNote,
         lastEditedAt: nowIso,
@@ -3005,7 +3063,7 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
           }
 
           wasVerifiedBankak =
-            orderData.paymentMethod === 'bankak' &&
+            (orderData.paymentMethod === 'bankak' || orderData.paymentMethod === 'split') &&
             (orderData.bankTransferVerified === true ||
               orderData.status === 'confirmed' ||
               orderData.status === 'preparing');
@@ -3356,15 +3414,27 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       if (role !== 'admin' && role !== 'staff') return;
       const nowIso = new Date().toISOString();
       const targetOrder = stateRef.current.orders.find((o) => o.id === orderId);
+      const isSplitOrder = targetOrder?.paymentMethod === 'split';
+      const splitRemaining = targetOrder
+        ? Math.max(0, targetOrder.codRemainingSdg ?? targetOrder.totalSdg - (targetOrder.bankakPaidSdg ?? 0))
+        : 0;
       const notif: AppNotification | null =
         targetOrder?.customerUid
           ? {
               id: `n_${Date.now()}`,
               customerUid: targetOrder.customerUid,
-              titleAr: `تم اعتماد تحويل بنكك للطلب #${orderId}`,
-              titleEn: `Bankak Transfer Approved for #${orderId}`,
-              bodyAr: 'تم تأكيد استلام المبلغ بنجاح، وطلبك الآن في مرحلة التجهيز.',
-              bodyEn: 'Your transfer has been verified and your order is confirmed.',
+              titleAr: isSplitOrder
+                ? `تم اعتماد عربون بنكك للطلب #${orderId}`
+                : `تم اعتماد تحويل بنكك للطلب #${orderId}`,
+              titleEn: isSplitOrder
+                ? `Bankak Deposit Approved for #${orderId}`
+                : `Bankak Transfer Approved for #${orderId}`,
+              bodyAr: isSplitOrder
+                ? `تم تأكيد استلام عربون بنكك، وطلبك الآن في مرحلة التجهيز. المتبقي عند الاستلام: ${formatSdg(splitRemaining)}.`
+                : 'تم تأكيد استلام المبلغ بنجاح، وطلبك الآن في مرحلة التجهيز.',
+              bodyEn: isSplitOrder
+                ? `Your Bankak deposit is verified and your order is confirmed. Remaining COD: ${formatSdg(splitRemaining)}.`
+                : 'Your transfer has been verified and your order is confirmed.',
               isRead: false,
               createdAt: nowIso,
               deepLinkType: 'order',

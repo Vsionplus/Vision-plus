@@ -28,9 +28,12 @@ import { useStore } from '../../store/StoreContext';
 import { Order, OrderItem, OrderStatus, PaymentMethod } from '../../types';
 import { useAdminSecurity } from './AdminGuard';
 import {
+  calculateSplitAmounts,
   formatSdg,
   formatShortDate,
+  getOrderPaymentBreakdown,
   getOrderStatusLabel,
+  getPaymentMethodLabel,
   isValidSudanPhone,
   normalizeSudanPhone,
 } from '../../utils/format';
@@ -99,6 +102,7 @@ export const AdminOrdersModule: React.FC<{
   const [adminEditDiscount, setAdminEditDiscount] = useState(0);
   const [adminEditDelivery, setAdminEditDelivery] = useState(0);
   const [adminEditPayment, setAdminEditPayment] = useState<PaymentMethod>('cod');
+  const [adminEditBankakPaid, setAdminEditBankakPaid] = useState(0);
   const [adminEditBankRef, setAdminEditBankRef] = useState('');
   const [adminEditNote, setAdminEditNote] = useState('');
   const [addProductId, setAddProductId] = useState('');
@@ -149,6 +153,11 @@ export const AdminOrdersModule: React.FC<{
     setAdminEditDiscount(order.discountSdg);
     setAdminEditDelivery(order.deliveryFeeSdg);
     setAdminEditPayment(order.paymentMethod);
+    setAdminEditBankakPaid(
+      order.paymentMethod === 'split'
+        ? getOrderPaymentBreakdown(order).bankakSdg
+        : calculateSplitAmounts(order.totalSdg, settings).bankakAmount
+    );
     setAdminEditBankRef(order.bankTransferReference || '');
     setAdminEditNote(order.adminNote || '');
     setAddProductId('');
@@ -239,8 +248,14 @@ export const AdminOrdersModule: React.FC<{
         discountSdg: Math.max(0, Math.round(adminEditDiscount || 0)),
         deliveryFeeSdg: Math.max(0, Math.round(adminEditDelivery || 0)),
         paymentMethod: adminEditPayment,
+        bankakPaidSdg:
+          adminEditPayment === 'split'
+            ? Math.min(adminEditPricing.total, Math.max(0, Math.round(adminEditBankakPaid || 0)))
+            : undefined,
         bankTransferReference:
-          adminEditPayment === 'bankak' ? adminEditBankRef.trim() || undefined : undefined,
+          adminEditPayment === 'bankak' || adminEditPayment === 'split'
+            ? adminEditBankRef.trim() || undefined
+            : undefined,
         adminNote: adminEditNote.trim() || undefined,
       });
       setEditOrder(null);
@@ -346,6 +361,7 @@ export const AdminOrdersModule: React.FC<{
         >
           <option value="all">{t('كل طرق الدفع', 'All Payment Methods')}</option>
           <option value="bankak">{t('بنكك / تحويل بنكي', 'Bankak Transfer')}</option>
+          <option value="split">{t('دفع مقسّم (بنكك + عند الاستلام)', 'Split (Bankak + COD)')}</option>
           <option value="cod">{t('الدفع عند الاستلام', 'Cash on Delivery')}</option>
         </select>
       </div>
@@ -550,11 +566,45 @@ export const AdminOrdersModule: React.FC<{
                 </div>
               </div>
 
-              {order.paymentMethod === 'bankak' && (
+              {order.paymentMethod === 'split' && (() => {
+                const { bankakSdg, codSdg } = getOrderPaymentBreakdown(order);
+                return (
+                  <div className="grid sm:grid-cols-3 gap-2.5 p-3 rounded-lg bg-amber-50/80 dark:bg-amber-950/25 border border-amber-200 dark:border-amber-900/50 text-xs">
+                    <div>
+                      <div className="text-[11px] text-slate-600 dark:text-slate-300">
+                        {t('طريقة الدفع:', 'Payment:')}
+                      </div>
+                      <div className="font-extrabold text-[#11223E] dark:text-white">
+                        {getPaymentMethodLabel(order.paymentMethod, locale)}
+                      </div>
+                    </div>
+                    <div>
+                      <div className="text-[11px] text-slate-600 dark:text-slate-300">
+                        {t('المدفوع عبر بنكك:', 'Paid via Bankak:')}
+                      </div>
+                      <div className="font-mono-num font-extrabold text-[#11223E] dark:text-[#E2BD5B]">
+                        {formatSdg(bankakSdg)}
+                      </div>
+                    </div>
+                    <div>
+                      <div className="text-[11px] text-slate-600 dark:text-slate-300">
+                        {t('المتبقي للتحصيل عند الاستلام:', 'Collect on Delivery (COD):')}
+                      </div>
+                      <div className="font-mono-num font-extrabold text-emerald-700 dark:text-emerald-400">
+                        {formatSdg(codSdg)}
+                      </div>
+                    </div>
+                  </div>
+                );
+              })()}
+
+              {(order.paymentMethod === 'bankak' || order.paymentMethod === 'split') && (
                 <div className="p-3 rounded-lg bg-stone-50 dark:bg-zinc-900 border border-stone-200 dark:border-zinc-800 flex flex-wrap items-center justify-between gap-3">
                   <div>
                     <div className="font-bold">
-                      {t('إيصال تحويل بنكك:', 'Bankak Receipt:')}{' '}
+                      {order.paymentMethod === 'split'
+                        ? t('إيصال عربون بنكك:', 'Bankak Deposit Receipt:')
+                        : t('إيصال تحويل بنكك:', 'Bankak Receipt:')}{' '}
                       <span className="font-mono-num">{order.bankTransferReference || '—'}</span>
                     </div>
                     {order.bankTransferReceiptUrl && (
@@ -683,15 +733,20 @@ export const AdminOrdersModule: React.FC<{
                 </div>
               )}
 
-              {/* Bankak Refund Tracking for Cancelled Verified Bankak Orders */}
+              {/* Bankak Refund Tracking for Cancelled Verified Bankak / Split Orders */}
               {order.status === 'cancelled' &&
-                order.paymentMethod === 'bankak' &&
+                (order.paymentMethod === 'bankak' || order.paymentMethod === 'split') &&
                 (order.refundRequired || order.bankTransferVerified) && (
                   <div className="p-3.5 rounded-xl bg-amber-50 dark:bg-amber-950/30 border border-amber-300 dark:border-amber-800 flex flex-wrap items-center justify-between gap-3">
                     <div className="space-y-0.5">
                       <div className="font-extrabold text-amber-900 dark:text-amber-200 flex items-center gap-1.5">
                         <AlertTriangle className="w-4 h-4 text-amber-600 shrink-0" />
-                        <span>{t('يجب إرجاع المبلغ للعميل', 'Refund Required to Customer')}</span>
+                        <span>
+                          {t(
+                            `يجب إرجاع المبلغ للعميل (${formatSdg(getOrderPaymentBreakdown(order).bankakSdg)})`,
+                            `Refund Required (${formatSdg(getOrderPaymentBreakdown(order).bankakSdg)})`
+                          )}
+                        </span>
                       </div>
                       {order.refunded && order.refundedAt && (
                         <p className="text-[11px] text-emerald-700 dark:text-emerald-300 font-semibold">
@@ -1288,11 +1343,20 @@ export const AdminOrdersModule: React.FC<{
                 <label className="block font-bold">{t('طريقة الدفع', 'Payment Method')}</label>
                 <select
                   value={adminEditPayment}
-                  onChange={(e) => setAdminEditPayment(e.target.value as PaymentMethod)}
+                  onChange={(e) => {
+                    const nextPm = e.target.value as PaymentMethod;
+                    setAdminEditPayment(nextPm);
+                    if (nextPm === 'split' && adminEditPayment !== 'split') {
+                      setAdminEditBankakPaid(
+                        calculateSplitAmounts(adminEditPricing.total, settings).bankakAmount
+                      );
+                    }
+                  }}
                   className="w-full min-h-[40px] px-3 py-1.5 rounded-lg border border-stone-200 dark:border-zinc-700 bg-stone-50 dark:bg-zinc-900"
                 >
                   <option value="cod">{t('الدفع عند الاستلام', 'Cash on Delivery')}</option>
                   <option value="bankak">{t('تحويل بنكك', 'Bankak Transfer')}</option>
+                  <option value="split">{t('دفع مقسّم (بنكك + عند الاستلام)', 'Split (Bankak + COD)')}</option>
                 </select>
               </div>
               <div className="space-y-1 sm:col-span-2">
@@ -1307,16 +1371,43 @@ export const AdminOrdersModule: React.FC<{
               </div>
             </div>
 
-            {adminEditPayment === 'bankak' && (
-              <div className="space-y-1">
-                <label className="block font-bold">{t('رقم مرجع بنكك', 'Bankak Reference')}</label>
-                <input
-                  dir="ltr"
-                  maxLength={120}
-                  value={adminEditBankRef}
-                  onChange={(e) => setAdminEditBankRef(e.target.value)}
-                  className="w-full min-h-[40px] px-3 py-1.5 rounded-lg border border-stone-200 dark:border-zinc-700 bg-stone-50 dark:bg-zinc-900 font-mono-num"
-                />
+            {(adminEditPayment === 'bankak' || adminEditPayment === 'split') && (
+              <div className="grid sm:grid-cols-2 gap-3">
+                <div className="space-y-1">
+                  <label className="block font-bold">{t('رقم مرجع بنكك', 'Bankak Reference')}</label>
+                  <input
+                    dir="ltr"
+                    maxLength={120}
+                    value={adminEditBankRef}
+                    onChange={(e) => setAdminEditBankRef(e.target.value)}
+                    className="w-full min-h-[40px] px-3 py-1.5 rounded-lg border border-stone-200 dark:border-zinc-700 bg-stone-50 dark:bg-zinc-900 font-mono-num"
+                  />
+                </div>
+                {adminEditPayment === 'split' && (
+                  <div className="space-y-1">
+                    <label className="block font-bold">
+                      {t('المدفوع عبر بنكك (ج.س)', 'Bankak Deposit Amount (SDG)')}
+                    </label>
+                    <input
+                      type="number"
+                      min={0}
+                      max={adminEditPricing.total}
+                      value={adminEditBankakPaid}
+                      onChange={(e) =>
+                        setAdminEditBankakPaid(
+                          Math.min(adminEditPricing.total, Math.max(0, Number(e.target.value) || 0))
+                        )
+                      }
+                      className="w-full min-h-[40px] px-3 py-1.5 rounded-lg border border-stone-200 dark:border-zinc-700 bg-stone-50 dark:bg-zinc-900 font-mono-num"
+                    />
+                    <div className="text-[11px] text-emerald-700 dark:text-emerald-400 font-bold">
+                      {t('المتبقي عند الاستلام:', 'Remaining COD:')}{' '}
+                      {formatSdg(
+                        Math.max(0, adminEditPricing.total - Math.min(adminEditPricing.total, Math.max(0, adminEditBankakPaid || 0)))
+                      )}
+                    </div>
+                  </div>
+                )}
               </div>
             )}
 

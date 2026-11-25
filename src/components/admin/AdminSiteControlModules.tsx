@@ -19,6 +19,7 @@ import { IMG_HERO_BOUTIQUE } from '../../data/seedData';
 import { EXTRA_OPTION_IDS, VISION_TYPE_IDS } from '../../utils/prescription';
 import { ResilientImage } from '../ResilientImage';
 import { useAdminSecurity } from './AdminGuard';
+import { formatSdg } from '../../utils/format';
 
 export const AdminHomeBuilderModule: React.FC = () => {
   const { locale, t, homeSections, updateHomeSections } = useStore();
@@ -1003,6 +1004,116 @@ export const AdminStoreSettingsModule: React.FC = () => {
           <label className="block font-semibold mb-1">{t('بنك آخر / فوري', 'Other Bank Details')}</label>
           <input value={draft.otherBankDetailsAr} onChange={(e) => setDraft({ ...draft, otherBankDetailsAr: e.target.value })} className="w-full px-3 py-2 rounded-lg border bg-stone-50 dark:bg-zinc-900" />
         </div>
+      </div>
+
+      {/* Split Payment Settings (Bankak Deposit + Cash on Delivery) */}
+      <div className="p-4 rounded-xl bg-amber-50/60 dark:bg-amber-950/15 border border-amber-200 dark:border-amber-900/50 space-y-3">
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <div>
+            <h3 className="text-sm font-bold text-[#11223E] dark:text-[#E2BD5B]">
+              {t('الدفع المقسّم (عربون بنكك + الباقي عند الاستلام)', 'Split Payment (Bankak Deposit + COD)')}
+            </h3>
+            <p className="text-[11px] text-slate-600 dark:text-slate-400 mt-0.5">
+              {t(
+                'حدد طريقة احتساب الجزء المطلوب دفعه مقدماً عبر بنكك بينما يُدفع الباقي نقداً عند الاستلام.',
+                'Configure the upfront Bankak deposit (percentage or fixed SDG amount) with the rest due on delivery.'
+              )}
+            </p>
+          </div>
+          <button
+            type="button"
+            onClick={() =>
+              setDraft({
+                ...draft,
+                splitPaymentEnabled: !(draft.splitPaymentEnabled ?? true),
+              })
+            }
+            className={`min-h-[38px] px-3.5 py-1.5 rounded-lg font-extrabold ${
+              (draft.splitPaymentEnabled ?? true)
+                ? 'bg-emerald-600 text-white'
+                : 'bg-slate-200 text-slate-700'
+            }`}
+          >
+            {(draft.splitPaymentEnabled ?? true)
+              ? t('الدفع المقسّم: مفعل ✓', 'Split Payment: ON ✓')
+              : t('الدفع المقسّم: متوقف', 'Split Payment: OFF')}
+          </button>
+        </div>
+
+        {(draft.splitPaymentEnabled ?? true) && (
+          <div className="grid sm:grid-cols-2 gap-3 pt-1">
+            <div>
+              <label className="block font-semibold mb-1">
+                {t('طريقة حساب مبلغ بنكك', 'Deposit Calculation Mode')}
+              </label>
+              <select
+                value={draft.splitPaymentMode ?? 'percent'}
+                onChange={(e) =>
+                  setDraft({
+                    ...draft,
+                    splitPaymentMode: e.target.value === 'fixed' ? 'fixed' : 'percent',
+                  })
+                }
+                className="w-full min-h-[40px] px-3 py-2 rounded-lg border bg-white dark:bg-[#181B1E] font-bold"
+              >
+                <option value="percent">{t('نسبة مئوية من إجمالي الطلب (%)', 'Percentage of Order Total (%)')}</option>
+                <option value="fixed">{t('مبلغ عربون ثابت (ج.س)', 'Fixed Deposit Amount (SDG)')}</option>
+              </select>
+            </div>
+
+            {(draft.splitPaymentMode ?? 'percent') === 'percent' ? (
+              <div>
+                <label className="block font-semibold mb-1">
+                  {t('نسبة الدفع عبر بنكك (%)', 'Bankak Deposit Percentage (%)')}
+                </label>
+                <input
+                  type="number"
+                  min={1}
+                  max={99}
+                  value={draft.splitPaymentPercent ?? 50}
+                  onChange={(e) =>
+                    setDraft({
+                      ...draft,
+                      splitPaymentPercent: Math.max(1, Math.min(99, Math.round(Number(e.target.value) || 50))),
+                    })
+                  }
+                  className="w-full min-h-[40px] px-3 py-2 rounded-lg border bg-white dark:bg-[#181B1E] font-mono-num"
+                />
+                <p className="text-[11px] text-slate-500 mt-1">
+                  {t(
+                    `مثال لطلب 100,000 ج.س: يدفع ${formatSdg((100000 * (draft.splitPaymentPercent ?? 50)) / 100)} ببنكك و ${formatSdg(100000 - (100000 * (draft.splitPaymentPercent ?? 50)) / 100)} عند الاستلام.`,
+                    `Example for 100,000 SDG: ${formatSdg((100000 * (draft.splitPaymentPercent ?? 50)) / 100)} Bankak + ${formatSdg(100000 - (100000 * (draft.splitPaymentPercent ?? 50)) / 100)} COD.`
+                  )}
+                </p>
+              </div>
+            ) : (
+              <div>
+                <label className="block font-semibold mb-1">
+                  {t('مبلغ العربون الثابت عبر بنكك (ج.س)', 'Fixed Bankak Deposit (SDG)')}
+                </label>
+                <input
+                  type="number"
+                  min={0}
+                  step={500}
+                  value={draft.splitPaymentFixedSdg ?? 15000}
+                  onChange={(e) =>
+                    setDraft({
+                      ...draft,
+                      splitPaymentFixedSdg: Math.max(0, Math.round(Number(e.target.value) || 0)),
+                    })
+                  }
+                  className="w-full min-h-[40px] px-3 py-2 rounded-lg border bg-white dark:bg-[#181B1E] font-mono-num"
+                />
+                <p className="text-[11px] text-slate-500 mt-1">
+                  {t(
+                    `يدفع العميل ${formatSdg(draft.splitPaymentFixedSdg ?? 15000)} عبر بنكك (أو كامل الطلب إذا كان أقل) والباقي عند الاستلام.`,
+                    `Customer pays ${formatSdg(draft.splitPaymentFixedSdg ?? 15000)} via Bankak (capped at order total) and rest on delivery.`
+                  )}
+                </p>
+              </div>
+            )}
+          </div>
+        )}
       </div>
 
       {/* Social Links with individual visibility switches */}

@@ -34,7 +34,11 @@ import {
   Product,
   SavedAddress,
 } from '../types';
-import { formatSdg } from '../utils/format';
+import {
+  calculateSplitAmounts,
+  formatSdg,
+  getPaymentMethodLabel,
+} from '../utils/format';
 import {
   MIRROR_COLOR_OPTIONS,
   calculateLensPricingBreakdown,
@@ -177,7 +181,18 @@ export const CartCheckoutView: React.FC = () => {
   }, [selectedAddress, settings.deliveryFees]);
 
   const deliveryFeeSdg = selectedState ? selectedState.feeSdg : 0;
-  const totalSdg = Math.max(0, subtotalSdg - discountSdg + deliveryFeeSdg);
+  const totalSdg = Math.max(0, Math.round(subtotalSdg - discountSdg + deliveryFeeSdg));
+  const splitEnabled = settings.splitPaymentEnabled ?? true;
+  const splitBreakdown = useMemo(
+    () => calculateSplitAmounts(totalSdg, settings),
+    [totalSdg, settings]
+  );
+
+  useEffect(() => {
+    if (!splitEnabled && paymentMethod === 'split') {
+      setPaymentMethod('bankak');
+    }
+  }, [splitEnabled, paymentMethod]);
 
   const requiresEmailVerification = !isGuest && !isEmailVerified;
 
@@ -296,7 +311,7 @@ export const CartCheckoutView: React.FC = () => {
       return false;
     }
 
-    if (paymentMethod === 'bankak' && !receiptUrl && !bankRef.trim()) {
+    if ((paymentMethod === 'bankak' || paymentMethod === 'split') && !receiptUrl && !bankRef.trim()) {
       showToast(
         t(
           'يرجى رفع صورة إيصال بنكك أو كتابة رقم العملية المرجعي',
@@ -911,7 +926,7 @@ export const CartCheckoutView: React.FC = () => {
             <h2 className="text-base font-extrabold text-[#11223E] dark:text-white">
               {t('طريقة الدفع', 'Payment Method')}
             </h2>
-            <div className="grid sm:grid-cols-2 gap-3 text-xs">
+            <div className={`grid ${splitEnabled ? 'sm:grid-cols-3' : 'sm:grid-cols-2'} gap-3 text-xs`}>
               <button
                 type="button"
                 onClick={() => setPaymentMethod('bankak')}
@@ -924,9 +939,41 @@ export const CartCheckoutView: React.FC = () => {
                 <Building2 className="w-5 h-5 text-[#B38B2D]" />
                 <div className="font-extrabold">{t('تحويل بنكي (بنكك)', 'Bankak Transfer')}</div>
                 <div className="text-[11px] text-slate-500 dark:text-slate-400">
-                  {t('بنك الخرطوم وباقي البنوك', 'Bank of Khartoum & local banks')}
+                  {t('دفع كامل المبلغ مقدماً', 'Pay full amount upfront')}
                 </div>
               </button>
+
+              {splitEnabled && (
+                <button
+                  type="button"
+                  onClick={() => setPaymentMethod('split')}
+                  className={`p-3.5 rounded-xl border-2 text-start space-y-1 transition-colors ${
+                    paymentMethod === 'split'
+                      ? 'border-[#11223E] dark:border-[#D9B24C] bg-[#11223E]/5 dark:bg-[#D9B24C]/10'
+                      : 'border-slate-200 dark:border-slate-700'
+                  }`}
+                >
+                  <div className="flex items-center gap-1.5 text-[#B38B2D]">
+                    <Building2 className="w-4 h-4" />
+                    <span className="font-bold">+</span>
+                    <Banknote className="w-4 h-4" />
+                  </div>
+                  <div className="font-extrabold">
+                    {t('دفع مقسّم (بنكك + عند الاستلام)', 'Split (Bankak + COD)')}
+                  </div>
+                  <div className="text-[11px] text-slate-500 dark:text-slate-400">
+                    {settings.splitPaymentMode === 'fixed'
+                      ? t(
+                          `عربون ${formatSdg(settings.splitPaymentFixedSdg ?? 15000)} والباقي عند الاستلام`,
+                          `${formatSdg(settings.splitPaymentFixedSdg ?? 15000)} deposit + COD`
+                        )
+                      : t(
+                          `${settings.splitPaymentPercent ?? 50}% ببنكك والباقي عند الاستلام`,
+                          `${settings.splitPaymentPercent ?? 50}% Bankak + COD`
+                        )}
+                  </div>
+                </button>
+              )}
 
               <button
                 type="button"
@@ -945,8 +992,29 @@ export const CartCheckoutView: React.FC = () => {
               </button>
             </div>
 
-            {paymentMethod === 'bankak' && (
+            {(paymentMethod === 'bankak' || paymentMethod === 'split') && (
               <div className="p-4 rounded-xl bg-slate-50 dark:bg-slate-900/75 border border-slate-200 dark:border-slate-800 space-y-3 text-xs">
+                {paymentMethod === 'split' && (
+                  <div className="grid sm:grid-cols-2 gap-2.5 p-3 rounded-xl bg-[#D9B24C]/12 border border-[#D9B24C]/40">
+                    <div>
+                      <div className="text-[11px] text-slate-600 dark:text-slate-300 font-semibold">
+                        {t('المبلغ المطلوب تحويله الآن (بنكك):', 'Pay Now via Bankak:')}
+                      </div>
+                      <div className="font-mono-num text-base font-extrabold text-[#11223E] dark:text-[#E2BD5B]">
+                        {formatSdg(splitBreakdown.bankakAmount)}
+                      </div>
+                    </div>
+                    <div>
+                      <div className="text-[11px] text-slate-600 dark:text-slate-300 font-semibold">
+                        {t('المتبقي للدفع نقداً عند الاستلام:', 'Remaining Cash on Delivery:')}
+                      </div>
+                      <div className="font-mono-num text-base font-extrabold text-emerald-700 dark:text-emerald-400">
+                        {formatSdg(splitBreakdown.codAmount)}
+                      </div>
+                    </div>
+                  </div>
+                )}
+
                 <div className="flex flex-wrap items-center justify-between gap-2">
                   <div>
                     <div className="font-extrabold text-sm">{settings.bankakBranchAr}</div>
@@ -1107,6 +1175,27 @@ export const CartCheckoutView: React.FC = () => {
                 {formatSdg(totalSdg)}
               </span>
             </div>
+
+            {paymentMethod === 'split' && (
+              <div className="p-3 rounded-xl bg-[#D9B24C]/10 border border-[#D9B24C]/35 space-y-1.5 text-xs">
+                <div className="flex justify-between">
+                  <span className="font-bold text-slate-700 dark:text-slate-200">
+                    {t('يُدفع الآن عبر بنكك', 'Due Now (Bankak)')}
+                  </span>
+                  <span className="font-mono-num font-extrabold text-[#11223E] dark:text-[#E2BD5B]">
+                    {formatSdg(splitBreakdown.bankakAmount)}
+                  </span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="font-bold text-slate-700 dark:text-slate-200">
+                    {t('المتبقي عند الاستلام', 'Due on Delivery (COD)')}
+                  </span>
+                  <span className="font-mono-num font-extrabold text-emerald-700 dark:text-emerald-400">
+                    {formatSdg(splitBreakdown.codAmount)}
+                  </span>
+                </div>
+              </div>
+            )}
           </div>
 
           {/* Delivery Address Button & Selected Address Card */}
@@ -1313,10 +1402,10 @@ export const CartCheckoutView: React.FC = () => {
                 {t('طريقة الدفع', 'Payment Method')}
               </div>
               <div className="font-bold">
-                {paymentMethod === 'bankak'
-                  ? t('تحويل بنكي (بنكك)', 'Bankak Transfer')
-                  : t('الدفع عند الاستلام', 'Cash on Delivery')}
-                {paymentMethod === 'bankak' && bankRef.trim() ? ` (${bankRef.trim()})` : ''}
+                {getPaymentMethodLabel(paymentMethod, locale)}
+                {(paymentMethod === 'bankak' || paymentMethod === 'split') && bankRef.trim()
+                  ? ` (${bankRef.trim()})`
+                  : ''}
               </div>
               {customerNote.trim() && (
                 <div className="text-[11px] text-slate-600 dark:text-slate-300 pt-1">
@@ -1347,6 +1436,22 @@ export const CartCheckoutView: React.FC = () => {
                   {formatSdg(totalSdg)}
                 </span>
               </div>
+              {paymentMethod === 'split' && (
+                <div className="pt-1.5 border-t border-[#D9B24C]/30 space-y-1">
+                  <div className="flex justify-between font-bold">
+                    <span>{t('المطلوب عبر بنكك الآن:', 'Bankak Deposit Now:')}</span>
+                    <span className="font-mono-num text-[#11223E] dark:text-[#E2BD5B]">
+                      {formatSdg(splitBreakdown.bankakAmount)}
+                    </span>
+                  </div>
+                  <div className="flex justify-between font-bold text-emerald-700 dark:text-emerald-400">
+                    <span>{t('المتبقي عند الاستلام:', 'Remaining on Delivery:')}</span>
+                    <span className="font-mono-num">
+                      {formatSdg(splitBreakdown.codAmount)}
+                    </span>
+                  </div>
+                </div>
+              )}
             </div>
 
             <div className="flex items-center justify-end gap-2 pt-1">

@@ -25,7 +25,13 @@ import {
 import { resolveAdminModuleFromLocation, useStore } from '../store/StoreContext';
 import { useAdminSecurity } from './admin/AdminGuard';
 import { Order, StaffPermission } from '../types';
-import { formatSdg, formatShortDate, getOrderStatusLabel } from '../utils/format';
+import {
+  formatSdg,
+  formatShortDate,
+  getOrderPaymentBreakdown,
+  getOrderStatusLabel,
+  getPaymentMethodLabel,
+} from '../utils/format';
 import {
   calculateLensPricingBreakdown,
   formatLensSummaryLine,
@@ -178,6 +184,15 @@ export const AdminDashboardView: React.FC = () => {
         return `- ${it.titleAr} × ${it.quantity}: ${formatSdg(lineTotal)}${lensTag}${rxSummary}`;
       }),
       `الإجمالي: ${formatSdg(order.totalSdg)}`,
+      ...(order.paymentMethod === 'split'
+        ? (() => {
+            const { bankakSdg, codSdg } = getOrderPaymentBreakdown(order);
+            return [
+              `المدفوع عبر بنكك: ${formatSdg(bankakSdg)}`,
+              `المتبقي للتحصيل عند الاستلام: ${formatSdg(codSdg)}`,
+            ];
+          })()
+        : []),
     ];
     const text = lines.join('\n');
 
@@ -527,9 +542,7 @@ export const AdminDashboardView: React.FC = () => {
                   </div>
                   <div>
                     <strong>{t('طريقة الدفع:', 'Payment:')}</strong>{' '}
-                    {invoiceOrder.paymentMethod === 'bankak'
-                      ? t('تحويل بنكك', 'Bankak Transfer')
-                      : t('الدفع عند الاستلام', 'Cash on Delivery')}
+                    {getPaymentMethodLabel(invoiceOrder.paymentMethod, locale)}
                     {invoiceOrder.bankTransferReference
                       ? ` (${invoiceOrder.bankTransferReference})`
                       : ''}
@@ -812,6 +825,21 @@ export const AdminDashboardView: React.FC = () => {
                   <span>{t('الإجمالي النهائي', 'Total Amount')}</span>
                   <span className="font-mono-num">{formatSdg(invoiceOrder.totalSdg)}</span>
                 </div>
+                {invoiceOrder.paymentMethod === 'split' && (() => {
+                  const { bankakSdg, codSdg } = getOrderPaymentBreakdown(invoiceOrder);
+                  return (
+                    <div className="mt-2 p-2.5 rounded-xl bg-amber-50 border border-amber-200 space-y-1 text-xs">
+                      <div className="flex justify-between font-bold text-stone-800">
+                        <span>{t('المدفوع عبر بنكك (عربون):', 'Paid via Bankak (Deposit):')}</span>
+                        <span className="font-mono-num">{formatSdg(bankakSdg)}</span>
+                      </div>
+                      <div className="flex justify-between font-extrabold text-emerald-800">
+                        <span>{t('المتبقي للتحصيل عند الاستلام (كاش للمندوب):', 'Collect on Delivery (Cash):')}</span>
+                        <span className="font-mono-num">{formatSdg(codSdg)}</span>
+                      </div>
+                    </div>
+                  );
+                })()}
               </div>
 
               {/* Actions */}

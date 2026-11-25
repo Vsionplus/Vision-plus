@@ -25,7 +25,9 @@ import { Order, OrderItem, OrderStatus, PrescriptionData, Product, SavedAddress 
 import {
   formatSdg,
   formatShortDate,
+  getOrderPaymentBreakdown,
   getOrderStatusLabel,
+  getPaymentMethodLabel,
   isValidSudanPhone,
   normalizeSudanPhone,
 } from '../utils/format';
@@ -320,11 +322,13 @@ export const OrdersView: React.FC = () => {
         },
         items: isFullEditMode ? editItems : undefined,
         bankTransferReference:
-          isFullEditMode && editTargetOrder.paymentMethod === 'bankak'
+          isFullEditMode &&
+          (editTargetOrder.paymentMethod === 'bankak' || editTargetOrder.paymentMethod === 'split')
             ? editBankRef.trim() || undefined
             : undefined,
         bankTransferReceiptUrl:
-          isFullEditMode && editTargetOrder.paymentMethod === 'bankak'
+          isFullEditMode &&
+          (editTargetOrder.paymentMethod === 'bankak' || editTargetOrder.paymentMethod === 'split')
             ? editBankReceiptUrl
             : undefined,
         customerNote: editNote.trim() || undefined,
@@ -624,10 +628,7 @@ export const OrdersView: React.FC = () => {
                     {locale === 'ar'
                       ? stateObj?.nameAr || order.address?.stateNameAr
                       : stateObj?.nameEn || order.address?.stateNameEn}{' '}
-                    — {order.city} ({order.area}) ·{' '}
-                    {order.paymentMethod === 'bankak'
-                      ? t('تحويل بنكك', 'Bankak Transfer')
-                      : t('الدفع عند الاستلام', 'Cash on Delivery')}
+                    — {order.city} ({order.area}) · {getPaymentMethodLabel(order.paymentMethod, locale)}
                   </p>
                 </div>
 
@@ -689,6 +690,31 @@ export const OrdersView: React.FC = () => {
                   </div>
                 </div>
               </div>
+
+              {order.paymentMethod === 'split' && (() => {
+                const { bankakSdg, codSdg } = getOrderPaymentBreakdown(order);
+                return (
+                  <div className="grid sm:grid-cols-2 gap-2.5 p-3 rounded-xl bg-amber-50/70 dark:bg-amber-950/20 border border-amber-200 dark:border-amber-900/50 text-xs">
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="font-bold text-slate-700 dark:text-slate-300">
+                        {t('عربون بنكك:', 'Bankak Deposit:')}
+                      </span>
+                      <span className="font-mono-num font-extrabold text-[#11223E] dark:text-[#E2BD5B]">
+                        {formatSdg(bankakSdg)}{' '}
+                        {order.bankTransferVerified ? t('(مؤكد ✓)', '(Verified ✓)') : ''}
+                      </span>
+                    </div>
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="font-bold text-slate-700 dark:text-slate-300">
+                        {t('المتبقي عند الاستلام:', 'Remaining COD:')}
+                      </span>
+                      <span className="font-mono-num font-extrabold text-emerald-700 dark:text-emerald-400">
+                        {formatSdg(codSdg)}
+                      </span>
+                    </div>
+                  </div>
+                );
+              })()}
 
               {/* Latest matched order notification inside card */}
               {latestMatchedNotif && (
@@ -1159,10 +1185,27 @@ export const OrdersView: React.FC = () => {
                     <span>{t('الإجمالي الجديد', 'Updated Total')}</span>
                     <span className="font-mono-num">{formatSdg(editPricing.total)}</span>
                   </div>
+                  {editTargetOrder.paymentMethod === 'split' && (() => {
+                    const lockedBankak = Math.min(editPricing.total, editTargetOrder.bankakPaidSdg ?? 0);
+                    const updatedCod = Math.max(0, editPricing.total - lockedBankak);
+                    return (
+                      <div className="pt-1.5 border-t border-stone-200 dark:border-zinc-700 space-y-1">
+                        <div className="flex justify-between">
+                          <span>{t('عربون بنكك:', 'Bankak Deposit:')}</span>
+                          <span className="font-mono-num font-bold">{formatSdg(lockedBankak)}</span>
+                        </div>
+                        <div className="flex justify-between text-emerald-700 dark:text-emerald-400 font-bold">
+                          <span>{t('المتبقي عند الاستلام:', 'Remaining COD:')}</span>
+                          <span className="font-mono-num">{formatSdg(updatedCod)}</span>
+                        </div>
+                      </div>
+                    );
+                  })()}
                 </div>
 
-                {/* Bankak Details Update (if Bankak) */}
-                {editTargetOrder.paymentMethod === 'bankak' && (
+                {/* Bankak Details Update (if Bankak or Split) */}
+                {(editTargetOrder.paymentMethod === 'bankak' ||
+                  editTargetOrder.paymentMethod === 'split') && (
                   <div className="p-3 rounded-xl border border-stone-200 dark:border-zinc-700 space-y-2.5">
                     <div className="font-bold">{t('تحديث بيانات تحويل بنكك', 'Update Bankak Transfer')}</div>
                     <div className="space-y-1">
