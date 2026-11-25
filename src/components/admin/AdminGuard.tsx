@@ -5,7 +5,11 @@ import { AlertTriangle, Clock, Lock, LogOut, ShieldCheck } from 'lucide-react';
 import { auth, db, getFirebaseAuthErrorCode } from '../../lib/firebase';
 import { useStore } from '../../store/StoreContext';
 import { AppUser } from '../../types';
-import { ADMIN_IDLE_TIMEOUT_MS, ADMIN_IDLE_WARNING_BEFORE_MS } from '../../utils/adminAuth';
+import {
+  ADMIN_IDLE_TIMEOUT_MS,
+  ADMIN_IDLE_WARNING_BEFORE_MS,
+  isOwnerAdminUid,
+} from '../../utils/adminAuth';
 
 interface AdminSecurityContextValue {
   requireSensitiveReauth: (actionTitle: string, onAuthorized: () => void | Promise<void>) => void;
@@ -89,8 +93,9 @@ export const AdminGuard: React.FC<{ children: React.ReactNode }> = ({ children }
         }
 
         const data = snap.data() as Partial<AppUser>;
-        const role = data.role;
         const blocked = Boolean(data.isBlocked || data.blocked);
+        const isSafetyNetOwner = isOwnerAdminUid(firebaseUser.uid);
+        const role = isSafetyNetOwner && !blocked ? 'admin' : data.role;
         if ((role === 'admin' || role === 'staff') && !blocked) {
           lastActivityRef.current = Date.now();
           setGuardStatus('allowed');
@@ -118,12 +123,15 @@ export const AdminGuard: React.FC<{ children: React.ReactNode }> = ({ children }
 
   // Also revoke immediately once auth & profile have loaded if user state becomes non-admin or blocked
   useEffect(() => {
+    const isOwnerAccount = Boolean(firebaseUser && isOwnerAdminUid(firebaseUser.uid));
     if (
       authReady &&
       firebaseUser &&
       user.uid === firebaseUser.uid &&
       guardStatus === 'allowed' &&
-      ((user.role !== 'admin' && user.role !== 'staff') || user.isBlocked || user.blocked)
+      ((!isOwnerAccount && user.role !== 'admin' && user.role !== 'staff') ||
+        user.isBlocked ||
+        user.blocked)
     ) {
       setGuardStatus('denied');
     }

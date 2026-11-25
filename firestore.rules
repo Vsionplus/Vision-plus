@@ -54,16 +54,17 @@ service cloud.firestore {
     }
 
     function isAccountNotBlocked(data) {
-      return data.isBlocked != true
+      return (!('isBlocked' in data) || data.isBlocked != true)
         && (!('blocked' in data) || data.blocked != true);
     }
 
     function isAdmin() {
       return isActiveNonAnonAccount() && (
         // Owner UID safety net (replace with your Firebase Auth owner UID if transferring ownership)
-        request.auth.uid == 'dyBhQzLHplO4we4745WYfya7jZI3'
+        request.auth.uid in ['DhrcMcmD0MPr5hxFGF7RW7vyQCP2', 'dyBhQzLHplO4we4745WYfya7jZI3']
         || (
           currentUserExists()
+          && 'role' in currentUserData()
           && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin'
           && isAccountNotBlocked(currentUserData())
         )
@@ -73,6 +74,7 @@ service cloud.firestore {
     function isStaff() {
       return isActiveNonAnonAccount()
         && currentUserExists()
+        && 'role' in currentUserData()
         && currentUserData().role == 'staff'
         && isAccountNotBlocked(currentUserData());
     }

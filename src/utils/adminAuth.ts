@@ -7,6 +7,14 @@ import {
 } from 'firebase/firestore';
 import { db } from '../lib/firebase';
 
+export const OWNER_ADMIN_UID = 'DhrcMcmD0MPr5hxFGF7RW7vyQCP2';
+export const OWNER_ADMIN_UIDS: ReadonlySet<string> = new Set([
+  'DhrcMcmD0MPr5hxFGF7RW7vyQCP2',
+  'dyBhQzLHplO4we4745WYfya7jZI3',
+]);
+export function isOwnerAdminUid(uid?: string | null): boolean {
+  return Boolean(uid && OWNER_ADMIN_UIDS.has(uid));
+}
 export const ADMIN_LOCKOUT_MAX_ATTEMPTS = 5;
 export const ADMIN_LOCKOUT_DURATION_MS = 15 * 60 * 1000;
 export const ADMIN_IDLE_TIMEOUT_MS = 30 * 60 * 1000;

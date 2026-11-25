@@ -92,6 +92,7 @@ import {
   AdminLoginAttemptStatus,
   clearAdminAttempts,
   getAdminAttemptStatusByEmail,
+  isOwnerAdminUid,
   recordAdminFailedAttempt,
 } from '../utils/adminAuth';
 
@@ -939,8 +940,9 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
 
       if (snap.exists()) {
         const data = snap.data() as Partial<AppUser>;
-        const resolvedRole = data.role || 'customer';
         const resolvedBlocked = Boolean(data.isBlocked || data.blocked);
+        const resolvedRole =
+          isOwnerAdminUid(fbUser.uid) && !resolvedBlocked ? 'admin' : (data.role || 'customer');
         const appUser: AppUser = {
           uid: fbUser.uid,
           name:
@@ -1087,8 +1089,9 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
           (snap) => {
             if (!snap.exists()) return;
             const data = snap.data() as Partial<AppUser> & { cart?: CartItem[] };
-            const resolvedRole = data.role || 'customer';
             const resolvedBlocked = Boolean(data.isBlocked || data.blocked);
+            const resolvedRole =
+              isOwnerAdminUid(fbUser.uid) && !resolvedBlocked ? 'admin' : (data.role || 'customer');
             setState((prev) => ({
               ...prev,
               cart: Array.isArray(data.cart) ? data.cart : prev.cart,
@@ -1940,10 +1943,11 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
           );
         }
 
-        // Step 3: Role & block verification
+        // Step 3: Role & block verification (recognizes owner UID safety net matching firestore.rules isAdmin())
         const data = userSnap.data() as Partial<AppUser>;
-        const role = data.role;
         const blocked = Boolean(data.isBlocked || data.blocked);
+        const isSafetyNetOwner = isOwnerAdminUid(signedUser.uid);
+        const role = isSafetyNetOwner && !blocked ? 'admin' : data.role;
 
         if ((role !== 'admin' && role !== 'staff') || blocked) {
           console.error('[AdminLogin Step 3: role check]', {
@@ -1958,6 +1962,23 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
             nextStatus,
             `Step 3 (role check): role=${String(role ?? 'none')}${blocked ? ', blocked=true' : ''}`
           );
+        }
+
+        // Sync existing owner doc role to 'admin' in Firestore if it was previously created as 'customer' on storefront
+        if (isSafetyNetOwner && !blocked && data.role !== 'admin') {
+          try {
+            await updateDoc(
+              doc(db, 'users', signedUser.uid),
+              stripUndefined({
+                role: 'admin',
+                permissions: ALL_ADMIN_PERMS,
+                updatedAt: new Date().toISOString(),
+                updatedAtServer: serverTimestamp(),
+              })
+            );
+          } catch (syncErr) {
+            console.error('[AdminLogin Step 3: sync owner role]', syncErr);
+          }
         }
 
         console.info('[AdminLogin Step 3: role check]', {
