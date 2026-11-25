@@ -64,6 +64,7 @@ export const AdminDashboardView: React.FC = () => {
   const [period, setPeriod] = useState<'today' | 'week' | 'month'>('month');
   const [invoiceOrder, setInvoiceOrder] = useState<Order | null>(null);
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
+  const [ordersInitialFilter, setOrdersInitialFilter] = useState<'all' | 'cancel_requests'>('all');
 
   const navItems: { id: StaffPermission; icon: React.ComponentType<{ className?: string }>; ar: string; en: string }[] = [
     { id: 'dashboard', icon: BarChart3, ar: 'لوحة الإحصائيات', en: 'Dashboard' },
@@ -90,7 +91,10 @@ export const AdminDashboardView: React.FC = () => {
     }
   }, [activeModule, allowedNav, hasPermission]);
 
-  const handleSelectModule = (id: StaffPermission) => {
+  const handleSelectModule = (id: StaffPermission, ordersFilter: 'all' | 'cancel_requests' = 'all') => {
+    if (id === 'orders') {
+      setOrdersInitialFilter(ordersFilter);
+    }
     setActiveModule(id);
     setMobileNavOpen(false);
     if (typeof window !== 'undefined') {
@@ -382,7 +386,7 @@ export const AdminDashboardView: React.FC = () => {
                 </div>
                 <button
                   type="button"
-                  onClick={() => handleSelectModule('orders')}
+                  onClick={() => handleSelectModule('orders', 'cancel_requests')}
                   className="bg-white dark:bg-[#181B1E] border border-stone-200 dark:border-zinc-800 rounded-xl p-4 text-start hover:border-rose-400 transition-colors"
                 >
                   <span className="text-xs text-slate-500">{t('طلبات إلغاء معلقة', 'Pending Cancellations')}</span>
@@ -440,7 +444,12 @@ export const AdminDashboardView: React.FC = () => {
           {activeModule === 'content' && <AdminContentTextsModule />}
           {activeModule === 'appearance' && <AdminAppearanceModule />}
           {activeModule === 'settings' && <AdminStoreSettingsModule />}
-          {activeModule === 'orders' && <AdminOrdersModule onPrintInvoice={setInvoiceOrder} />}
+          {activeModule === 'orders' && (
+            <AdminOrdersModule
+              onPrintInvoice={setInvoiceOrder}
+              initialStatusFilter={ordersInitialFilter}
+            />
+          )}
           {activeModule === 'coupons' && <AdminCouponsModule />}
           {activeModule === 'notifications' && <AdminNotificationsModule />}
           {activeModule === 'consults' && <AdminConsultsModule />}

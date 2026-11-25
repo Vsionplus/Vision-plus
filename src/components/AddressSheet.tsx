@@ -3,7 +3,6 @@ import {
   CheckCircle2,
   Edit3,
   ExternalLink,
-  LogIn,
   MapPin,
   Plus,
   Star,
@@ -36,7 +35,6 @@ export const AddressSheet: React.FC<AddressSheetProps> = ({
     isGuest,
     settings,
     appearance,
-    openAuthModal,
     saveAddress,
     updateAddress,
     setDefaultAddress,
@@ -219,40 +217,13 @@ export const AddressSheet: React.FC<AddressSheetProps> = ({
         {/* Body */}
         <div className="flex-1 overflow-y-auto p-4 sm:p-6 space-y-4 text-xs">
           {isGuest ? (
-            <div className="p-5 rounded-2xl bg-amber-50 dark:bg-amber-950/25 border border-amber-200 dark:border-amber-900/50 text-center space-y-4">
-              <div className="space-y-1.5">
-                <h3 className="text-sm sm:text-base font-extrabold text-[#11223E] dark:text-amber-200">
-                  {t('العناوين المحفوظة للتوصيل', 'Saved Delivery Addresses')}
-                </h3>
-                <p className="text-xs sm:text-sm font-bold text-[#11223E] dark:text-slate-200">
-                  {t('سجّل دخولك لاستخدام هذه الميزة', 'Sign in to use this feature')}
-                </p>
-              </div>
-              <div className="flex flex-wrap items-center justify-center gap-2.5">
-                <button
-                  type="button"
-                  onClick={() => {
-                    onClose();
-                    openAuthModal('login', true);
-                  }}
-                  style={{ backgroundColor: appearance.primaryColor }}
-                  className="min-h-[44px] px-5 rounded-xl text-white font-extrabold inline-flex items-center gap-1.5"
-                >
-                  <LogIn className="w-4 h-4" />
-                  <span>{t('تسجيل الدخول', 'Sign In')}</span>
-                </button>
-                <button
-                  type="button"
-                  onClick={() => {
-                    onClose();
-                    openAuthModal('register', true);
-                  }}
-                  style={{ backgroundColor: appearance.secondaryColor, color: appearance.primaryColor }}
-                  className="min-h-[44px] px-5 rounded-xl font-extrabold"
-                >
-                  {t('إنشاء حساب جديد', 'Create Account')}
-                </button>
-              </div>
+            <div className="p-5 rounded-2xl bg-amber-50 dark:bg-amber-950/25 border border-amber-200 dark:border-amber-900/50 text-center space-y-2">
+              <h3 className="text-sm sm:text-base font-extrabold text-[#11223E] dark:text-amber-200">
+                {t('العناوين المحفوظة للتوصيل', 'Saved Delivery Addresses')}
+              </h3>
+              <p className="text-xs sm:text-sm font-bold text-[#11223E] dark:text-slate-200">
+                {t('العناوين المحفوظة متاحة بعد إتمام الدخول عند الطلب.', 'Saved addresses are available after signing in at checkout.')}
+              </p>
             </div>
           ) : mode === 'list' ? (
             <div className="space-y-3">

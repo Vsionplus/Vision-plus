@@ -16,8 +16,18 @@ function formatCountdown(ms: number): string {
   return `${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`;
 }
 
+function isDebugTraceEnabled(): boolean {
+  if (import.meta.env.DEV) return true;
+  try {
+    return typeof window !== 'undefined' && window.localStorage?.getItem('vpDebug') === '1';
+  } catch {
+    return false;
+  }
+}
+
 export const AdminLoginView: React.FC = () => {
   const {
+    authReady,
     firebaseUser,
     user,
     appearance,
@@ -31,21 +41,26 @@ export const AdminLoginView: React.FC = () => {
   const [showPassword, setShowPassword] = useState(false);
   const [loading, setLoading] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [debugDetail, setDebugDetail] = useState<string | null>(null);
   const [attemptStatus, setAttemptStatus] = useState<AdminLoginAttemptStatus | null>(null);
   const [remainingMs, setRemainingMs] = useState(0);
 
-  // If already authenticated as non-blocked admin/staff, transition directly into admin panel
+  const showDebugDetail = isDebugTraceEnabled();
+
+  // Wait for auth & loaded profile before auto-transitioning already-authenticated admin/staff
   useEffect(() => {
     if (
+      authReady &&
       firebaseUser &&
       !firebaseUser.isAnonymous &&
+      user.uid === firebaseUser.uid &&
       (user.role === 'admin' || user.role === 'staff') &&
       !user.isBlocked &&
       !user.blocked
     ) {
       navigateToAdminPanel(user.role === 'staff' ? 'orders' : 'dashboard');
     }
-  }, [firebaseUser, user.role, user.isBlocked, user.blocked, navigateToAdminPanel]);
+  }, [authReady, firebaseUser, user.uid, user.role, user.isBlocked, user.blocked, navigateToAdminPanel]);
 
   // Restore server-side lockout status from last attempted email hash on mount
   useEffect(() => {
@@ -114,22 +129,26 @@ export const AdminLoginView: React.FC = () => {
     const cleanEmail = email.trim();
     if (!cleanEmail || !password) {
       setErrorMessage('يرجى إدخال البريد الإلكتروني وكلمة المرور');
+      setDebugDetail(null);
       return;
     }
 
     setLoading(true);
     setErrorMessage(null);
+    setDebugDetail(null);
     try {
       await loginAdminWithEmail(cleanEmail, password);
     } catch (err) {
       if (err instanceof AdminLoginError) {
         setErrorMessage(err.message);
+        setDebugDetail(err.debugInfo || null);
         if (err.attemptStatus) {
           setAttemptStatus(err.attemptStatus);
           setRemainingMs(err.attemptStatus.remainingMs);
         }
       } else {
         setErrorMessage('بيانات الدخول غير صحيحة');
+        setDebugDetail(err instanceof Error ? err.message : String(err));
       }
     } finally {
       setLoading(false);
@@ -185,6 +204,14 @@ export const AdminLoginView: React.FC = () => {
             {failedCount > 0 && failedCount < ADMIN_LOCKOUT_MAX_ATTEMPTS && (
               <div className="text-[11px] font-extrabold">
                 محاولات خاطئة {failedCount} من {ADMIN_LOCKOUT_MAX_ATTEMPTS}
+              </div>
+            )}
+            {showDebugDetail && debugDetail && (
+              <div
+                dir="ltr"
+                className="text-[11px] font-mono-num font-normal text-slate-500 dark:text-slate-400 pt-0.5 break-all"
+              >
+                {debugDetail}
               </div>
             )}
           </div>

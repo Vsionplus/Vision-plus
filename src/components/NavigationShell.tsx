@@ -16,11 +16,7 @@ import {
   MessageCircle,
   Wrench,
   RefreshCw,
-  LogIn,
   LogOut,
-  UserPlus,
-  KeyRound,
-  UserCheck,
 } from 'lucide-react';
 import { hasLegacyBrandString, useStore } from '../store/StoreContext';
 import { formatShortDate } from '../utils/format';
@@ -36,10 +32,10 @@ export const NavigationShell: React.FC<{ children: React.ReactNode }> = ({ child
     activeTab,
     setActiveTab,
     openCatalog,
+    authReady,
+    firebaseUser,
+    guestSession,
     user,
-    isGuest,
-    openAuthModal,
-    continueAsGuest,
     logout,
     settings,
     appearance,
@@ -47,6 +43,8 @@ export const NavigationShell: React.FC<{ children: React.ReactNode }> = ({ child
     cartCount,
     unreadNotificationsCount,
     notifications,
+    liveOrderAlert,
+    dismissLiveOrderAlert,
     markNotificationRead,
     markAllNotificationsRead,
     openProduct,
@@ -55,10 +53,13 @@ export const NavigationShell: React.FC<{ children: React.ReactNode }> = ({ child
   } = useStore();
 
   const [notifOpen, setNotifOpen] = useState(false);
+  const [confirmLogoutOpen, setConfirmLogoutOpen] = useState(false);
+  const [loggingOut, setLoggingOut] = useState(false);
   const [headerSearch, setHeaderSearch] = useState('');
   const [cartBounce, setCartBounce] = useState(false);
   const prevCartCountRef = useRef(cartCount);
   const { needRefresh, reloadApp, dismissUpdate } = usePWAUpdate();
+  const isSignedInSession = authReady && (Boolean(firebaseUser) || guestSession);
 
   useEffect(() => {
     if (cartCount > prevCartCountRef.current) {
@@ -210,73 +211,27 @@ export const NavigationShell: React.FC<{ children: React.ReactNode }> = ({ child
           <div className="bg-slate-50 dark:bg-[#0F1624] border-t border-slate-200/70 dark:border-slate-800/80">
             <div className="max-w-7xl mx-auto px-3 sm:px-6 py-1.5 flex items-center justify-between gap-2 overflow-x-auto text-xs">
               <div className="flex items-center gap-1.5 shrink-0">
-                {isGuest ? (
-                  <>
-                    <button
-                      type="button"
-                      onClick={() => openAuthModal('login', false)}
-                      className="px-2.5 py-1 rounded-lg bg-[#11223E] text-white font-semibold flex items-center gap-1.5 whitespace-nowrap"
-                    >
-                      <LogIn className="w-3.5 h-3.5" />
-                      {t('تسجيل الدخول', 'Sign In')}
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => openAuthModal('register', false)}
-                      style={{
-                        backgroundColor: appearance.secondaryColor,
-                        color: appearance.primaryColor,
-                      }}
-                      className="px-2.5 py-1 rounded-lg font-bold flex items-center gap-1 whitespace-nowrap"
-                    >
-                      <UserPlus className="w-3.5 h-3.5" />
-                      {t('تسجيل حساب جديد', 'Register')}
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => openAuthModal('reset', false)}
-                      className="px-2.5 py-1 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-[#1A253A] text-[#B38B2D] dark:text-[#E2BD5B] font-semibold flex items-center gap-1 whitespace-nowrap"
-                    >
-                      <KeyRound className="w-3.5 h-3.5" />
-                      {t('نسيت كلمة المرور؟', 'Forgot Password?')}
-                    </button>
-                  </>
-                ) : (
-                  <>
-                    <button
-                      type="button"
-                      onClick={() => openAuthModal('reset', false)}
-                      className="px-2.5 py-1 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-[#1A253A] text-[#B38B2D] dark:text-[#E2BD5B] font-semibold flex items-center gap-1 whitespace-nowrap"
-                    >
-                      <KeyRound className="w-3.5 h-3.5" />
-                      {t('نسيت كلمة المرور؟', 'Reset Password')}
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => void continueAsGuest()}
-                      className="px-2.5 py-1 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-[#1A253A] text-slate-700 dark:text-slate-200 font-semibold flex items-center gap-1 whitespace-nowrap"
-                    >
-                      <UserCheck className="w-3.5 h-3.5" />
-                      {t('الدخول كضيف', 'Guest')}
-                    </button>
-                  </>
-                )}
-
-                <button
-                  type="button"
-                  onClick={() => void logout()}
-                  className="px-2.5 py-1 rounded-lg bg-slate-200/80 dark:bg-slate-800 text-[#11223E] dark:text-slate-200 font-semibold flex items-center gap-1.5 whitespace-nowrap"
-                >
-                  <LogOut className="w-3.5 h-3.5" />
-                  {t('تسجيل الخروج', 'Sign Out')}
-                </button>
+                {!authReady ? (
+                  <span className="inline-flex items-center gap-1.5 px-2.5 py-1 text-slate-400">
+                    <span className="w-3.5 h-3.5 rounded-full border-2 border-slate-300 border-t-[#D9B24C] animate-spin" />
+                  </span>
+                ) : isSignedInSession ? (
+                  <button
+                    type="button"
+                    onClick={() => setConfirmLogoutOpen(true)}
+                    className="min-h-[36px] px-3 py-1 rounded-lg bg-slate-200/80 dark:bg-slate-800 hover:bg-rose-50 dark:hover:bg-rose-950/40 text-[#11223E] dark:text-slate-200 hover:text-rose-700 dark:hover:text-rose-300 font-semibold flex items-center gap-1.5 whitespace-nowrap transition-colors"
+                  >
+                    <LogOut className="w-3.5 h-3.5" />
+                    <span>{t('تسجيل الخروج', 'Sign Out')}</span>
+                  </button>
+                ) : null}
               </div>
 
               <div className="flex items-center gap-2 shrink-0">
                 <button
                   type="button"
                   onClick={() => setActiveTab('favorites')}
-                  className="px-2.5 py-1 rounded-lg text-slate-700 dark:text-slate-300 hover:bg-slate-200/70 dark:hover:bg-slate-800 flex items-center gap-1 whitespace-nowrap"
+                  className="min-h-[36px] px-2.5 py-1 rounded-lg text-slate-700 dark:text-slate-300 hover:bg-slate-200/70 dark:hover:bg-slate-800 flex items-center gap-1 whitespace-nowrap"
                 >
                   <Heart className="w-3.5 h-3.5" style={{ color: appearance.secondaryColor }} />
                   <span>{t('المفضلة', 'Favorites')}</span>
@@ -286,7 +241,7 @@ export const NavigationShell: React.FC<{ children: React.ReactNode }> = ({ child
                 <button
                   type="button"
                   onClick={() => setActiveTab('profile')}
-                  className="hidden md:flex px-2.5 py-1 rounded-lg text-slate-700 dark:text-slate-300 hover:bg-slate-200/70 dark:hover:bg-slate-800 items-center gap-1 whitespace-nowrap"
+                  className="min-h-[36px] px-2.5 py-1 rounded-lg text-slate-700 dark:text-slate-300 hover:bg-slate-200/70 dark:hover:bg-slate-800 flex items-center gap-1 whitespace-nowrap"
                 >
                   <User className="w-3.5 h-3.5" />
                   <span>{t('حسابي والوصفات', 'Profile & Rx')}</span>
@@ -295,7 +250,7 @@ export const NavigationShell: React.FC<{ children: React.ReactNode }> = ({ child
                 <button
                   type="button"
                   onClick={() => setLocale(locale === 'ar' ? 'en' : 'ar')}
-                  className="px-2 py-1 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-[#1A253A] text-[#11223E] dark:text-slate-100 font-bold flex items-center gap-1 whitespace-nowrap"
+                  className="min-h-[36px] px-2.5 py-1 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-[#1A253A] text-[#11223E] dark:text-slate-100 font-bold flex items-center gap-1 whitespace-nowrap"
                 >
                   <Globe className="w-3.5 h-3.5" style={{ color: appearance.secondaryColor }} />
                   <span>{locale === 'ar' ? 'EN' : 'AR'}</span>
@@ -305,7 +260,7 @@ export const NavigationShell: React.FC<{ children: React.ReactNode }> = ({ child
                   type="button"
                   onClick={() => setTheme(theme === 'light' ? 'dark' : 'light')}
                   aria-label={t('تبديل المظهر', 'Toggle theme')}
-                  className="p-1.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-[#1A253A] text-[#11223E] dark:text-slate-200"
+                  className="min-h-[36px] min-w-[36px] p-1.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-[#1A253A] text-[#11223E] dark:text-slate-200 flex items-center justify-center"
                 >
                   {theme === 'light' ? (
                     <Moon className="w-3.5 h-3.5" />
@@ -318,22 +273,47 @@ export const NavigationShell: React.FC<{ children: React.ReactNode }> = ({ child
           </div>
         </header>
 
-        {/* Gentle Guest Banner */}
-        {isGuest && !showMaintenanceWall && (
-          <div className="bg-amber-50 dark:bg-amber-950/30 border-b border-amber-200 dark:border-amber-900/50">
-            <div className="max-w-7xl mx-auto px-3 sm:px-6 py-1.5 flex flex-wrap items-center justify-between gap-2 text-xs">
-              <span className="font-bold text-[#11223E] dark:text-amber-200">
-                {t('أنت داخل كضيف، سجّل دخولك لإتمام الشراء', 'You are browsing as a guest, sign in to complete purchase')}
-              </span>
-              <button
-                type="button"
-                onClick={() => openAuthModal('login', activeTab === 'cart')}
-                style={{ backgroundColor: appearance.primaryColor }}
-                className="min-h-[44px] px-4 py-1.5 rounded-xl text-white font-bold inline-flex items-center gap-1.5 shrink-0"
-              >
-                <LogIn className="w-3.5 h-3.5" />
-                <span>{t('تسجيل الدخول', 'Sign In')}</span>
-              </button>
+        {/* Live In-App Order Status Notification Alert */}
+        {liveOrderAlert && (
+          <div
+            role="status"
+            aria-live="polite"
+            className="bg-[#11223E] text-white border-b-2 border-[#D9B24C] px-4 py-3 shadow-md"
+          >
+            <div className="max-w-7xl mx-auto flex flex-wrap items-center justify-between gap-3 text-xs sm:text-sm">
+              <div className="flex items-start gap-2.5 min-w-0">
+                <Bell className="w-5 h-5 text-[#D9B24C] shrink-0 mt-0.5 animate-pulse" />
+                <div className="space-y-0.5 min-w-0">
+                  <div className="font-extrabold text-[#E2BD5B]">
+                    {locale === 'ar' ? liveOrderAlert.titleAr : liveOrderAlert.titleEn}
+                  </div>
+                  <p className="text-xs text-slate-200 leading-relaxed">
+                    {locale === 'ar' ? liveOrderAlert.bodyAr : liveOrderAlert.bodyEn}
+                  </p>
+                </div>
+              </div>
+              <div className="flex items-center gap-2 shrink-0">
+                <button
+                  type="button"
+                  onClick={() => {
+                    markNotificationRead(liveOrderAlert.id);
+                    dismissLiveOrderAlert();
+                    setActiveTab('orders');
+                  }}
+                  style={{ backgroundColor: appearance.secondaryColor, color: appearance.primaryColor }}
+                  className="min-h-[38px] px-3.5 py-1.5 rounded-xl text-xs font-extrabold"
+                >
+                  {t('عرض في طلباتي', 'View in My Orders')}
+                </button>
+                <button
+                  type="button"
+                  onClick={dismissLiveOrderAlert}
+                  aria-label={t('إغلاق', 'Close')}
+                  className="min-h-[38px] min-w-[38px] flex items-center justify-center rounded-xl bg-white/10 hover:bg-white/20"
+                >
+                  <X className="w-4 h-4" />
+                </button>
+              </div>
             </div>
           </div>
         )}
@@ -574,6 +554,53 @@ export const NavigationShell: React.FC<{ children: React.ReactNode }> = ({ child
           >
             <X className="w-4 h-4" />
           </button>
+        </div>
+      )}
+      {/* Logout Confirmation Dialog */}
+      {confirmLogoutOpen && (
+        <div
+          role="dialog"
+          aria-modal="true"
+          className="fixed inset-0 z-[75] bg-black/60 backdrop-blur-xs flex items-center justify-center p-4"
+        >
+          <div className="w-full max-w-sm bg-white dark:bg-[#131C2E] border border-slate-200 dark:border-slate-800 rounded-2xl p-6 shadow-2xl space-y-4">
+            <h2 className="text-base font-extrabold text-[#11223E] dark:text-white">
+              {t('هل تريد تسجيل الخروج؟', 'Do you want to sign out?')}
+            </h2>
+            <p className="text-xs text-slate-500 dark:text-slate-400 leading-relaxed">
+              {t(
+                'سيتم تسجيل خروجك والعودة إلى شاشة الدخول والترحيب.',
+                'You will be signed out and returned to the welcome screen.'
+              )}
+            </p>
+            <div className="flex items-center justify-end gap-2 pt-1">
+              <button
+                type="button"
+                disabled={loggingOut}
+                onClick={() => setConfirmLogoutOpen(false)}
+                className="min-h-[44px] px-4 rounded-xl border border-slate-200 dark:border-slate-700 text-xs font-bold text-slate-700 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-800"
+              >
+                {t('إلغاء', 'Cancel')}
+              </button>
+              <button
+                type="button"
+                disabled={loggingOut}
+                onClick={async () => {
+                  setLoggingOut(true);
+                  try {
+                    await logout();
+                  } finally {
+                    setLoggingOut(false);
+                    setConfirmLogoutOpen(false);
+                  }
+                }}
+                className="min-h-[44px] px-4 rounded-xl bg-rose-600 hover:bg-rose-700 text-white text-xs font-extrabold inline-flex items-center gap-1.5 disabled:opacity-60"
+              >
+                <LogOut className="w-4 h-4" />
+                <span>{loggingOut ? t('جارٍ الخروج...', 'Signing out...') : t('تسجيل الخروج', 'Sign Out')}</span>
+              </button>
+            </div>
+          </div>
         </div>
       )}
     </>

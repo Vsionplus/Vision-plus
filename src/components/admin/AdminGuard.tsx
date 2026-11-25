@@ -68,12 +68,22 @@ export const AdminGuard: React.FC<{ children: React.ReactNode }> = ({ children }
         let snap;
         try {
           snap = await getDocFromServer(doc(db, 'users', firebaseUser.uid));
-        } catch {
-          snap = await getDoc(doc(db, 'users', firebaseUser.uid));
+        } catch (serverErr) {
+          const serverCode =
+            (serverErr as { code?: string })?.code || getFirebaseAuthErrorCode(serverErr) || '';
+          if (serverCode === 'unavailable' || serverCode === 'failed-precondition') {
+            snap = await getDoc(doc(db, 'users', firebaseUser.uid));
+          } else {
+            throw serverErr;
+          }
         }
 
         if (!active) return;
         if (!snap.exists()) {
+          console.error(
+            `[AdminGuard: getDoc users/${firebaseUser.uid}] document missing`,
+            `users document missing for uid ${firebaseUser.uid}`
+          );
           setGuardStatus('denied');
           return;
         }
@@ -85,9 +95,17 @@ export const AdminGuard: React.FC<{ children: React.ReactNode }> = ({ children }
           lastActivityRef.current = Date.now();
           setGuardStatus('allowed');
         } else {
+          console.error('[AdminGuard: role check] denied', {
+            uid: firebaseUser.uid,
+            role: role ?? null,
+            blocked,
+          });
           setGuardStatus('denied');
         }
-      } catch {
+      } catch (err) {
+        const code =
+          (err as { code?: string })?.code || getFirebaseAuthErrorCode(err) || 'unknown';
+        console.error(`[AdminGuard: getDoc users/${firebaseUser.uid}]`, code, err);
         if (active) setGuardStatus('denied');
       }
     };
@@ -98,22 +116,25 @@ export const AdminGuard: React.FC<{ children: React.ReactNode }> = ({ children }
     };
   }, [authReady, firebaseUser]);
 
-  // Also revoke immediately if reactive user state becomes non-admin or blocked
+  // Also revoke immediately once auth & profile have loaded if user state becomes non-admin or blocked
   useEffect(() => {
     if (
+      authReady &&
+      firebaseUser &&
+      user.uid === firebaseUser.uid &&
       guardStatus === 'allowed' &&
       ((user.role !== 'admin' && user.role !== 'staff') || user.isBlocked || user.blocked)
     ) {
       setGuardStatus('denied');
     }
-  }, [guardStatus, user.role, user.isBlocked, user.blocked]);
+  }, [authReady, firebaseUser, guardStatus, user.uid, user.role, user.isBlocked, user.blocked]);
 
-  // Redirect unauthorized visitors back to Home
+  // Redirect unauthorized visitors back to Home after auth and verification settle
   useEffect(() => {
-    if (guardStatus === 'denied') {
+    if (authReady && guardStatus === 'denied') {
       navigateToHome();
     }
-  }, [guardStatus, navigateToHome]);
+  }, [authReady, guardStatus, navigateToHome]);
 
   // 2) 30-minute inactivity auto-logout with 1-minute warning dialog
   useEffect(() => {

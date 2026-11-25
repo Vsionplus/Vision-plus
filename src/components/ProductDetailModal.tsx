@@ -14,7 +14,6 @@ import {
   HelpCircle,
   ImagePlus,
   Loader2,
-  LogIn,
   MessageCircle,
   Share2,
   ShoppingBag,
@@ -108,7 +107,6 @@ export const ProductDetailModal: React.FC = () => {
     appearance,
     user,
     isGuest,
-    openAuthModal,
     toggleFavorite,
     addReview,
     addToCart,
@@ -1157,18 +1155,8 @@ export const ProductDetailModal: React.FC = () => {
                         <>
                           {/* Saved Prescriptions Quick Fill */}
                           {isGuest ? (
-                            <div className="p-3 rounded-xl bg-slate-50 dark:bg-slate-900/75 border border-slate-200/75 dark:border-slate-800 flex flex-wrap items-center justify-between gap-2">
-                              <span className="font-semibold text-slate-600 dark:text-slate-300">
-                                {t('المقاسات المحفوظة: سجّل دخولك لاستخدام هذه الميزة', 'Saved Rx: Sign in to use this feature')}
-                              </span>
-                              <button
-                                type="button"
-                                onClick={() => openAuthModal('login', false)}
-                                className="min-h-[44px] px-3.5 rounded-xl bg-[#11223E] text-white font-bold inline-flex items-center gap-1.5"
-                              >
-                                <LogIn className="w-3.5 h-3.5" />
-                                {t('تسجيل الدخول', 'Sign In')}
-                              </button>
+                            <div className="p-3 rounded-xl bg-slate-50 dark:bg-slate-900/75 border border-slate-200/75 dark:border-slate-800 text-slate-600 dark:text-slate-300 font-semibold">
+                              {t('المقاسات المحفوظة متاحة للحسابات المسجلة فقط — يمكنك إدخال مقاسك الآن يدوياً.', 'Saved prescriptions are for registered accounts — you can enter your Rx below.')}
                             </div>
                           ) : (
                             user.prescriptions.length > 0 && (

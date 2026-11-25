@@ -51,6 +51,7 @@ import {
   Locale,
   Order,
   OrderAddressSnapshot,
+  OrderItem,
   OrderStatus,
   PaymentMethod,
   PrescriptionData,
@@ -86,6 +87,7 @@ import {
   stripUndefined,
 } from '../lib/firebase';
 import { hasCustomLensOrRx, resolveExtraOptions, resolveVisionType } from '../utils/prescription';
+import { getOrderStatusLabel } from '../utils/format';
 import {
   AdminLoginAttemptStatus,
   clearAdminAttempts,
@@ -107,10 +109,12 @@ export type AdminRouteMode = 'store' | 'admin_login' | 'admin_panel';
 
 export class AdminLoginError extends Error {
   attemptStatus?: AdminLoginAttemptStatus;
-  constructor(message: string, attemptStatus?: AdminLoginAttemptStatus) {
+  debugInfo?: string;
+  constructor(message: string, attemptStatus?: AdminLoginAttemptStatus, debugInfo?: string) {
     super(message);
     this.name = 'AdminLoginError';
     this.attemptStatus = attemptStatus;
+    this.debugInfo = debugInfo;
   }
 }
 
@@ -139,6 +143,29 @@ const ALL_ADMIN_PERMS: StaffPermission[] = [
   'roles',
 ];
 
+const GUEST_SESSION_KEY = 'vp_guest_session';
+
+function readGuestSessionFlag(): boolean {
+  try {
+    return typeof sessionStorage !== 'undefined' && sessionStorage.getItem(GUEST_SESSION_KEY) === '1';
+  } catch {
+    return false;
+  }
+}
+
+function writeGuestSessionFlag(active: boolean) {
+  try {
+    if (typeof sessionStorage === 'undefined') return;
+    if (active) {
+      sessionStorage.setItem(GUEST_SESSION_KEY, '1');
+    } else {
+      sessionStorage.removeItem(GUEST_SESSION_KEY);
+    }
+  } catch {
+    // Ignore storage quota errors
+  }
+}
+
 function createEmptyUser(uid = 'guest_pending'): AppUser {
   return {
     uid,
@@ -165,6 +192,7 @@ interface StoreState {
   selectedProductId: string | null;
   authReady: boolean;
   firebaseUser: User | null;
+  guestSession: boolean;
   authScreenMode: AuthScreenMode;
   authModal: AuthModalState;
   pendingCheckoutReturn: boolean;
@@ -186,6 +214,7 @@ interface StoreState {
   appearance: AppAppearanceConfig;
   settings: StoreSettings;
   toastMessage: string | null;
+  liveOrderAlert: AppNotification | null;
 }
 
 interface PlaceOrderPayload {
@@ -202,6 +231,37 @@ interface PlaceOrderPayload {
   deliveryFeeSdg: number;
   bankTransferReference?: string;
   bankTransferReceiptUrl?: string;
+  customerNote?: string;
+}
+
+export interface CustomerEditOrderPayload {
+  customerName: string;
+  customerPhone: string;
+  stateId: string;
+  city: string;
+  area: string;
+  addressDetails: string;
+  address: OrderAddressSnapshot;
+  items?: OrderItem[];
+  bankTransferReference?: string;
+  bankTransferReceiptUrl?: string;
+  customerNote?: string;
+}
+
+export interface AdminEditOrderPayload {
+  customerName: string;
+  customerPhone: string;
+  stateId: string;
+  city: string;
+  area: string;
+  addressDetails: string;
+  address: OrderAddressSnapshot;
+  items: OrderItem[];
+  discountSdg: number;
+  deliveryFeeSdg: number;
+  paymentMethod: PaymentMethod;
+  bankTransferReference?: string;
+  adminNote?: string;
 }
 
 interface BroadcastPayload {
@@ -266,6 +326,8 @@ interface StoreContextValue extends StoreState {
   updateCartItemPrescription: (cartItemId: string, prescription?: PrescriptionData) => void;
   removeFromCart: (cartItemId: string) => void;
   placeOrder: (payload: PlaceOrderPayload) => Promise<Order | null>;
+  updateOrderByCustomer: (orderId: string, payload: CustomerEditOrderPayload) => Promise<void>;
+  updateOrderByAdmin: (orderId: string, payload: AdminEditOrderPayload) => Promise<void>;
   requestOrderCancellation: (orderId: string, reason: string, note?: string) => Promise<void>;
   approveOrderCancellation: (orderId: string, adminNote?: string) => Promise<void>;
   rejectOrderCancellation: (orderId: string, adminNote: string) => Promise<void>;
@@ -274,6 +336,7 @@ interface StoreContextValue extends StoreState {
   updateOrderStatus: (orderId: string, status: OrderStatus) => void;
   approveBankTransfer: (orderId: string) => void;
   rejectBankTransfer: (orderId: string) => void;
+  dismissLiveOrderAlert: () => void;
   markNotificationRead: (id: string) => void;
   markAllNotificationsRead: () => void;
   sendBroadcastNotification: (payload: BroadcastPayload) => void;
@@ -647,10 +710,12 @@ function getInitialState(): StoreState {
   const baseAppearance = APP_APPEARANCE_SEED;
   const initialAdminRoute = resolveAdminRouteFromLocation();
   const initialTab = resolveTabFromHash();
+  const initialGuestSession = readGuestSessionFlag();
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
     if (raw) {
       const parsed = JSON.parse(raw);
+      const baseUser = createEmptyUser();
       return {
         locale: parsed.locale || 'ar',
         theme: parsed.theme || parsed.appearance?.defaultTheme || baseAppearance.defaultTheme,
@@ -661,10 +726,16 @@ function getInitialState(): StoreState {
         selectedProductId: null,
         authReady: false,
         firebaseUser: null,
+        guestSession: initialGuestSession,
         authScreenMode: 'none',
         authModal: { open: false, view: 'choice', checkoutNotice: false },
         pendingCheckoutReturn: false,
-        user: createEmptyUser(),
+        user: {
+          ...baseUser,
+          favoriteProductIds: Array.isArray(parsed.favoriteProductIds)
+            ? parsed.favoriteProductIds
+            : [],
+        },
         directoryUsers: parsed.directoryUsers || CUSTOMERS_AND_STAFF_SEED,
         products: normalizeProductList(parsed.products || PRODUCTS_SEED),
         categories: parsed.categories || CATEGORIES_SEED,
@@ -682,6 +753,7 @@ function getInitialState(): StoreState {
         appearance: normalizeAppearanceConfig(parsed.appearance),
         settings: normalizeStoreSettings(parsed.settings),
         toastMessage: null,
+        liveOrderAlert: null,
       };
     }
   } catch {
@@ -697,6 +769,7 @@ function getInitialState(): StoreState {
     selectedProductId: null,
     authReady: false,
     firebaseUser: null,
+    guestSession: initialGuestSession,
     authScreenMode: 'none',
     authModal: { open: false, view: 'choice', checkoutNotice: false },
     pendingCheckoutReturn: false,
@@ -718,6 +791,7 @@ function getInitialState(): StoreState {
     appearance: baseAppearance,
     settings: STORE_SETTINGS_SEED,
     toastMessage: null,
+    liveOrderAlert: null,
   };
 }
 
@@ -725,6 +799,10 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   const [state, setState] = useState<StoreState>(getInitialState);
   const stateRef = useRef(state);
   stateRef.current = state;
+  const notifSnapshotUidRef = useRef<string | null>(null);
+  const knownNotifIdsRef = useRef<Set<string>>(new Set());
+  const enteringGuestRef = useRef(false);
+  const adminLoginInProgressRef = useRef(false);
 
   const showToast = useCallback((msg: string) => {
     setState((prev) => ({ ...prev, toastMessage: msg }));
@@ -794,6 +872,7 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         locale: state.locale,
         theme: state.theme,
         cart: state.cart,
+        favoriteProductIds: state.user.favoriteProductIds,
         products: state.products,
         categories: state.categories,
         brands: state.brands,
@@ -814,6 +893,7 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     state.locale,
     state.theme,
     state.cart,
+    state.user.favoriteProductIds,
     state.products,
     state.categories,
     state.brands,
@@ -847,6 +927,7 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   // Helper to resolve Firebase User -> AppUser document in Firestore
   const ensureUserDocument = useCallback(async (fbUser: User): Promise<AppUser> => {
     const path = `users/${fbUser.uid}`;
+    let op = OperationType.GET;
 
     try {
       let snap;
@@ -906,6 +987,7 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         createdAt: nowIso,
         updatedAt: nowIso,
       };
+      op = OperationType.CREATE;
       await setDoc(
         doc(db, 'users', fbUser.uid),
         stripUndefined({
@@ -917,7 +999,7 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
 
       return initialDoc;
     } catch (error) {
-      handleFirestoreError(error, OperationType.GET, path);
+      handleFirestoreError(error, op, path);
     }
   }, []);
 
@@ -925,16 +1007,34 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   useEffect(() => {
     const unsub = onAuthStateChanged(auth, async (fbUser) => {
       if (!fbUser) {
+        if (adminLoginInProgressRef.current) {
+          return;
+        }
+        const keepGuest = enteringGuestRef.current || readGuestSessionFlag();
         setState((prev) => ({
           ...prev,
           authReady: true,
           firebaseUser: null,
-          authScreenMode: 'entry',
-          user: createEmptyUser(),
+          guestSession: keepGuest,
+          authScreenMode: keepGuest ? 'none' : 'entry',
+          user: {
+            ...createEmptyUser(),
+            favoriteProductIds: keepGuest ? prev.user.favoriteProductIds : [],
+          },
           orders: [],
           consults: [],
         }));
         return;
+      }
+
+      if (adminLoginInProgressRef.current) {
+        return;
+      }
+
+      if (!fbUser.isAnonymous) {
+        writeGuestSessionFlag(false);
+      } else {
+        writeGuestSessionFlag(true);
       }
 
       try {
@@ -943,16 +1043,25 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
           ...prev,
           authReady: true,
           firebaseUser: fbUser,
+          guestSession: fbUser.isAnonymous,
           user: appUser,
-          authScreenMode: prev.authScreenMode === 'verify_email' && !fbUser.emailVerified
-            ? 'verify_email'
-            : 'none',
+          authScreenMode:
+            prev.authScreenMode === 'verify_email' && !fbUser.isAnonymous && !fbUser.emailVerified
+              ? 'verify_email'
+              : 'none',
         }));
       } catch {
         setState((prev) => ({
           ...prev,
           authReady: true,
           firebaseUser: fbUser,
+          guestSession: fbUser.isAnonymous,
+          user: fbUser.isAnonymous
+            ? {
+                ...createEmptyUser(fbUser.uid),
+                favoriteProductIds: prev.user.favoriteProductIds,
+              }
+            : prev.user,
           authScreenMode: 'none',
         }));
       }
@@ -961,70 +1070,74 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     return () => unsub();
   }, [ensureUserDocument]);
 
-  // Firestore real-time listeners (only when authenticated—including anonymous guests!)
+  // Firestore real-time listeners (authenticated users + guest browsing sessions)
   useEffect(() => {
-    if (!state.authReady || !state.firebaseUser) return;
+    if (!state.authReady || (!state.firebaseUser && !state.guestSession)) return;
     const fbUser = state.firebaseUser;
-    const isBlockedAccount = Boolean(state.user.isBlocked || state.user.blocked);
-    const isVerifiedAdmin = Boolean(!fbUser.isAnonymous && !isBlockedAccount && state.user.role === 'admin');
-    const isVerifiedStaff = Boolean(!fbUser.isAnonymous && !isBlockedAccount && state.user.role === 'staff');
+    const isBlockedAccount = Boolean(fbUser && (state.user.isBlocked || state.user.blocked));
+    const isVerifiedAdmin = Boolean(fbUser && !fbUser.isAnonymous && !isBlockedAccount && state.user.role === 'admin');
+    const isVerifiedStaff = Boolean(fbUser && !fbUser.isAnonymous && !isBlockedAccount && state.user.role === 'staff');
     const unsubs: (() => void)[] = [];
 
     // 1. User document (cart, favorites, profile, role, block status)
-    unsubs.push(
-      onSnapshot(
-        doc(db, 'users', fbUser.uid),
-        (snap) => {
-          if (!snap.exists()) return;
-          const data = snap.data() as Partial<AppUser> & { cart?: CartItem[] };
-          const resolvedRole = data.role || 'customer';
-          const resolvedBlocked = Boolean(data.isBlocked || data.blocked);
-          setState((prev) => ({
-            ...prev,
-            cart: Array.isArray(data.cart) ? data.cart : prev.cart,
-            user: {
-              ...prev.user,
-              uid: fbUser.uid,
-              name: data.name || fbUser.displayName || prev.user.name,
-              email: fbUser.email || data.email || prev.user.email,
-              phone: data.phone ?? prev.user.phone,
-              role: resolvedRole,
-              permissions:
-                resolvedRole === 'admin'
-                  ? ALL_ADMIN_PERMS
-                  : resolvedRole === 'staff'
-                  ? ['orders']
-                  : data.permissions,
-              isBlocked: resolvedBlocked,
-              blocked: Boolean(data.blocked),
-              isAnonymous: fbUser.isAnonymous,
-              emailVerified: fbUser.emailVerified,
-              favoriteProductIds: Array.isArray(data.favoriteProductIds)
-                ? data.favoriteProductIds
-                : prev.user.favoriteProductIds,
-              addresses:
-                prev.user.addresses.length > 0
-                  ? prev.user.addresses
-                  : Array.isArray(data.addresses)
-                  ? data.addresses
-                  : prev.user.addresses,
-              prescriptions:
-                prev.user.prescriptions.length > 0
-                  ? prev.user.prescriptions
-                  : Array.isArray(data.prescriptions)
-                  ? data.prescriptions
-                  : prev.user.prescriptions,
-            },
-          }));
-        },
-        (err) => {
-          handleFirestoreError(err, OperationType.GET, `users/${fbUser.uid}`);
-        }
-      )
-    );
+    if (fbUser) {
+      unsubs.push(
+        onSnapshot(
+          doc(db, 'users', fbUser.uid),
+          (snap) => {
+            if (!snap.exists()) return;
+            const data = snap.data() as Partial<AppUser> & { cart?: CartItem[] };
+            const resolvedRole = data.role || 'customer';
+            const resolvedBlocked = Boolean(data.isBlocked || data.blocked);
+            setState((prev) => ({
+              ...prev,
+              cart: Array.isArray(data.cart) ? data.cart : prev.cart,
+              user: {
+                ...prev.user,
+                uid: fbUser.uid,
+                name: data.name || fbUser.displayName || prev.user.name,
+                email: fbUser.email || data.email || prev.user.email,
+                phone: data.phone ?? prev.user.phone,
+                role: resolvedRole,
+                permissions:
+                  resolvedRole === 'admin'
+                    ? ALL_ADMIN_PERMS
+                    : resolvedRole === 'staff'
+                    ? ['orders']
+                    : data.permissions,
+                isBlocked: resolvedBlocked,
+                blocked: Boolean(data.blocked),
+                isAnonymous: fbUser.isAnonymous,
+                emailVerified: fbUser.emailVerified,
+                favoriteProductIds: Array.isArray(data.favoriteProductIds)
+                  ? data.favoriteProductIds
+                  : prev.user.favoriteProductIds,
+                addresses:
+                  prev.user.addresses.length > 0
+                    ? prev.user.addresses
+                    : Array.isArray(data.addresses)
+                    ? data.addresses
+                    : prev.user.addresses,
+                prescriptions:
+                  prev.user.prescriptions.length > 0
+                    ? prev.user.prescriptions
+                    : Array.isArray(data.prescriptions)
+                    ? data.prescriptions
+                    : prev.user.prescriptions,
+              },
+            }));
+          },
+          (err) => {
+            if (!fbUser.isAnonymous) {
+              handleFirestoreError(err, OperationType.GET, `users/${fbUser.uid}`);
+            }
+          }
+        )
+      );
+    }
 
     // 1b. User subcollections: addresses and prescriptions (for signed-in accounts)
-    if (!fbUser.isAnonymous) {
+    if (fbUser && !fbUser.isAnonymous) {
       unsubs.push(
         onSnapshot(
           collection(db, 'users', fbUser.uid, 'addresses'),
@@ -1154,7 +1267,13 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
               return next;
             });
           },
-          (err) => handleFirestoreError(err, OperationType.GET, `store_config/${configId}`)
+          (err) => {
+            if (fbUser && !fbUser.isAnonymous) {
+              handleFirestoreError(err, OperationType.GET, `store_config/${configId}`);
+            } else {
+              console.warn(`Guest store_config/${configId} read warning:`, err);
+            }
+          }
         )
       );
     });
@@ -1170,7 +1289,13 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
           const items = normalizeProductList(snap.docs.map((d) => d.data() as Product));
           setState((prev) => ({ ...prev, products: items }));
         },
-        (err) => handleFirestoreError(err, OperationType.LIST, 'products')
+        (err) => {
+          if (fbUser && !fbUser.isAnonymous) {
+            handleFirestoreError(err, OperationType.LIST, 'products');
+          } else {
+            console.warn('Guest products list read warning:', err);
+          }
+        }
       )
     );
 
@@ -1185,7 +1310,13 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
           const items = snap.docs.map((d) => d.data() as Category);
           setState((prev) => ({ ...prev, categories: items }));
         },
-        (err) => handleFirestoreError(err, OperationType.LIST, 'categories')
+        (err) => {
+          if (fbUser && !fbUser.isAnonymous) {
+            handleFirestoreError(err, OperationType.LIST, 'categories');
+          } else {
+            console.warn('Guest categories list read warning:', err);
+          }
+        }
       )
     );
 
@@ -1200,7 +1331,13 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
           const items = normalizeBrandList(snap.docs.map((d) => d.data() as Brand));
           setState((prev) => ({ ...prev, brands: items }));
         },
-        (err) => handleFirestoreError(err, OperationType.LIST, 'brands')
+        (err) => {
+          if (fbUser && !fbUser.isAnonymous) {
+            handleFirestoreError(err, OperationType.LIST, 'brands');
+          } else {
+            console.warn('Guest brands list read warning:', err);
+          }
+        }
       )
     );
 
@@ -1215,27 +1352,39 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
           const items = snap.docs.map((d) => d.data() as BannerAd);
           setState((prev) => ({ ...prev, banners: items }));
         },
-        (err) => handleFirestoreError(err, OperationType.LIST, 'banners')
+        (err) => {
+          if (fbUser && !fbUser.isAnonymous) {
+            handleFirestoreError(err, OperationType.LIST, 'banners');
+          } else {
+            console.warn('Guest banners list read warning:', err);
+          }
+        }
       )
     );
 
-    const couponsQ = isVerifiedAdmin
-      ? collection(db, 'coupons')
-      : query(collection(db, 'coupons'), where('isActive', '==', true));
-    unsubs.push(
-      onSnapshot(
-        couponsQ,
-        (snap) => {
-          if (snap.empty) return;
-          const items = snap.docs.map((d) => d.data() as Coupon);
-          setState((prev) => ({ ...prev, coupons: items }));
-        },
-        (err) => handleFirestoreError(err, OperationType.LIST, 'coupons')
-      )
-    );
+    if (fbUser) {
+      const couponsQ = isVerifiedAdmin
+        ? collection(db, 'coupons')
+        : query(collection(db, 'coupons'), where('isActive', '==', true));
+      unsubs.push(
+        onSnapshot(
+          couponsQ,
+          (snap) => {
+            if (snap.empty) return;
+            const items = snap.docs.map((d) => d.data() as Coupon);
+            setState((prev) => ({ ...prev, coupons: items }));
+          },
+          (err) => {
+            if (!fbUser.isAnonymous) {
+              handleFirestoreError(err, OperationType.LIST, 'coupons');
+            }
+          }
+        )
+      );
+    }
 
     // 3. Orders (non-anonymous accounts only; guests cannot use order history)
-    if (!fbUser.isAnonymous) {
+    if (fbUser && !fbUser.isAnonymous) {
       const ordersQ =
         isVerifiedAdmin || isVerifiedStaff
           ? collection(db, 'orders')
@@ -1257,49 +1406,91 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     }
 
     // 4. Consultations (scoped to customerUid or all for verified admin)
-    const consultsQ = isVerifiedAdmin
-      ? collection(db, 'consults')
-      : query(collection(db, 'consults'), where('customerUid', '==', fbUser.uid));
-    unsubs.push(
-      onSnapshot(
-        consultsQ,
-        (snap) => {
-          const items = snap.docs
-            .map((d) => d.data() as ConsultRequest)
-            .sort((a, b) => (b.createdAt || '').localeCompare(a.createdAt || ''));
-          setState((prev) => ({ ...prev, consults: items }));
-        },
-        (err) => handleFirestoreError(err, OperationType.LIST, 'consults')
-      )
-    );
+    if (fbUser) {
+      const consultsQ = isVerifiedAdmin
+        ? collection(db, 'consults')
+        : query(collection(db, 'consults'), where('customerUid', '==', fbUser.uid));
+      unsubs.push(
+        onSnapshot(
+          consultsQ,
+          (snap) => {
+            const items = snap.docs
+              .map((d) => d.data() as ConsultRequest)
+              .sort((a, b) => (b.createdAt || '').localeCompare(a.createdAt || ''));
+            setState((prev) => ({ ...prev, consults: items }));
+          },
+          (err) => {
+            if (!fbUser.isAnonymous) {
+              handleFirestoreError(err, OperationType.LIST, 'consults');
+            }
+          }
+        )
+      );
+    }
 
     // 5. Notifications (broadcast 'all' + customer-targeted for signed-in users, or all for verified admin)
-    const notifQ = isVerifiedAdmin
-      ? collection(db, 'notifications')
-      : !fbUser.isAnonymous
-      ? query(collection(db, 'notifications'), where('customerUid', 'in', ['all', fbUser.uid]))
-      : query(collection(db, 'notifications'), where('customerUid', '==', 'all'));
-    unsubs.push(
-      onSnapshot(
-        notifQ,
-        (snap) => {
-          const readSet = readBroadcastIds(fbUser.uid);
-          const remote = snap.docs
-            .map((d) => {
-              const data = d.data() as AppNotification;
-              if (data.customerUid === 'all' && readSet.has(data.id)) {
-                return { ...data, isRead: true };
-              }
-              return data;
-            })
-            .sort((a, b) => (b.createdAt || '').localeCompare(a.createdAt || ''));
-          if (remote.length > 0) {
-            setState((prev) => ({ ...prev, notifications: remote }));
+    if (fbUser) {
+      const notifQ = isVerifiedAdmin
+        ? collection(db, 'notifications')
+        : !fbUser.isAnonymous
+        ? query(collection(db, 'notifications'), where('customerUid', 'in', ['all', fbUser.uid]))
+        : query(collection(db, 'notifications'), where('customerUid', '==', 'all'));
+      unsubs.push(
+        onSnapshot(
+          notifQ,
+          (snap) => {
+            const readSet = readBroadcastIds(fbUser.uid);
+            const remote = snap.docs
+              .map((d) => {
+                const data = d.data() as AppNotification;
+                if (data.customerUid === 'all' && readSet.has(data.id)) {
+                  return { ...data, isRead: true };
+                }
+                return data;
+              })
+              .sort((a, b) => (b.createdAt || '').localeCompare(a.createdAt || ''));
+
+            const isInitialForUser = notifSnapshotUidRef.current !== fbUser.uid;
+            let newlyArrivedOrderAlert: AppNotification | null = null;
+            if (isInitialForUser) {
+              notifSnapshotUidRef.current = fbUser.uid;
+              knownNotifIdsRef.current = new Set(remote.map((n) => n.id));
+            } else {
+              const incomingUnread = remote.filter(
+                (n) => !n.isRead && !knownNotifIdsRef.current.has(n.id)
+              );
+              remote.forEach((n) => knownNotifIdsRef.current.add(n.id));
+              newlyArrivedOrderAlert =
+                incomingUnread.find((n) => n.deepLinkType === 'order') || incomingUnread[0] || null;
+            }
+
+            if (remote.length > 0 || !fbUser.isAnonymous) {
+              setState((prev) => ({
+                ...prev,
+                notifications: remote,
+                liveOrderAlert:
+                  newlyArrivedOrderAlert && prev.adminRoute === 'store'
+                    ? newlyArrivedOrderAlert
+                    : prev.liveOrderAlert,
+              }));
+            }
+
+            if (newlyArrivedOrderAlert && stateRef.current.adminRoute === 'store') {
+              const title =
+                stateRef.current.locale === 'ar'
+                  ? newlyArrivedOrderAlert.titleAr
+                  : newlyArrivedOrderAlert.titleEn;
+              showToast(title);
+            }
+          },
+          (err) => {
+            if (!fbUser.isAnonymous) {
+              handleFirestoreError(err, OperationType.LIST, 'notifications');
+            }
           }
-        },
-        (err) => handleFirestoreError(err, OperationType.LIST, 'notifications')
-      )
-    );
+        )
+      );
+    }
 
     // 6. Admin-only customers & staff directory
     if (isVerifiedAdmin) {
@@ -1319,16 +1510,31 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     return () => {
       unsubs.forEach((fn) => fn());
     };
-  }, [state.authReady, state.firebaseUser, state.user.role, state.user.isBlocked, state.user.blocked]);
+  }, [
+    state.authReady,
+    state.firebaseUser,
+    state.guestSession,
+    state.user.role,
+    state.user.isBlocked,
+    state.user.blocked,
+    showToast,
+  ]);
 
   // Auth Methods
   const continueAsGuest = useCallback(async () => {
+    enteringGuestRef.current = true;
+    writeGuestSessionFlag(true);
     try {
       const current = auth.currentUser;
       if (current?.isAnonymous) {
-        await ensureUserDocument(current);
+        try {
+          await ensureUserDocument(current);
+        } catch {
+          // Local guest session still works seamlessly if Firestore user creation fails
+        }
         setState((prev) => ({
           ...prev,
+          guestSession: true,
           activeTab: 'home',
           authScreenMode: 'none',
           authModal: { open: false, view: 'choice', checkoutNotice: false },
@@ -1338,7 +1544,7 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       }
 
       if (current && !current.isAnonymous) {
-        await signOut(auth);
+        await signOut(auth).catch(() => undefined);
         setState((prev) => ({
           ...prev,
           cart: [],
@@ -1350,17 +1556,41 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         }));
       }
 
-      const cred = await signInAnonymously(auth);
-      await ensureUserDocument(cred.user);
-      setState((prev) => ({
-        ...prev,
-        activeTab: 'home',
-        authScreenMode: 'none',
-        authModal: { open: false, view: 'choice', checkoutNotice: false },
-      }));
-      showToast(t('أهلاً بك! تتصفح الآن كضيف', 'Welcome! Browsing as Guest'));
-    } catch (error) {
-      throw new Error(mapFirebaseAuthError(error, stateRef.current.locale));
+      try {
+        const cred = await signInAnonymously(auth);
+        try {
+          await ensureUserDocument(cred.user);
+        } catch {
+          // Keep browsing cleanly with guest profile even if Firestore write fails
+        }
+        setState((prev) => ({
+          ...prev,
+          firebaseUser: cred.user,
+          guestSession: true,
+          activeTab: 'home',
+          authScreenMode: 'none',
+          authModal: { open: false, view: 'choice', checkoutNotice: false },
+        }));
+        showToast(t('أهلاً بك! تتصفح الآن كضيف', 'Welcome! Browsing as Guest'));
+      } catch {
+        // Fallback: Anonymous Auth may be disabled in Firebase Console (auth/admin-restricted-operation)
+        // Enter local guest session so visitors can browse products, cart, and favorites smoothly.
+        setState((prev) => ({
+          ...prev,
+          firebaseUser: null,
+          guestSession: true,
+          user: {
+            ...createEmptyUser(),
+            favoriteProductIds: prev.user.favoriteProductIds,
+          },
+          activeTab: 'home',
+          authScreenMode: 'none',
+          authModal: { open: false, view: 'choice', checkoutNotice: false },
+        }));
+        showToast(t('أهلاً بك! تتصفح الآن كضيف', 'Welcome! Browsing as Guest'));
+      }
+    } finally {
+      enteringGuestRef.current = false;
     }
   }, [ensureUserDocument, showToast, t]);
 
@@ -1436,9 +1666,11 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
           );
         }
 
+        writeGuestSessionFlag(false);
         setState((prev) => ({
           ...prev,
           firebaseUser: userCredUser,
+          guestSession: false,
           user: { ...prev.user, ...userPayload },
           cart: guestCart,
           pendingCheckoutReturn:
@@ -1460,9 +1692,9 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
 
   const loginWithEmail = useCallback(
     async (email: string, password: string) => {
-      const wasAnonymous = Boolean(auth.currentUser?.isAnonymous);
-      const guestCart = wasAnonymous ? [...stateRef.current.cart] : [];
-      const guestFavs = wasAnonymous ? [...stateRef.current.user.favoriteProductIds] : [];
+      const wasGuest = Boolean(!auth.currentUser || auth.currentUser.isAnonymous);
+      const guestCart = wasGuest ? [...stateRef.current.cart] : [];
+      const guestFavs = wasGuest ? [...stateRef.current.user.favoriteProductIds] : [];
 
       try {
         const cred = await signInWithEmailAndPassword(auth, email.trim(), password);
@@ -1529,11 +1761,13 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
           );
         }
 
+        writeGuestSessionFlag(false);
         setState((prev) => {
           const goToCheckout = prev.pendingCheckoutReturn || prev.activeTab === 'cart';
           return {
             ...prev,
             firebaseUser: signedUser,
+            guestSession: false,
             user: {
               ...syncedUserDoc,
               permissions:
@@ -1596,56 +1830,143 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   const loginAdminWithEmail = useCallback(
     async (email: string, password: string) => {
       const cleanEmail = email.trim().toLowerCase();
+
+      // Step 4 (pre-check): Read failed attempts — errors are logged and never block a valid login
       const attemptStatus = await getAdminAttemptStatusByEmail(cleanEmail);
       if (attemptStatus.isLocked) {
         throw new AdminLoginError(
           'تم قفل تسجيل الدخول مؤقتاً لمدة 15 دقيقة بسبب تكرار المحاولات الخاطئة',
-          attemptStatus
+          attemptStatus,
+          `Step 4 (adminLoginAttempts): locked until ${new Date(attemptStatus.lockedUntilMs || Date.now()).toISOString()}`
         );
       }
 
-      let signedUser: User;
+      adminLoginInProgressRef.current = true;
       try {
-        const cred = await signInWithEmailAndPassword(auth, cleanEmail, password);
-        signedUser = cred.user;
-      } catch (error) {
-        const code = getFirebaseAuthErrorCode(error);
-        if (code === 'auth/too-many-requests') {
-          throw new AdminLoginError(
-            'تم إرسال طلبات كثيرة مؤقتاً. يرجى الانتظار قليلاً ثم المحاولة مرة أخرى.',
-            attemptStatus
-          );
-        }
-        if (code === 'auth/network-request-failed') {
-          throw new AdminLoginError(
-            'تعذر الاتصال بالشبكة. تحقق من اتصال الإنترنت وحاول مجدداً.',
-            attemptStatus
-          );
-        }
-        const nextStatus = await recordAdminFailedAttempt(cleanEmail);
-        throw new AdminLoginError('بيانات الدخول غير صحيحة', nextStatus);
-      }
+        // Step 1: Firebase Auth sign-in
+        let signedUser: User;
+        try {
+          const cred = await signInWithEmailAndPassword(auth, cleanEmail, password);
+          signedUser = cred.user;
+        } catch (error) {
+          const code =
+            getFirebaseAuthErrorCode(error) ||
+            (error instanceof Error ? error.message : 'unknown');
+          console.error('[AdminLogin Step 1: signInWithEmailAndPassword]', code, error);
 
-      try {
+          if (code === 'auth/too-many-requests') {
+            throw new AdminLoginError(
+              'تم إرسال طلبات كثيرة مؤقتاً. يرجى الانتظار قليلاً ثم المحاولة مرة أخرى.',
+              attemptStatus,
+              `Step 1 (signInWithEmailAndPassword): ${code}`
+            );
+          }
+          if (code === 'auth/network-request-failed') {
+            throw new AdminLoginError(
+              'تعذر الاتصال بالشبكة. تحقق من اتصال الإنترنت وحاول مجدداً.',
+              attemptStatus,
+              `Step 1 (signInWithEmailAndPassword): ${code}`
+            );
+          }
+
+          const shouldCountAttempt =
+            code === 'auth/invalid-credential' ||
+            code === 'auth/wrong-password' ||
+            code === 'auth/user-not-found' ||
+            code === 'auth/invalid-email';
+          const nextStatus = shouldCountAttempt
+            ? await recordAdminFailedAttempt(cleanEmail)
+            : attemptStatus;
+
+          throw new AdminLoginError(
+            'بيانات الدخول غير صحيحة',
+            nextStatus,
+            `Step 1 (signInWithEmailAndPassword): ${code}`
+          );
+        }
+
+        // Step 2: Fresh Firestore users/{uid} lookup (never cached, never auto-creates admin doc)
         let userSnap;
         try {
-          userSnap = await getDocFromServer(doc(db, 'users', signedUser.uid));
-        } catch {
-          userSnap = await getDoc(doc(db, 'users', signedUser.uid));
+          try {
+            userSnap = await getDocFromServer(doc(db, 'users', signedUser.uid));
+          } catch (serverErr) {
+            const serverCode =
+              (serverErr as { code?: string })?.code ||
+              getFirebaseAuthErrorCode(serverErr) ||
+              '';
+            if (serverCode === 'unavailable' || serverCode === 'failed-precondition') {
+              userSnap = await getDoc(doc(db, 'users', signedUser.uid));
+            } else {
+              throw serverErr;
+            }
+          }
+        } catch (err) {
+          const code =
+            (err as { code?: string })?.code ||
+            getFirebaseAuthErrorCode(err) ||
+            'unknown';
+          console.error(
+            `[AdminLogin Step 2: getDoc users/${signedUser.uid}]`,
+            code,
+            err
+          );
+          await signOut(auth).catch(() => undefined);
+
+          // Do not count permission-denied or network failures as a failed login attempt
+          const isNetwork =
+            code === 'unavailable' ||
+            code === 'failed-precondition' ||
+            code === 'auth/network-request-failed';
+          throw new AdminLoginError(
+            isNetwork
+              ? 'تعذر الاتصال بالشبكة. تحقق من اتصال الإنترنت وحاول مجدداً.'
+              : 'بيانات الدخول غير صحيحة',
+            attemptStatus,
+            `Step 2 (getDoc users/${signedUser.uid}): ${code}`
+          );
         }
 
-        const data = userSnap.exists()
-          ? (userSnap.data() as Partial<AppUser>)
-          : null;
-        const role = data?.role;
-        const blocked = Boolean(data?.isBlocked || data?.blocked);
+        if (!userSnap.exists()) {
+          console.error(
+            `[AdminLogin Step 2: getDoc users/${signedUser.uid}] document missing`,
+            `users document missing for uid ${signedUser.uid}`
+          );
+          await signOut(auth).catch(() => undefined);
+          throw new AdminLoginError(
+            'بيانات الدخول غير صحيحة',
+            attemptStatus,
+            `Step 2 (getDoc users/${signedUser.uid}): document missing`
+          );
+        }
 
-        if (!userSnap.exists() || !data || (role !== 'admin' && role !== 'staff') || blocked) {
-          await signOut(auth);
+        // Step 3: Role & block verification
+        const data = userSnap.data() as Partial<AppUser>;
+        const role = data.role;
+        const blocked = Boolean(data.isBlocked || data.blocked);
+
+        if ((role !== 'admin' && role !== 'staff') || blocked) {
+          console.error('[AdminLogin Step 3: role check]', {
+            uid: signedUser.uid,
+            role: role ?? null,
+            blocked,
+          });
+          await signOut(auth).catch(() => undefined);
           const nextStatus = await recordAdminFailedAttempt(cleanEmail);
-          throw new AdminLoginError('بيانات الدخول غير صحيحة', nextStatus);
+          throw new AdminLoginError(
+            'بيانات الدخول غير صحيحة',
+            nextStatus,
+            `Step 3 (role check): role=${String(role ?? 'none')}${blocked ? ', blocked=true' : ''}`
+          );
         }
 
+        console.info('[AdminLogin Step 3: role check]', {
+          uid: signedUser.uid,
+          role,
+          blocked,
+        });
+
+        // Step 4 (reset): Reset attempts counter on successful login (non-blocking)
         await clearAdminAttempts(cleanEmail);
 
         const resolvedUser: AppUser = {
@@ -1671,9 +1992,12 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
           window.history.replaceState(null, '', targetUrl);
         }
 
+        writeGuestSessionFlag(false);
         setState((prev) => ({
           ...prev,
+          authReady: true,
           firebaseUser: signedUser,
+          guestSession: false,
           user: resolvedUser,
           authScreenMode: 'none',
           authModal: { open: false, view: 'choice', checkoutNotice: false },
@@ -1682,19 +2006,8 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         }));
 
         showToast(t('مرحباً بك في لوحة التحكم', 'Welcome to Admin Panel'));
-      } catch (err) {
-        if (err instanceof AdminLoginError) {
-          throw err;
-        }
-        const code = getFirebaseAuthErrorCode(err);
-        if (code === 'auth/network-request-failed') {
-          throw new AdminLoginError(
-            'تعذر الاتصال بالشبكة. تحقق من اتصال الإنترنت وحاول مجدداً.'
-          );
-        }
-        await signOut(auth).catch(() => undefined);
-        const nextStatus = await recordAdminFailedAttempt(cleanEmail);
-        throw new AdminLoginError('بيانات الدخول غير صحيحة', nextStatus);
+      } finally {
+        adminLoginInProgressRef.current = false;
       }
     },
     [showToast, t]
@@ -1776,13 +2089,16 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   );
 
   const logout = useCallback(async () => {
-    await signOut(auth);
+    enteringGuestRef.current = false;
+    writeGuestSessionFlag(false);
+    await signOut(auth).catch(() => undefined);
     if (typeof window !== 'undefined' && stateRef.current.adminRoute !== 'store') {
       window.history.replaceState(null, '', '/#/home');
     }
     setState((prev) => ({
       ...prev,
       firebaseUser: null,
+      guestSession: false,
       user: createEmptyUser(),
       cart: [],
       orders: [],
@@ -2187,6 +2503,7 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         paymentMethod: payload.paymentMethod,
         bankTransferReference: payload.bankTransferReference,
         bankTransferReceiptUrl: payload.bankTransferReceiptUrl,
+        customerNote: payload.customerNote?.trim() || undefined,
         status: initialStatus,
         createdAt: nowIso,
         updatedAt: nowIso,
@@ -2208,6 +2525,7 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
 
       const notif: AppNotification = {
         id: `n_${Date.now()}`,
+        customerUid: current.uid,
         titleAr:
           initialStatus === 'awaiting_payment_verification'
             ? `تم استلام طلبك #${orderId} وإشعار بنكك`
@@ -2240,6 +2558,319 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       }));
       showToast(t(`تم إنشاء الطلب #${orderId} بنجاح`, `Order #${orderId} placed`));
       return newOrder;
+    },
+    updateOrderByCustomer: async (orderId, payload) => {
+      const current = auth.currentUser;
+      if (!current || current.isAnonymous || !current.emailVerified) {
+        showToast(t('يجب تسجيل الدخول وتأكيد البريد الإلكتروني أولاً', 'Verified account required'));
+        return;
+      }
+      const order = stateRef.current.orders.find((o) => o.id === orderId);
+      if (!order || order.customerUid !== current.uid) return;
+      if (order.cancelRequest?.status === 'approved') return;
+
+      const isPreConfirm =
+        order.status === 'pending' || order.status === 'awaiting_payment_verification';
+      const isPreShipContactOnly =
+        order.status === 'confirmed' || order.status === 'preparing';
+
+      if (!isPreConfirm && !isPreShipContactOnly) {
+        showToast(t('لا يمكن تعديل الطلب بعد الشحن', 'Orders cannot be edited after shipping'));
+        return;
+      }
+
+      const nowIso = new Date().toISOString();
+      const prevOrders = stateRef.current.orders;
+
+      if (isPreConfirm) {
+        const nextItems = (payload.items && payload.items.length > 0 ? payload.items : order.items).map(
+          (item) => {
+            const catalogProduct = stateRef.current.products.find((p) => p.id === item.productId);
+            const authoritativeUnitPrice = catalogProduct ? catalogProduct.priceSdg : item.unitPriceSdg;
+            const cleanQty = Math.max(1, Math.min(99, Math.round(item.quantity || 1)));
+            const resolvedVision = resolveVisionType(item.prescription);
+            const resolvedExtras = resolveExtraOptions(item.prescription);
+            return stripUndefined({
+              ...item,
+              quantity: cleanQty,
+              unitPriceSdg: authoritativeUnitPrice,
+              lensOption: item.prescription?.lensOption || resolvedVision || item.lensOption || 'none',
+              visionType: resolvedVision,
+              extraOptions: resolvedExtras.length > 0 ? resolvedExtras : item.extraOptions,
+              mirrorColor: resolvedExtras.includes('mirror')
+                ? item.prescription?.mirrorColor || item.mirrorColor
+                : undefined,
+              lensExtraPriceSdg:
+                item.prescription?.lensExtraPriceSdg ?? item.lensExtraPriceSdg ?? 0,
+            });
+          }
+        );
+
+        const stateObj = stateRef.current.settings.deliveryFees.find((s) => s.id === payload.stateId);
+        const deliveryFeeSdg = stateObj ? stateObj.feeSdg : order.deliveryFeeSdg;
+        const itemsSubtotalSdg = nextItems.reduce(
+          (sum, it) => sum + it.unitPriceSdg * it.quantity,
+          0
+        );
+        const lensOptionsTotalSdg = nextItems.reduce(
+          (sum, it) =>
+            sum + (it.lensExtraPriceSdg ?? it.prescription?.lensExtraPriceSdg ?? 0) * it.quantity,
+          0
+        );
+        const subtotalSdg = itemsSubtotalSdg + lensOptionsTotalSdg;
+        const totalSdg = Math.max(0, subtotalSdg - order.discountSdg + deliveryFeeSdg);
+
+        const patch: Partial<Order> = stripUndefined({
+          customerName: payload.customerName.trim(),
+          customerPhone: payload.customerPhone.trim(),
+          stateId: payload.stateId,
+          city: payload.city.trim(),
+          area: payload.area.trim(),
+          addressDetails: payload.addressDetails.trim(),
+          address: stripUndefined({
+            ...payload.address,
+            recipientName: payload.customerName.trim(),
+            phone: payload.customerPhone.trim(),
+            stateId: payload.stateId,
+            stateNameAr: stateObj?.nameAr || payload.address.stateNameAr,
+            stateNameEn: stateObj?.nameEn || payload.address.stateNameEn,
+            city: payload.city.trim(),
+            area: payload.area.trim(),
+            details: payload.addressDetails.trim(),
+          }),
+          items: nextItems,
+          itemsSubtotalSdg,
+          lensOptionsTotalSdg,
+          subtotalSdg,
+          deliveryFeeSdg,
+          totalSdg,
+          bankTransferReference:
+            order.paymentMethod === 'bankak'
+              ? payload.bankTransferReference?.trim() || order.bankTransferReference
+              : order.bankTransferReference,
+          bankTransferReceiptUrl:
+            order.paymentMethod === 'bankak'
+              ? payload.bankTransferReceiptUrl || order.bankTransferReceiptUrl
+              : order.bankTransferReceiptUrl,
+          customerNote: payload.customerNote?.trim() || undefined,
+          lastEditedAt: nowIso,
+          lastEditedBy: current.uid,
+          updatedAt: nowIso,
+        });
+
+        setState((prev) => ({
+          ...prev,
+          orders: prev.orders.map((o) => (o.id === orderId ? { ...o, ...patch } : o)),
+        }));
+
+        try {
+          await updateDoc(
+            doc(db, 'orders', orderId),
+            stripUndefined({
+              ...patch,
+              bankTransferReference:
+                order.paymentMethod === 'bankak'
+                  ? payload.bankTransferReference?.trim()
+                    ? payload.bankTransferReference.trim()
+                    : order.bankTransferReference
+                    ? deleteField()
+                    : undefined
+                  : undefined,
+              customerNote: payload.customerNote?.trim()
+                ? payload.customerNote.trim()
+                : order.customerNote
+                ? deleteField()
+                : undefined,
+              updatedAtServer: serverTimestamp(),
+            })
+          );
+          showToast(t('تم حفظ تعديلات الطلب بنجاح', 'Order changes saved'));
+        } catch (err) {
+          setState((prev) => ({ ...prev, orders: prevOrders }));
+          handleFirestoreError(err, OperationType.UPDATE, `orders/${orderId}`);
+        }
+        return;
+      }
+
+      // Confirmed / preparing: allow safe contact, street address & customerNote updates
+      const contactPatch: Partial<Order> = stripUndefined({
+        customerName: payload.customerName.trim(),
+        customerPhone: payload.customerPhone.trim(),
+        city: payload.city.trim(),
+        area: payload.area.trim(),
+        addressDetails: payload.addressDetails.trim(),
+        address: stripUndefined({
+          ...(order.address || payload.address),
+          recipientName: payload.customerName.trim(),
+          phone: payload.customerPhone.trim(),
+          stateId: order.stateId,
+          city: payload.city.trim(),
+          area: payload.area.trim(),
+          details: payload.addressDetails.trim(),
+        }),
+        customerNote: payload.customerNote?.trim() || undefined,
+        lastEditedAt: nowIso,
+        lastEditedBy: current.uid,
+        updatedAt: nowIso,
+      });
+
+      setState((prev) => ({
+        ...prev,
+        orders: prev.orders.map((o) => (o.id === orderId ? { ...o, ...contactPatch } : o)),
+      }));
+
+      try {
+        await updateDoc(
+          doc(db, 'orders', orderId),
+          stripUndefined({
+            ...contactPatch,
+            customerNote: payload.customerNote?.trim()
+              ? payload.customerNote.trim()
+              : order.customerNote
+              ? deleteField()
+              : undefined,
+            updatedAtServer: serverTimestamp(),
+          })
+        );
+        showToast(t('تم تحديث بيانات التوصيل للطلب', 'Delivery details updated'));
+      } catch (err) {
+        setState((prev) => ({ ...prev, orders: prevOrders }));
+        handleFirestoreError(err, OperationType.UPDATE, `orders/${orderId}`);
+      }
+    },
+    updateOrderByAdmin: async (orderId, payload) => {
+      const current = auth.currentUser;
+      const role = stateRef.current.user.role;
+      if (!current || (role !== 'admin' && role !== 'staff')) return;
+      const order = stateRef.current.orders.find((o) => o.id === orderId);
+      if (!order) return;
+
+      const cleanItems = payload.items
+        .filter((it) => it && it.productId && (it.quantity || 0) >= 1)
+        .map((it) =>
+          stripUndefined({
+            ...it,
+            quantity: Math.max(1, Math.min(99, Math.round(it.quantity))),
+            unitPriceSdg: Math.max(0, Math.round(it.unitPriceSdg || 0)),
+            lensExtraPriceSdg: Math.max(
+              0,
+              Math.round(it.lensExtraPriceSdg ?? it.prescription?.lensExtraPriceSdg ?? 0)
+            ),
+          })
+        );
+      if (cleanItems.length === 0) return;
+
+      const nowIso = new Date().toISOString();
+      const stateObj = stateRef.current.settings.deliveryFees.find((s) => s.id === payload.stateId);
+      const itemsSubtotalSdg = cleanItems.reduce(
+        (sum, it) => sum + it.unitPriceSdg * it.quantity,
+        0
+      );
+      const lensOptionsTotalSdg = cleanItems.reduce(
+        (sum, it) => sum + (it.lensExtraPriceSdg || 0) * it.quantity,
+        0
+      );
+      const subtotalSdg = itemsSubtotalSdg + lensOptionsTotalSdg;
+      const cleanDiscount = Math.max(0, Math.round(payload.discountSdg || 0));
+      const cleanDelivery = Math.max(0, Math.round(payload.deliveryFeeSdg || 0));
+      const totalSdg = Math.max(0, subtotalSdg - cleanDiscount + cleanDelivery);
+      const cleanAdminNote = payload.adminNote?.trim() || undefined;
+
+      const patch: Partial<Order> = stripUndefined({
+        customerName: payload.customerName.trim(),
+        customerPhone: payload.customerPhone.trim(),
+        stateId: payload.stateId,
+        city: payload.city.trim(),
+        area: payload.area.trim(),
+        addressDetails: payload.addressDetails.trim(),
+        address: stripUndefined({
+          ...payload.address,
+          recipientName: payload.customerName.trim(),
+          phone: payload.customerPhone.trim(),
+          stateId: payload.stateId,
+          stateNameAr: stateObj?.nameAr || payload.address.stateNameAr,
+          stateNameEn: stateObj?.nameEn || payload.address.stateNameEn,
+          city: payload.city.trim(),
+          area: payload.area.trim(),
+          details: payload.addressDetails.trim(),
+        }),
+        items: cleanItems,
+        itemsSubtotalSdg,
+        lensOptionsTotalSdg,
+        subtotalSdg,
+        discountSdg: cleanDiscount,
+        deliveryFeeSdg: cleanDelivery,
+        totalSdg,
+        paymentMethod: payload.paymentMethod,
+        bankTransferReference: payload.bankTransferReference?.trim() || undefined,
+        adminNote: cleanAdminNote,
+        lastEditedAt: nowIso,
+        lastEditedBy: current.uid,
+        updatedAt: nowIso,
+      });
+
+      const notif: AppNotification | null = order.customerUid
+        ? {
+            id: `n_${Date.now()}`,
+            customerUid: order.customerUid,
+            titleAr: `تم تحديث تفاصيل الطلب #${orderId}`,
+            titleEn: `Order #${orderId} Details Updated`,
+            bodyAr: cleanAdminNote
+              ? `تم تعديل الطلب من قِبل الإدارة: ${cleanAdminNote}`
+              : 'تم تعديل تفاصيل طلبك ومراجعته من قِبل الإدارة.',
+            bodyEn: cleanAdminNote
+              ? `Order updated by management: ${cleanAdminNote}`
+              : 'Your order details were updated by management.',
+            isRead: false,
+            createdAt: nowIso,
+            deepLinkType: 'order',
+            deepLinkId: orderId,
+          }
+        : null;
+
+      const prevOrders = stateRef.current.orders;
+      const prevNotifications = stateRef.current.notifications;
+
+      setState((prev) => ({
+        ...prev,
+        orders: prev.orders.map((o) => (o.id === orderId ? { ...o, ...patch } : o)),
+        notifications: notif ? [notif, ...prev.notifications] : prev.notifications,
+      }));
+
+      try {
+        await updateDoc(
+          doc(db, 'orders', orderId),
+          stripUndefined({
+            ...patch,
+            bankTransferReference: payload.bankTransferReference?.trim()
+              ? payload.bankTransferReference.trim()
+              : order.bankTransferReference
+              ? deleteField()
+              : undefined,
+            adminNote: cleanAdminNote
+              ? cleanAdminNote
+              : order.adminNote
+              ? deleteField()
+              : undefined,
+            updatedAtServer: serverTimestamp(),
+          })
+        );
+      } catch (err) {
+        setState((prev) => ({
+          ...prev,
+          orders: prevOrders,
+          notifications: prevNotifications,
+        }));
+        handleFirestoreError(err, OperationType.UPDATE, `orders/${orderId}`);
+      }
+
+      if (notif) {
+        void setDoc(doc(db, 'notifications', notif.id), stripUndefined(notif)).catch((err) =>
+          handleFirestoreError(err, OperationType.CREATE, `notifications/${notif.id}`)
+        );
+      }
+
+      showToast(t('تم حفظ تعديلات الطلب وإشعار العميل', 'Order edited & customer notified'));
     },
     requestOrderCancellation: async (orderId, reason, note) => {
       const current = auth.currentUser;
@@ -2635,50 +3266,90 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       if (role !== 'admin' && role !== 'staff') return;
       const nowIso = new Date().toISOString();
       const targetOrder = stateRef.current.orders.find((o) => o.id === orderId);
-      const notif: AppNotification = {
-        id: `n_${Date.now()}`,
-        customerUid: targetOrder?.customerUid || 'all',
-        titleAr: `تحديث حالة الطلب #${orderId}`,
-        titleEn: `Order #${orderId} Updated`,
-        bodyAr: `أصبحت حالة طلبك الآن: ${status}`,
-        bodyEn: `Your order status is now: ${status}`,
-        isRead: false,
-        createdAt: nowIso,
-        deepLinkType: 'order',
-        deepLinkId: orderId,
+      const statusLabelAr = getOrderStatusLabel(status, 'ar');
+      const statusLabelEn = getOrderStatusLabel(status, 'en');
+      const detailArMap: Record<OrderStatus, string> = {
+        pending: 'طلبك قيد المراجعة الأولية من فريقنا.',
+        awaiting_payment_verification: 'بانتظار مراجعة إيصال التحويل البنكي.',
+        confirmed: 'تم تأكيد طلبك بنجاح وجارٍ إدخاله لقسم التجهيز.',
+        preparing: 'يعمل فريق البصريات الآن على تجهيز وفحص نظارتك.',
+        shipped: 'تم شحن طلبك وهو الآن في طريقه إلى عنوان التوصيل.',
+        delivered: 'تم تسليم طلبك بنجاح. نتمنى لك رؤية واضحة ومريحة!',
+        cancelled: 'تم إلغاء هذا الطلب.',
       };
+      const detailEnMap: Record<OrderStatus, string> = {
+        pending: 'Your order is pending initial review.',
+        awaiting_payment_verification: 'Awaiting Bankak transfer verification.',
+        confirmed: 'Your order has been confirmed.',
+        preparing: 'Our optical team is preparing your eyewear.',
+        shipped: 'Your order has been shipped and is on the way.',
+        delivered: 'Your order has been delivered.',
+        cancelled: 'This order was cancelled.',
+      };
+
+      const notif: AppNotification | null =
+        targetOrder?.customerUid
+          ? {
+              id: `n_${Date.now()}`,
+              customerUid: targetOrder.customerUid,
+              titleAr: `تحديث حالة الطلب #${orderId}: ${statusLabelAr}`,
+              titleEn: `Order #${orderId} Updated: ${statusLabelEn}`,
+              bodyAr: `أصبحت حالة طلبك الآن "${statusLabelAr}" — ${detailArMap[status]}`,
+              bodyEn: `Your order status is now "${statusLabelEn}" — ${detailEnMap[status]}`,
+              isRead: false,
+              createdAt: nowIso,
+              deepLinkType: 'order',
+              deepLinkId: orderId,
+            }
+          : null;
+
+      const prevOrders = stateRef.current.orders;
+      const prevNotifications = stateRef.current.notifications;
+
       setState((prev) => ({
         ...prev,
         orders: prev.orders.map((o) => (o.id === orderId ? { ...o, status, updatedAt: nowIso } : o)),
-        notifications: [notif, ...prev.notifications],
+        notifications: notif ? [notif, ...prev.notifications] : prev.notifications,
       }));
       void updateDoc(doc(db, 'orders', orderId), {
         status,
         updatedAt: nowIso,
         updatedAtServer: serverTimestamp(),
-      }).catch((err) => handleFirestoreError(err, OperationType.UPDATE, `orders/${orderId}`));
-      if (targetOrder?.customerUid) {
+      }).catch((err) => {
+        setState((prev) => ({
+          ...prev,
+          orders: prevOrders,
+          notifications: prevNotifications,
+        }));
+        handleFirestoreError(err, OperationType.UPDATE, `orders/${orderId}`);
+      });
+      if (notif) {
         void setDoc(doc(db, 'notifications', notif.id), stripUndefined(notif)).catch((err) =>
           handleFirestoreError(err, OperationType.CREATE, `notifications/${notif.id}`)
         );
       }
-      showToast(t('تم تحديث حالة الطلب وإشعار العميل', 'Order status updated'));
+      showToast(t('تم تحديث حالة الطلب وإشعار العميل', 'Order status updated & customer notified'));
     },
     approveBankTransfer: (orderId) => {
+      const role = stateRef.current.user.role;
+      if (role !== 'admin' && role !== 'staff') return;
       const nowIso = new Date().toISOString();
       const targetOrder = stateRef.current.orders.find((o) => o.id === orderId);
-      const notif: AppNotification = {
-        id: `n_${Date.now()}`,
-        customerUid: targetOrder?.customerUid || 'all',
-        titleAr: `تم اعتماد تحويل بنكك للطلب #${orderId}`,
-        titleEn: `Bankak Transfer Approved for #${orderId}`,
-        bodyAr: 'تم تأكيد استلام المبلغ بنجاح، وطلبك الآن في مرحلة التجهيز.',
-        bodyEn: 'Your transfer has been verified and your order is confirmed.',
-        isRead: false,
-        createdAt: nowIso,
-        deepLinkType: 'order',
-        deepLinkId: orderId,
-      };
+      const notif: AppNotification | null =
+        targetOrder?.customerUid
+          ? {
+              id: `n_${Date.now()}`,
+              customerUid: targetOrder.customerUid,
+              titleAr: `تم اعتماد تحويل بنكك للطلب #${orderId}`,
+              titleEn: `Bankak Transfer Approved for #${orderId}`,
+              bodyAr: 'تم تأكيد استلام المبلغ بنجاح، وطلبك الآن في مرحلة التجهيز.',
+              bodyEn: 'Your transfer has been verified and your order is confirmed.',
+              isRead: false,
+              createdAt: nowIso,
+              deepLinkType: 'order',
+              deepLinkId: orderId,
+            }
+          : null;
       setState((prev) => ({
         ...prev,
         orders: prev.orders.map((o) =>
@@ -2686,7 +3357,7 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
             ? { ...o, status: 'confirmed', bankTransferVerified: true, updatedAt: nowIso }
             : o
         ),
-        notifications: [notif, ...prev.notifications],
+        notifications: notif ? [notif, ...prev.notifications] : prev.notifications,
       }));
       void updateDoc(doc(db, 'orders', orderId), {
         status: 'confirmed',
@@ -2694,7 +3365,7 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         updatedAt: nowIso,
         updatedAtServer: serverTimestamp(),
       }).catch((err) => handleFirestoreError(err, OperationType.UPDATE, `orders/${orderId}`));
-      if (targetOrder?.customerUid) {
+      if (notif) {
         void setDoc(doc(db, 'notifications', notif.id), stripUndefined(notif)).catch((err) =>
           handleFirestoreError(err, OperationType.CREATE, `notifications/${notif.id}`)
         );
@@ -2702,20 +3373,25 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       showToast(t('تم اعتماد الدفع عبر بنكك وتأكيد الطلب', 'Bankak transfer approved'));
     },
     rejectBankTransfer: (orderId) => {
+      const role = stateRef.current.user.role;
+      if (role !== 'admin' && role !== 'staff') return;
       const nowIso = new Date().toISOString();
       const targetOrder = stateRef.current.orders.find((o) => o.id === orderId);
-      const notif: AppNotification = {
-        id: `n_${Date.now()}`,
-        customerUid: targetOrder?.customerUid || 'all',
-        titleAr: `تعذر التحقق من إيصال الطلب #${orderId}`,
-        titleEn: `Transfer Verification Failed for #${orderId}`,
-        bodyAr: 'يرجى التواصل مع خدمة العملاء أو إعادة إرسال إيصال التحويل الصحيح.',
-        bodyEn: 'Please contact support regarding your bank transfer receipt.',
-        isRead: false,
-        createdAt: nowIso,
-        deepLinkType: 'order',
-        deepLinkId: orderId,
-      };
+      const notif: AppNotification | null =
+        targetOrder?.customerUid
+          ? {
+              id: `n_${Date.now()}`,
+              customerUid: targetOrder.customerUid,
+              titleAr: `تعذر التحقق من إيصال الطلب #${orderId}`,
+              titleEn: `Transfer Verification Failed for #${orderId}`,
+              bodyAr: 'يرجى التواصل مع خدمة العملاء أو إعادة إرسال إيصال التحويل الصحيح.',
+              bodyEn: 'Please contact support regarding your bank transfer receipt.',
+              isRead: false,
+              createdAt: nowIso,
+              deepLinkType: 'order',
+              deepLinkId: orderId,
+            }
+          : null;
       setState((prev) => ({
         ...prev,
         orders: prev.orders.map((o) =>
@@ -2723,7 +3399,7 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
             ? { ...o, status: 'cancelled', bankTransferVerified: false, updatedAt: nowIso }
             : o
         ),
-        notifications: [notif, ...prev.notifications],
+        notifications: notif ? [notif, ...prev.notifications] : prev.notifications,
       }));
       void updateDoc(doc(db, 'orders', orderId), {
         status: 'cancelled',
@@ -2731,12 +3407,15 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         updatedAt: nowIso,
         updatedAtServer: serverTimestamp(),
       }).catch((err) => handleFirestoreError(err, OperationType.UPDATE, `orders/${orderId}`));
-      if (targetOrder?.customerUid) {
+      if (notif) {
         void setDoc(doc(db, 'notifications', notif.id), stripUndefined(notif)).catch((err) =>
           handleFirestoreError(err, OperationType.CREATE, `notifications/${notif.id}`)
         );
       }
       showToast(t('تم رفض الإيصال وإشعار العميل', 'Transfer rejected'));
+    },
+    dismissLiveOrderAlert: () => {
+      setState((prev) => ({ ...prev, liveOrderAlert: null }));
     },
     markNotificationRead: (id) => {
       const current = auth.currentUser;
@@ -2803,7 +3482,16 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       showToast(t('تم إرسال الإشعار وحفظه في السجل', 'Notification sent & logged'));
     },
     createConsult: (topic, message, phone, imageUrl) => {
-      const uid = auth.currentUser?.uid || state.user.uid;
+      const current = auth.currentUser;
+      if (!current) {
+        setState((prev) => ({
+          ...prev,
+          authModal: { open: true, view: 'choice', checkoutNotice: false },
+        }));
+        showToast(t('سجّل دخولك أو أنشئ حساباً لإرسال الاستشارة للأخصائي', 'Sign in to send a consultation'));
+        return;
+      }
+      const uid = current.uid;
       const now = new Date().toISOString();
       const req: ConsultRequest = {
         id: `c_${Date.now()}`,
@@ -2829,19 +3517,25 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         ...prev,
         consults: [req, ...prev.consults],
       }));
-      if (auth.currentUser) {
-        void setDoc(
-          doc(db, 'consults', req.id),
-          stripUndefined({
-            ...req,
-            createdAtServer: serverTimestamp(),
-            updatedAtServer: serverTimestamp(),
-          })
-        ).catch((err) => handleFirestoreError(err, OperationType.CREATE, `consults/${req.id}`));
-      }
+      void setDoc(
+        doc(db, 'consults', req.id),
+        stripUndefined({
+          ...req,
+          createdAtServer: serverTimestamp(),
+          updatedAtServer: serverTimestamp(),
+        })
+      ).catch((err) => handleFirestoreError(err, OperationType.CREATE, `consults/${req.id}`));
       showToast(t('تم إرسال استشارتك لأخصائي البصريات', 'Consultation request sent'));
     },
     replyConsult: (consultId, text, sender) => {
+      if (sender === 'customer' && !auth.currentUser) {
+        setState((prev) => ({
+          ...prev,
+          authModal: { open: true, view: 'choice', checkoutNotice: false },
+        }));
+        showToast(t('سجّل دخولك لإرسال الرد في الاستشارة', 'Sign in to reply in consultation'));
+        return;
+      }
       const now = new Date().toISOString();
       const targetConsult = stateRef.current.consults.find((c) => c.id === consultId);
       const notifId = `n_${Date.now()}`;

@@ -7,12 +7,6 @@ import {
   ChevronRight,
   MessageCircle,
   Megaphone,
-  LogIn,
-  LogOut,
-  UserPlus,
-  UserCheck,
-  KeyRound,
-  User,
 } from 'lucide-react';
 import { useStore } from '../store/StoreContext';
 import { BannerAd, HomeSectionConfig } from '../types';
@@ -33,15 +27,9 @@ export const HomeView: React.FC = () => {
     openCatalog,
     openProduct,
     setActiveTab,
-    user,
-    isGuest,
-    openAuthModal,
-    continueAsGuest,
-    logout,
   } = useStore();
 
   const [bannerIndex, setBannerIndex] = useState(0);
-  const [guestSwitchBusy, setGuestSwitchBusy] = useState(false);
 
   const today = new Date().toISOString().slice(0, 10);
 
@@ -419,119 +407,8 @@ export const HomeView: React.FC = () => {
     }
   };
 
-  const handleGuestSwitch = async () => {
-    setGuestSwitchBusy(true);
-    try {
-      await continueAsGuest();
-    } finally {
-      setGuestSwitchBusy(false);
-    }
-  };
-
   return (
     <div className="max-w-7xl mx-auto px-4 sm:px-6 pt-5 space-y-8">
-      {/* Customer Auth & Account Control Bar */}
-      <section
-        aria-label={t('بوابة العميل', 'Customer Account Portal')}
-        className="bg-white dark:bg-[#131C2E] border border-slate-200 dark:border-slate-800 rounded-2xl p-4 sm:p-5 shadow-2xs flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4"
-      >
-        <div className="flex items-start sm:items-center gap-3">
-          <div
-            style={{ backgroundColor: appearance.primaryColor, color: appearance.secondaryColor }}
-            className="w-11 h-11 rounded-xl flex items-center justify-center shrink-0"
-          >
-            <User className="w-5 h-5" />
-          </div>
-          <div className="min-w-0">
-            <div className="flex flex-wrap items-center gap-2">
-              <h2 className="text-sm sm:text-base font-extrabold text-[#11223E] dark:text-white">
-                {t('تسجيل الدخول للعميل', 'Customer Account')}
-              </h2>
-              <span
-                className={`px-2 py-0.5 rounded-full text-[11px] font-bold ${
-                  isGuest
-                    ? 'bg-amber-100 text-amber-800 dark:bg-amber-950/50 dark:text-amber-200'
-                    : 'bg-emerald-100 text-emerald-800 dark:bg-emerald-950/50 dark:text-emerald-200'
-                }`}
-              >
-                {isGuest
-                  ? t('تصفح كضيف', 'Guest Mode')
-                  : t(`مرحباً، ${user.name}`, `Welcome, ${user.name}`)}
-              </span>
-            </div>
-            <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
-              {isGuest
-                ? t(
-                    'سجّل دخولك أو أنشئ حساباً جديداً لحفظ طلباتك وعناوينك وإتمام الشراء بسهولة.',
-                    'Sign in or register to save orders, addresses, and complete checkout.'
-                  )
-                : user.email}
-            </p>
-          </div>
-        </div>
-
-        <div className="flex flex-wrap items-center gap-2">
-          <button
-            type="button"
-            onClick={() => openAuthModal('login', false)}
-            style={{ backgroundColor: appearance.primaryColor }}
-            className="min-h-[44px] px-4 py-2 rounded-xl text-white text-xs sm:text-sm font-extrabold inline-flex items-center gap-1.5 hover:opacity-95 transition-opacity whitespace-nowrap"
-          >
-            <LogIn className="w-4 h-4" />
-            <span>{t('تسجيل الدخول', 'Sign In')}</span>
-          </button>
-
-          <button
-            type="button"
-            onClick={() => openAuthModal('register', false)}
-            style={{
-              backgroundColor: appearance.secondaryColor,
-              color: appearance.primaryColor,
-            }}
-            className="min-h-[44px] px-4 py-2 rounded-xl text-xs sm:text-sm font-extrabold inline-flex items-center gap-1.5 hover:opacity-95 transition-opacity whitespace-nowrap"
-          >
-            <UserPlus className="w-4 h-4" />
-            <span>{t('تسجيل حساب جديد', 'Create Account')}</span>
-          </button>
-
-          <button
-            type="button"
-            disabled={guestSwitchBusy}
-            onClick={() => void handleGuestSwitch()}
-            className={`min-h-[44px] px-3.5 py-2 rounded-xl border text-xs sm:text-sm font-bold inline-flex items-center gap-1.5 transition-colors whitespace-nowrap disabled:opacity-60 ${
-              isGuest
-                ? 'border-[#D9B24C] bg-amber-50/70 dark:bg-amber-950/30 text-[#11223E] dark:text-[#E2BD5B]'
-                : 'border-slate-200 dark:border-slate-700 hover:bg-slate-50 dark:hover:bg-slate-800 text-slate-700 dark:text-slate-200'
-            }`}
-          >
-            <UserCheck className="w-4 h-4" />
-            <span>
-              {guestSwitchBusy
-                ? t('جارٍ التحويل...', 'Switching...')
-                : t('الدخول كضيف', 'Continue as Guest')}
-            </span>
-          </button>
-
-          <button
-            type="button"
-            onClick={() => openAuthModal('reset', false)}
-            className="min-h-[44px] px-3.5 py-2 rounded-xl border border-slate-200 dark:border-slate-700 hover:bg-slate-50 dark:hover:bg-slate-800 text-xs sm:text-sm font-bold text-[#B38B2D] dark:text-[#E2BD5B] inline-flex items-center gap-1.5 transition-colors whitespace-nowrap"
-          >
-            <KeyRound className="w-4 h-4" />
-            <span>{t('نسيت كلمة المرور؟', 'Forgot Password?')}</span>
-          </button>
-
-          <button
-            type="button"
-            onClick={() => void logout()}
-            className="min-h-[44px] px-3.5 py-2 rounded-xl border border-rose-200 dark:border-rose-900/60 bg-rose-50/70 dark:bg-rose-950/30 hover:bg-rose-100 dark:hover:bg-rose-950/50 text-xs sm:text-sm font-bold text-rose-700 dark:text-rose-300 inline-flex items-center gap-1.5 transition-colors whitespace-nowrap"
-          >
-            <LogOut className="w-4 h-4" />
-            <span>{t('تسجيل الخروج', 'Sign Out')}</span>
-          </button>
-        </div>
-      </section>
-
       {orderedSections.map((sec) => renderSection(sec))}
     </div>
   );

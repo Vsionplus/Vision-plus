@@ -1,12 +1,9 @@
 import {
   Timestamp,
-  deleteDoc,
   doc,
   getDoc,
   getDocFromServer,
-  serverTimestamp,
   setDoc,
-  updateDoc,
 } from 'firebase/firestore';
 import { db } from '../lib/firebase';
 
@@ -110,12 +107,64 @@ export async function hashAttemptEmail(email: string): Promise<string> {
   return pureJsSha256Hex(normalized);
 }
 
-function parseTimestampMs(raw: unknown): number {
+function emptyAttemptStatus(attemptId: string): AdminLoginAttemptStatus {
+  return {
+    attemptId,
+    failedCount: 0,
+    isLocked: false,
+    lockedUntilMs: null,
+    remainingMs: 0,
+  };
+}
+
+function getFirestoreCode(error: unknown): string {
+  if (error && typeof error === 'object' && 'code' in error) {
+    return String((error as { code?: unknown }).code || 'unknown');
+  }
+  return error instanceof Error ? error.message : 'unknown';
+}
+
+function parseNullableTimestampMs(raw: unknown): number | null {
+  if (raw == null) return null;
   if (raw instanceof Timestamp) return raw.toMillis();
-  if (raw && typeof raw === 'object' && 'toMillis' in raw && typeof (raw as { toMillis: () => number }).toMillis === 'function') {
+  if (
+    typeof raw === 'object' &&
+    'toMillis' in raw &&
+    typeof (raw as { toMillis: () => number }).toMillis === 'function'
+  ) {
     return (raw as { toMillis: () => number }).toMillis();
   }
-  return Date.now();
+  return null;
+}
+
+function buildAttemptStatus(
+  attemptId: string,
+  count: number,
+  lockedUntilMs: number | null
+): AdminLoginAttemptStatus {
+  const nowMs = Date.now();
+
+  if (count >= ADMIN_LOCKOUT_MAX_ATTEMPTS && lockedUntilMs && lockedUntilMs > nowMs) {
+    return {
+      attemptId,
+      failedCount: ADMIN_LOCKOUT_MAX_ATTEMPTS,
+      isLocked: true,
+      lockedUntilMs,
+      remainingMs: lockedUntilMs - nowMs,
+    };
+  }
+
+  if (count >= ADMIN_LOCKOUT_MAX_ATTEMPTS && (!lockedUntilMs || lockedUntilMs <= nowMs)) {
+    return emptyAttemptStatus(attemptId);
+  }
+
+  return {
+    attemptId,
+    failedCount: Math.max(0, count),
+    isLocked: false,
+    lockedUntilMs: null,
+    remainingMs: 0,
+  };
 }
 
 export async function getAdminAttemptStatusById(attemptId: string): Promise<AdminLoginAttemptStatus> {
@@ -123,62 +172,31 @@ export async function getAdminAttemptStatusById(attemptId: string): Promise<Admi
     let snap;
     try {
       snap = await getDocFromServer(doc(db, 'adminLoginAttempts', attemptId));
-    } catch {
-      snap = await getDoc(doc(db, 'adminLoginAttempts', attemptId));
+    } catch (serverErr) {
+      const serverCode = getFirestoreCode(serverErr);
+      if (serverCode === 'unavailable' || serverCode === 'failed-precondition') {
+        snap = await getDoc(doc(db, 'adminLoginAttempts', attemptId));
+      } else {
+        throw serverErr;
+      }
     }
 
     if (!snap.exists()) {
-      return {
-        attemptId,
-        failedCount: 0,
-        isLocked: false,
-        lockedUntilMs: null,
-        remainingMs: 0,
-      };
+      return emptyAttemptStatus(attemptId);
     }
 
-    const data = snap.data() as { failedCount?: number; lastAttemptAt?: unknown };
-    const failedCount = typeof data.failedCount === 'number' ? data.failedCount : 0;
-    const lastAttemptMs = parseTimestampMs(data.lastAttemptAt);
-    const unlockAtMs = lastAttemptMs + ADMIN_LOCKOUT_DURATION_MS;
-    const nowMs = Date.now();
-
-    if (failedCount >= ADMIN_LOCKOUT_MAX_ATTEMPTS && unlockAtMs > nowMs) {
-      return {
-        attemptId,
-        failedCount: ADMIN_LOCKOUT_MAX_ATTEMPTS,
-        isLocked: true,
-        lockedUntilMs: unlockAtMs,
-        remainingMs: unlockAtMs - nowMs,
-      };
-    }
-
-    if (failedCount >= ADMIN_LOCKOUT_MAX_ATTEMPTS && unlockAtMs <= nowMs) {
-      // Lockout period has expired on server
-      return {
-        attemptId,
-        failedCount: 0,
-        isLocked: false,
-        lockedUntilMs: null,
-        remainingMs: 0,
-      };
-    }
-
-    return {
-      attemptId,
-      failedCount,
-      isLocked: false,
-      lockedUntilMs: null,
-      remainingMs: 0,
-    };
-  } catch {
-    return {
-      attemptId,
-      failedCount: 0,
-      isLocked: false,
-      lockedUntilMs: null,
-      remainingMs: 0,
-    };
+    const data = snap.data() as { count?: number; lockedUntil?: unknown };
+    const count = typeof data.count === 'number' ? data.count : 0;
+    const lockedUntilMs = parseNullableTimestampMs(data.lockedUntil);
+    return buildAttemptStatus(attemptId, count, lockedUntilMs);
+  } catch (err) {
+    console.error(
+      '[AdminLogin Step 4: read adminLoginAttempts]',
+      getFirestoreCode(err),
+      err
+    );
+    // Never block login if reading attempts fails (e.g. permission-denied or offline)
+    return emptyAttemptStatus(attemptId);
   }
 }
 
@@ -196,38 +214,69 @@ export async function recordAdminFailedAttempt(email: string): Promise<AdminLogi
   }
 
   const ref = doc(db, 'adminLoginAttempts', attemptId);
+  let snap;
   try {
-    const snap = await getDoc(ref);
+    snap = await getDoc(ref);
+  } catch (err) {
+    console.error(
+      '[AdminLogin Step 4: read adminLoginAttempts before write]',
+      getFirestoreCode(err),
+      err
+    );
+    return emptyAttemptStatus(attemptId);
+  }
+
+  let nextCount = 1;
+  let nextLockedUntil: Timestamp | null = null;
+  let nextLockedUntilMs: number | null = null;
+
+  try {
     if (!snap.exists()) {
       await setDoc(ref, {
-        id: attemptId,
-        failedCount: 1,
-        lastAttemptAt: serverTimestamp(),
+        count: 1,
+        lockedUntil: null,
       });
     } else {
-      const data = snap.data() as { failedCount?: number; lastAttemptAt?: unknown };
-      const currentCount = typeof data.failedCount === 'number' ? data.failedCount : 0;
-      const lastAttemptMs = parseTimestampMs(data.lastAttemptAt);
-      const expired = lastAttemptMs + ADMIN_LOCKOUT_DURATION_MS <= Date.now();
+      const data = snap.data() as { count?: number; lockedUntil?: unknown };
+      const currentCount = typeof data.count === 'number' ? data.count : 0;
+      const existingLockedMs = parseNullableTimestampMs(data.lockedUntil);
+      const stillLocked =
+        currentCount >= ADMIN_LOCKOUT_MAX_ATTEMPTS &&
+        existingLockedMs !== null &&
+        existingLockedMs > Date.now();
 
-      if (currentCount >= ADMIN_LOCKOUT_MAX_ATTEMPTS && !expired) {
-        return getAdminAttemptStatusById(attemptId);
+      if (stillLocked) {
+        return buildAttemptStatus(attemptId, ADMIN_LOCKOUT_MAX_ATTEMPTS, existingLockedMs);
       }
 
-      const nextCount =
-        currentCount >= ADMIN_LOCKOUT_MAX_ATTEMPTS && expired
-          ? 1
-          : Math.min(ADMIN_LOCKOUT_MAX_ATTEMPTS, currentCount + 1);
+      const expired =
+        currentCount >= ADMIN_LOCKOUT_MAX_ATTEMPTS &&
+        (existingLockedMs === null || existingLockedMs <= Date.now());
 
-      await updateDoc(ref, {
-        failedCount: nextCount,
-        lastAttemptAt: serverTimestamp(),
+      nextCount = expired ? 1 : Math.min(ADMIN_LOCKOUT_MAX_ATTEMPTS, currentCount + 1);
+      if (nextCount >= ADMIN_LOCKOUT_MAX_ATTEMPTS) {
+        nextLockedUntilMs = Date.now() + ADMIN_LOCKOUT_DURATION_MS;
+        nextLockedUntil = Timestamp.fromMillis(nextLockedUntilMs);
+      } else {
+        nextLockedUntilMs = null;
+        nextLockedUntil = null;
+      }
+
+      await setDoc(ref, {
+        count: nextCount,
+        lockedUntil: nextLockedUntil,
       });
     }
-    return getAdminAttemptStatusById(attemptId);
-  } catch {
-    // Fallback status if Firestore rules blocked increment (e.g. already locked on server)
-    return getAdminAttemptStatusById(attemptId);
+
+    return buildAttemptStatus(attemptId, nextCount, nextLockedUntilMs);
+  } catch (err) {
+    console.error(
+      '[AdminLogin Step 4: write adminLoginAttempts]',
+      getFirestoreCode(err),
+      err
+    );
+    // Do not block or mask real login errors if attempt logging fails
+    return emptyAttemptStatus(attemptId);
   }
 }
 
@@ -239,8 +288,20 @@ export async function clearAdminAttempts(email: string): Promise<void> {
     // Ignore storage error
   }
   try {
-    await deleteDoc(doc(db, 'adminLoginAttempts', attemptId));
-  } catch {
-    // Non-fatal if doc doesn't exist or already cleared
+    const ref = doc(db, 'adminLoginAttempts', attemptId);
+    const snap = await getDoc(ref);
+    if (snap.exists()) {
+      await setDoc(ref, {
+        count: 0,
+        lockedUntil: null,
+      });
+    }
+  } catch (err) {
+    console.error(
+      '[AdminLogin Step 4: reset adminLoginAttempts]',
+      getFirestoreCode(err),
+      err
+    );
+    // Non-fatal: resetting counter must never block a valid admin login
   }
 }

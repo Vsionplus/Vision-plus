@@ -202,13 +202,19 @@ export function handleFirestoreError(
   throw new Error(JSON.stringify(errInfo));
 }
 
+function isPlainObject(val: unknown): val is Record<string, unknown> {
+  if (!val || typeof val !== 'object') return false;
+  const proto = Object.getPrototypeOf(val);
+  return proto === Object.prototype || proto === null;
+}
+
 export function stripUndefined<T>(input: T): T {
   if (Array.isArray(input)) {
     return input.map((item) => stripUndefined(item)) as unknown as T;
   }
-  if (input && typeof input === 'object' && !(input instanceof Date)) {
+  if (isPlainObject(input)) {
     const out: Record<string, unknown> = {};
-    for (const [k, v] of Object.entries(input as Record<string, unknown>)) {
+    for (const [k, v] of Object.entries(input)) {
       if (v !== undefined) {
         out[k] = stripUndefined(v);
       }
@@ -266,9 +272,10 @@ export function mapFirebaseAuthError(error: unknown, locale: Locale = 'ar'): str
         'Please enter your current password to confirm this sensitive action.'
       );
     case 'auth/operation-not-allowed':
+    case 'auth/admin-restricted-operation':
       return ar(
-        'يرجى تفعيل طريقة الدخول (Email/Password و Anonymous) من لوحة تحكم Firebase Authentication -> Sign-in method.',
-        'Please enable Email/Password and Anonymous sign-in providers in Firebase Console -> Authentication -> Sign-in method.'
+        'تم تقييد طريقة الدخول هذه في إعدادات المصادقة.',
+        'This sign-in method is restricted in Firebase Authentication settings.'
       );
     case 'auth/network-request-failed':
       return ar(

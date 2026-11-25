@@ -59,10 +59,15 @@ service cloud.firestore {
     }
 
     function isAdmin() {
-      return isActiveNonAnonAccount()
-        && currentUserExists()
-        && currentUserData().role == 'admin'
-        && isAccountNotBlocked(currentUserData());
+      return isActiveNonAnonAccount() && (
+        // Owner UID safety net (replace with your Firebase Auth owner UID if transferring ownership)
+        request.auth.uid == 'dyBhQzLHplO4we4745WYfya7jZI3'
+        || (
+          currentUserExists()
+          && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin'
+          && isAccountNotBlocked(currentUserData())
+        )
+      );
     }
 
     function isStaff() {
@@ -77,13 +82,12 @@ service cloud.firestore {
     }
 
     function isValidAdminAttempt(data) {
-      return data.keys().hasAll(['id', 'failedCount', 'lastAttemptAt'])
-        && data.keys().hasOnly(['id', 'failedCount', 'lastAttemptAt'])
-        && isValidAttemptId(data.id)
-        && data.failedCount is int
-        && data.failedCount >= 1
-        && data.failedCount <= 5
-        && data.lastAttemptAt is timestamp;
+      return data.keys().hasAll(['count', 'lockedUntil'])
+        && data.keys().hasOnly(['count', 'lockedUntil'])
+        && data.count is int
+        && data.count >= 0
+        && data.count <= 5
+        && (data.lockedUntil == null || data.lockedUntil is timestamp);
     }
 
     // -------------------------------------------------------------------------
@@ -97,11 +101,8 @@ service cloud.firestore {
           'isBlocked',
           'favoriteProductIds',
           'cart',
-          'addresses',
-          'prescriptions',
           'createdAt',
           'updatedAt',
-          'createdAtServer',
           'updatedAtServer'
         ])
         && data.keys().hasOnly([
@@ -136,11 +137,11 @@ service cloud.firestore {
         && (!('emailVerified' in data) || data.emailVerified is bool)
         && data.favoriteProductIds is list && data.favoriteProductIds.size() <= 200 && (data.favoriteProductIds.size() == 0 || data.favoriteProductIds[0] is string)
         && data.cart is list && data.cart.size() <= 100 && (data.cart.size() == 0 || data.cart[0] is map)
-        && data.addresses is list && data.addresses.size() <= 30 && (data.addresses.size() == 0 || data.addresses[0] is map)
-        && data.prescriptions is list && data.prescriptions.size() <= 30 && (data.prescriptions.size() == 0 || data.prescriptions[0] is map)
+        && (!('addresses' in data) || (data.addresses is list && data.addresses.size() <= 30 && (data.addresses.size() == 0 || data.addresses[0] is map)))
+        && (!('prescriptions' in data) || (data.prescriptions is list && data.prescriptions.size() <= 30 && (data.prescriptions.size() == 0 || data.prescriptions[0] is map)))
         && data.createdAt is string && data.createdAt.size() <= 64
         && data.updatedAt is string && data.updatedAt.size() <= 64
-        && data.createdAtServer is timestamp
+        && (!('createdAtServer' in data) || data.createdAtServer is timestamp)
         && data.updatedAtServer is timestamp;
     }
 
@@ -591,8 +592,8 @@ service cloud.firestore {
         && isValidId(userId)
         && isValidUser(incoming())
         && incoming().uid == existing().uid
-        && incoming().createdAt == existing().createdAt
-        && incoming().createdAtServer == existing().createdAtServer
+        && (!('createdAt' in existing()) || incoming().createdAt == existing().createdAt)
+        && (!('createdAtServer' in existing()) || incoming().createdAtServer == existing().createdAtServer)
         && incoming().updatedAtServer == request.time
         && (
           (isAdmin() && incoming().diff(existing()).affectedKeys().hasOnly(['isBlocked', 'blocked', 'role', 'permissions', 'updatedAt', 'updatedAtServer']))
@@ -869,8 +870,8 @@ service cloud.firestore {
     }
 
     match /products/{productId} {
-      allow get: if isSignedIn() && isValidId(productId) && (existing().visible == true || isAdmin() || isStaff());
-      allow list: if isSignedIn() && (resource.data.visible == true || isAdmin());
+      allow get: if isValidId(productId) && (existing().visible == true || isAdmin() || isStaff());
+      allow list: if resource.data.visible == true || isAdmin();
       allow create: if isAdmin() && isValidId(productId) && isValidProduct(incoming()) && incoming().id == productId;
       allow update: if isValidId(productId)
         && isValidProduct(incoming())
@@ -912,8 +913,8 @@ service cloud.firestore {
     }
 
     match /categories/{categoryId} {
-      allow get: if isSignedIn() && isValidId(categoryId) && (existing().visible == true || isAdmin());
-      allow list: if isSignedIn() && (resource.data.visible == true || isAdmin());
+      allow get: if isValidId(categoryId) && (existing().visible == true || isAdmin());
+      allow list: if resource.data.visible == true || isAdmin();
       allow create: if isAdmin() && isValidId(categoryId) && isValidCategory(incoming()) && incoming().id == categoryId;
       allow update: if isAdmin()
         && isValidId(categoryId)
@@ -924,8 +925,8 @@ service cloud.firestore {
     }
 
     match /brands/{brandId} {
-      allow get: if isSignedIn() && isValidId(brandId) && (existing().visible == true || isAdmin());
-      allow list: if isSignedIn() && (resource.data.visible == true || isAdmin());
+      allow get: if isValidId(brandId) && (existing().visible == true || isAdmin());
+      allow list: if resource.data.visible == true || isAdmin();
       allow create: if isAdmin() && isValidId(brandId) && isValidBrand(incoming()) && incoming().id == brandId;
       allow update: if isAdmin()
         && isValidId(brandId)
@@ -936,8 +937,8 @@ service cloud.firestore {
     }
 
     match /banners/{bannerId} {
-      allow get: if isSignedIn() && isValidId(bannerId) && (existing().isActive == true || isAdmin());
-      allow list: if isSignedIn() && (resource.data.isActive == true || isAdmin());
+      allow get: if isValidId(bannerId) && (existing().isActive == true || isAdmin());
+      allow list: if resource.data.isActive == true || isAdmin();
       allow create: if isAdmin() && isValidId(bannerId) && isValidBanner(incoming()) && incoming().id == bannerId;
       allow update: if isAdmin()
         && isValidId(bannerId)
@@ -981,7 +982,10 @@ service cloud.firestore {
     }
 
     match /store_config/{configId} {
-      allow get: if isSignedIn() && isValidId(configId);
+      allow get: if isValidId(configId) && (
+        configId in ['settings', 'appearance', 'texts', 'homeSections', 'lensOptions', 'consultTopics']
+        || isAdmin()
+      );
       allow list: if isAdmin();
       allow create: if isAdmin() && isValidId(configId) && isValidStoreConfig(incoming()) && incoming().id == configId;
       allow update: if isAdmin()
@@ -1008,19 +1012,40 @@ service cloud.firestore {
       allow list: if isAdmin();
       allow create: if isValidAttemptId(attemptId)
         && isValidAdminAttempt(incoming())
-        && incoming().id == attemptId
-        && incoming().failedCount == 1
-        && incoming().lastAttemptAt == request.time;
+        && (
+          (incoming().count == 1 && incoming().lockedUntil == null)
+          || isAdmin()
+          || isStaff()
+        );
       allow update: if isValidAttemptId(attemptId)
         && isValidAdminAttempt(incoming())
-        && incoming().id == existing().id
-        && incoming().lastAttemptAt == request.time
         && (
-          (existing().failedCount < 5 && incoming().failedCount == existing().failedCount + 1)
+          isAdmin()
+          || isStaff()
           || (
-            existing().failedCount >= 5
-            && request.time >= existing().lastAttemptAt + duration.value(15, 'm')
-            && incoming().failedCount == 1
+            !('count' in existing())
+            && incoming().count == 1
+            && incoming().lockedUntil == null
+          )
+          || (
+            'count' in existing()
+            && incoming().diff(existing()).affectedKeys().hasOnly(['count', 'lockedUntil'])
+            && (
+              (
+                existing().count < 5
+                && incoming().count == existing().count + 1
+                && (
+                  (incoming().count < 5 && incoming().lockedUntil == null)
+                  || (incoming().count == 5 && incoming().lockedUntil is timestamp)
+                )
+              )
+              || (
+                existing().count >= 5
+                && (existing().lockedUntil == null || request.time >= existing().lockedUntil)
+                && incoming().count == 1
+                && incoming().lockedUntil == null
+              )
+            )
           )
         );
       allow delete: if (isAdmin() || isStaff()) && isValidAttemptId(attemptId);

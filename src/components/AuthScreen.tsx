@@ -5,7 +5,6 @@ import {
   User,
   Phone,
   LogIn,
-  LogOut,
   UserPlus,
   UserCheck,
   KeyRound,
@@ -38,13 +37,12 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({
     t,
     appearance,
     user,
-    firebaseUser,
+    authReady,
     isGuest,
     loginWithEmail,
     registerWithEmail,
     continueAsGuest,
     sendPasswordReset,
-    logout,
   } = useStore();
 
   const [view, setView] = useState<'choice' | 'login' | 'register' | 'reset'>(initialView);
@@ -353,28 +351,6 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({
                 </span>
               </button>
             )}
-
-            <div className="flex flex-wrap items-center justify-center gap-2 pt-1">
-              <button
-                type="button"
-                onClick={() => switchView('reset')}
-                className="min-h-[44px] px-3 py-2 rounded-xl text-xs font-bold text-[#B38B2D] dark:text-[#E2BD5B] hover:bg-amber-50 dark:hover:bg-amber-950/30 inline-flex items-center gap-1.5 transition-colors"
-              >
-                <KeyRound className="w-4 h-4" />
-                <span>{t('نسيت كلمة المرور؟', 'Forgot Password?')}</span>
-              </button>
-
-              {firebaseUser && (
-                <button
-                  type="button"
-                  onClick={() => void logout()}
-                  className="min-h-[44px] px-3 py-2 rounded-xl text-xs font-bold text-rose-600 dark:text-rose-400 hover:bg-rose-50 dark:hover:bg-rose-950/30 inline-flex items-center gap-1.5 transition-colors"
-                >
-                  <LogOut className="w-4 h-4" />
-                  <span>{t('تسجيل الخروج', 'Sign Out')}</span>
-                </button>
-              )}
-            </div>
 
             {mode === 'modal' && onClose && (
               <button
@@ -714,6 +690,17 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({
         className="fixed inset-0 z-[70] bg-black/65 backdrop-blur-xs overflow-y-auto p-4 flex items-center justify-center"
       >
         {cardContent}
+      </div>
+    );
+  }
+
+  if (!authReady) {
+    return (
+      <div className="min-h-[100dvh] bg-[#F8F9FA] dark:bg-[#0D131F] text-[#11223E] dark:text-slate-100 flex items-center justify-center p-6">
+        <div className="text-center space-y-3">
+          <div className="w-8 h-8 mx-auto rounded-full border-[3px] border-slate-200 dark:border-slate-700 border-t-[#D9B24C] animate-spin" />
+          <p className="text-sm font-bold">{t('جارٍ التحميل...', 'Loading...')}</p>
+        </div>
       </div>
     );
   }

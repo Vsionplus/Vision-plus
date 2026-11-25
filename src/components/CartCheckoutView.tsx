@@ -13,7 +13,6 @@ import {
   Edit3,
   ExternalLink,
   Eye,
-  LogIn,
   MailWarning,
   MapPin,
   MessageCircle,
@@ -25,9 +24,9 @@ import {
   Trash2,
   Truck,
   Upload,
-  UserPlus,
   X,
 } from 'lucide-react';
+import { compressImageFileToBlob } from '../lib/firebase';
 import { useStore } from '../store/StoreContext';
 import {
   CartItem,
@@ -99,6 +98,8 @@ export const CartCheckoutView: React.FC = () => {
   const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>('bankak');
   const [bankRef, setBankRef] = useState('');
   const [receiptUrl, setReceiptUrl] = useState('');
+  const [customerNote, setCustomerNote] = useState('');
+  const [reviewModalOpen, setReviewModalOpen] = useState(false);
   const [submitting, setSubmitting] = useState(false);
 
   const [resendCooldown, setResendCooldown] = useState(0);
@@ -209,14 +210,19 @@ export const CartCheckoutView: React.FC = () => {
     showToast(t('تم تطبيق كود الخصم بنجاح', 'Coupon applied'));
   };
 
-  const handleReceiptUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleReceiptUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
-    const reader = new FileReader();
-    reader.onload = () => {
-      if (typeof reader.result === 'string') setReceiptUrl(reader.result);
-    };
-    reader.readAsDataURL(file);
+    try {
+      const { dataUrl } = await compressImageFileToBlob(file, 1000, 0.78);
+      if (dataUrl) setReceiptUrl(dataUrl);
+    } catch {
+      const reader = new FileReader();
+      reader.onload = () => {
+        if (typeof reader.result === 'string') setReceiptUrl(reader.result);
+      };
+      reader.readAsDataURL(file);
+    }
   };
 
   const handleResendClick = async () => {
@@ -261,26 +267,24 @@ export const CartCheckoutView: React.FC = () => {
     }
   };
 
-  const handleSubmitOrder = async (e: React.FormEvent) => {
-    e.preventDefault();
-
+  const validateCheckoutReady = (): boolean => {
     if (isGuest) {
       openAuthModal('choice', true);
-      return;
+      return false;
     }
 
     if (!isEmailVerified) {
       showToast(
         t('يجب تأكيد بريدك الإلكتروني قبل إتمام الطلب', 'Verify your email before placing an order')
       );
-      return;
+      return false;
     }
 
     if (!selectedAddress || !selectedState) {
       showToast(
         t('يرجى إضافة أو اختيار عنوان التوصيل أولاً', 'Please add or select a delivery address')
       );
-      return;
+      return false;
     }
 
     if (settings.minimumOrderSdg > 0 && subtotalSdg < settings.minimumOrderSdg) {
@@ -290,7 +294,7 @@ export const CartCheckoutView: React.FC = () => {
           `Minimum order is ${formatSdg(settings.minimumOrderSdg)}`
         )
       );
-      return;
+      return false;
     }
 
     if (paymentMethod === 'bankak' && !receiptUrl && !bankRef.trim()) {
@@ -300,8 +304,20 @@ export const CartCheckoutView: React.FC = () => {
           'Upload Bankak receipt screenshot or enter reference ID'
         )
       );
-      return;
+      return false;
     }
+
+    return true;
+  };
+
+  const handleOpenOrderReview = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!validateCheckoutReady()) return;
+    setReviewModalOpen(true);
+  };
+
+  const handleConfirmPlaceOrder = async () => {
+    if (submitting || !validateCheckoutReady() || !selectedAddress || !selectedState) return;
 
     const addressSnapshot: OrderAddressSnapshot = {
       id: selectedAddress.id,
@@ -334,7 +350,9 @@ export const CartCheckoutView: React.FC = () => {
         deliveryFeeSdg,
         bankTransferReference: bankRef.trim() || undefined,
         bankTransferReceiptUrl: receiptUrl || undefined,
+        customerNote: customerNote.trim() || undefined,
       });
+      setReviewModalOpen(false);
     } catch {
       showToast(
         t(
@@ -400,32 +418,13 @@ export const CartCheckoutView: React.FC = () => {
         </button>
       </div>
 
-      {/* Guest Checkout Gate Banner */}
+      {/* Guest Checkout Informational Banner (dialog triggers on Proceed to Checkout) */}
       {isGuest && (
-        <div className="rounded-2xl border border-amber-300 dark:border-amber-800/70 bg-amber-50/90 dark:bg-amber-950/25 p-4 flex flex-wrap items-center justify-between gap-3">
-          <div className="text-xs sm:text-sm font-bold text-[#11223E] dark:text-amber-200">
-            {t('سجّل دخولك أو أنشئ حساباً لإتمام الشراء', 'Sign in or create an account to complete purchase')}
-          </div>
-          <div className="flex flex-wrap items-center gap-2">
-            <button
-              type="button"
-              onClick={() => openAuthModal('login', true)}
-              style={{ backgroundColor: appearance.primaryColor }}
-              className="min-h-[44px] px-4 rounded-xl text-white text-xs font-extrabold inline-flex items-center gap-1.5"
-            >
-              <LogIn className="w-4 h-4" />
-              {t('تسجيل الدخول', 'Sign In')}
-            </button>
-            <button
-              type="button"
-              onClick={() => openAuthModal('register', true)}
-              style={{ backgroundColor: appearance.secondaryColor, color: appearance.primaryColor }}
-              className="min-h-[44px] px-4 rounded-xl text-xs font-extrabold inline-flex items-center gap-1.5"
-            >
-              <UserPlus className="w-4 h-4" />
-              {t('إنشاء حساب جديد', 'Create Account')}
-            </button>
-          </div>
+        <div className="rounded-2xl border border-amber-300 dark:border-amber-800/70 bg-amber-50/90 dark:bg-amber-950/25 p-4 text-xs sm:text-sm font-bold text-[#11223E] dark:text-amber-200">
+          {t(
+            'أنت تتصفح كضيف — اضغط على "إتمام الطلب" بالأسفل لتسجيل الدخول أو إنشاء حساب وإكمال الشراء مع حفظ سلتك.',
+            'You are browsing as a guest — tap "Proceed to Checkout" below to sign in or register while keeping your cart.'
+          )}
         </div>
       )}
 
@@ -488,7 +487,7 @@ export const CartCheckoutView: React.FC = () => {
         </div>
       )}
 
-      <form onSubmit={handleSubmitOrder} className="grid lg:grid-cols-12 gap-6 items-start">
+      <form onSubmit={handleOpenOrderReview} className="grid lg:grid-cols-12 gap-6 items-start">
         {/* Left/Right Column: Cart Item Cards & Optician Help & Payment Method */}
         <div className="lg:col-span-7 space-y-4">
           {cart.map((item) => {
@@ -1012,6 +1011,23 @@ export const CartCheckoutView: React.FC = () => {
                 </div>
               </div>
             )}
+
+            <div className="space-y-1.5 pt-2 border-t border-slate-100 dark:border-slate-800 text-xs">
+              <label className="block font-bold">
+                {t('ملاحظات إضافية على الطلب (اختياري)', 'Order Notes (optional)')}
+              </label>
+              <textarea
+                rows={2}
+                maxLength={600}
+                value={customerNote}
+                onChange={(e) => setCustomerNote(e.target.value)}
+                placeholder={t(
+                  'مثال: وقت التوصيل المناسب أو أي تعليمات خاصة بالعدسات أو الاستلام...',
+                  'e.g. preferred delivery time or special eyewear instructions...'
+                )}
+                className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-900 text-xs"
+              />
+            </div>
           </div>
         </div>
 
@@ -1195,11 +1211,7 @@ export const CartCheckoutView: React.FC = () => {
               >
                 <CheckCircle2 className="w-4 h-4 text-[#D9B24C] dark:text-[#11223E]" />
                 <span>
-                  {submitting
-                    ? t('جارٍ إرسال الطلب...', 'Submitting Order...')
-                    : locale === 'ar'
-                    ? appTexts.btnCheckoutAr
-                    : appTexts.btnCheckoutEn}
+                  {t('مراجعة الطلب قبل التأكيد', 'Review Order Before Confirming')}
                 </span>
               </button>
               {(!selectedAddress || !selectedState) && (
@@ -1211,6 +1223,171 @@ export const CartCheckoutView: React.FC = () => {
           )}
         </div>
       </form>
+
+      {/* Pre-Submission Order Review Modal */}
+      {reviewModalOpen && selectedAddress && selectedState && (
+        <div className="fixed inset-0 z-[75] bg-black/60 backdrop-blur-xs flex items-center justify-center p-4 overflow-y-auto">
+          <div className="bg-white dark:bg-[#131C2E] border border-slate-200 dark:border-slate-800 rounded-2xl max-w-xl w-full max-h-[90vh] overflow-y-auto p-5 sm:p-6 space-y-4 shadow-2xl text-xs">
+            <div className="flex items-center justify-between border-b border-slate-100 dark:border-slate-800 pb-3">
+              <div>
+                <h2 className="text-base font-extrabold text-[#11223E] dark:text-white">
+                  {t('مراجعة تفاصيل الطلب النهائية', 'Final Order Review')}
+                </h2>
+                <p className="text-[11px] text-slate-500 mt-0.5">
+                  {t(
+                    'راجع المنتجات والعنوان والدفع قبل إرسال الطلب. يمكنك تعديل الطلب لاحقاً من صفحة طلباتي قبل الشحن.',
+                    'Verify items, address & payment before placing. You can also edit before shipping from My Orders.'
+                  )}
+                </p>
+              </div>
+              <button
+                type="button"
+                disabled={submitting}
+                onClick={() => setReviewModalOpen(false)}
+                className="min-h-[40px] min-w-[40px] flex items-center justify-center rounded-xl hover:bg-slate-100 dark:hover:bg-slate-800"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            {/* Items Recap */}
+            <div className="space-y-2">
+              <div className="font-extrabold text-[#11223E] dark:text-[#E2BD5B]">
+                {t(`المنتجات (${totalUnitsCount})`, `Items (${totalUnitsCount})`)}
+              </div>
+              <div className="space-y-2 max-h-48 overflow-y-auto">
+                {cart.map((item) => {
+                  const prod = products.find((p) => p.id === item.productId);
+                  if (!prod) return null;
+                  const lensExtra = item.prescription?.lensExtraPriceSdg || 0;
+                  const lineTotal = (item.unitPriceSdg + lensExtra) * item.quantity;
+                  const lensLine = formatLensSummaryLine(item.prescription, lensOptions, locale);
+                  return (
+                    <div
+                      key={item.id}
+                      className="p-2.5 rounded-xl bg-slate-50 dark:bg-slate-900/70 border border-slate-200/80 dark:border-slate-800 flex items-center justify-between gap-2"
+                    >
+                      <div className="min-w-0">
+                        <div className="font-bold truncate">
+                          {locale === 'ar' ? prod.titleAr : prod.titleEn} × {item.quantity}
+                        </div>
+                        {item.variantLabel && (
+                          <div className="text-[11px] text-slate-500">{item.variantLabel}</div>
+                        )}
+                        {lensLine && (
+                          <div className="text-[11px] text-emerald-700 dark:text-emerald-400">
+                            {lensLine}
+                          </div>
+                        )}
+                      </div>
+                      <span className="font-mono-num font-extrabold shrink-0">
+                        {formatSdg(lineTotal)}
+                      </span>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+
+            {/* Address Recap */}
+            <div className="p-3 rounded-xl bg-slate-50 dark:bg-slate-900/70 border border-slate-200/80 dark:border-slate-800 space-y-1">
+              <div className="flex items-center justify-between gap-2">
+                <span className="font-extrabold text-[#11223E] dark:text-[#E2BD5B]">
+                  {t('عنوان التوصيل والمستلم', 'Recipient & Delivery Address')}
+                </span>
+                <button
+                  type="button"
+                  disabled={submitting}
+                  onClick={() => {
+                    setReviewModalOpen(false);
+                    setEditingAddress(selectedAddress);
+                    setAddressSheetOpen(true);
+                  }}
+                  className="text-[#B38B2D] font-bold hover:underline"
+                >
+                  {t('تعديل العنوان', 'Edit Address')}
+                </button>
+              </div>
+              <div className="font-bold">
+                {selectedAddress.recipientName || user.name} ·{' '}
+                <span dir="ltr" className="font-mono-num">{selectedAddress.phone || user.phone}</span>
+              </div>
+              <div className="text-slate-600 dark:text-slate-300">
+                {locale === 'ar' ? selectedState.nameAr : selectedState.nameEn} — {selectedAddress.city}،{' '}
+                {selectedAddress.area} — {selectedAddress.details}
+              </div>
+            </div>
+
+            {/* Payment & Note Recap */}
+            <div className="p-3 rounded-xl bg-slate-50 dark:bg-slate-900/70 border border-slate-200/80 dark:border-slate-800 space-y-1">
+              <div className="font-extrabold text-[#11223E] dark:text-[#E2BD5B]">
+                {t('طريقة الدفع', 'Payment Method')}
+              </div>
+              <div className="font-bold">
+                {paymentMethod === 'bankak'
+                  ? t('تحويل بنكي (بنكك)', 'Bankak Transfer')
+                  : t('الدفع عند الاستلام', 'Cash on Delivery')}
+                {paymentMethod === 'bankak' && bankRef.trim() ? ` (${bankRef.trim()})` : ''}
+              </div>
+              {customerNote.trim() && (
+                <div className="text-[11px] text-slate-600 dark:text-slate-300 pt-1">
+                  <strong>{t('ملاحظتك:', 'Your Note:')}</strong> {customerNote.trim()}
+                </div>
+              )}
+            </div>
+
+            {/* Totals Breakdown */}
+            <div className="p-3 rounded-xl border border-[#D9B24C]/50 bg-[#D9B24C]/10 space-y-1.5">
+              <div className="flex justify-between">
+                <span>{t('المنتجات والعدسات', 'Items & Lenses')}</span>
+                <span className="font-mono-num font-bold">{formatSdg(subtotalSdg)}</span>
+              </div>
+              {discountSdg > 0 && (
+                <div className="flex justify-between text-emerald-700 dark:text-emerald-400">
+                  <span>{t('الخصم', 'Discount')}</span>
+                  <span className="font-mono-num font-bold">− {formatSdg(discountSdg)}</span>
+                </div>
+              )}
+              <div className="flex justify-between">
+                <span>{t('رسوم التوصيل', 'Delivery Fee')}</span>
+                <span className="font-mono-num font-bold">{formatSdg(deliveryFeeSdg)}</span>
+              </div>
+              <div className="flex justify-between text-sm font-extrabold border-t border-[#D9B24C]/40 pt-1.5">
+                <span>{t('الإجمالي النهائي', 'Final Total')}</span>
+                <span className="font-mono-num text-[#11223E] dark:text-[#E2BD5B]">
+                  {formatSdg(totalSdg)}
+                </span>
+              </div>
+            </div>
+
+            <div className="flex items-center justify-end gap-2 pt-1">
+              <button
+                type="button"
+                disabled={submitting}
+                onClick={() => setReviewModalOpen(false)}
+                className="min-h-[44px] px-4 py-2 rounded-xl border border-slate-200 dark:border-slate-700 font-bold disabled:opacity-50"
+              >
+                {t('تراجع للتعديل', 'Back to Edit')}
+              </button>
+              <button
+                type="button"
+                disabled={submitting}
+                onClick={() => void handleConfirmPlaceOrder()}
+                className="min-h-[44px] px-5 py-2 rounded-xl bg-[#11223E] text-white dark:bg-[#D9B24C] dark:text-[#11223E] font-extrabold inline-flex items-center gap-2 disabled:opacity-50"
+              >
+                <CheckCircle2 className="w-4 h-4" />
+                <span>
+                  {submitting
+                    ? t('جارٍ إرسال الطلب...', 'Submitting Order...')
+                    : locale === 'ar'
+                    ? appTexts.btnCheckoutAr
+                    : appTexts.btnCheckoutEn}
+                </span>
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Edit/Add Prescription Sheet from Cart */}
       {editingRxTarget && (

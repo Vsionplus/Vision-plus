@@ -82,6 +82,7 @@ const AppRouter: React.FC = () => {
   const {
     authReady,
     firebaseUser,
+    guestSession,
     authScreenMode,
     authModal,
     closeAuthModal,
@@ -102,6 +103,7 @@ const AppRouter: React.FC = () => {
           >
             V+
           </div>
+          <div className="w-7 h-7 mx-auto rounded-full border-[3px] border-slate-200 dark:border-slate-700 border-t-[#D9B24C] animate-spin" />
           <p className="text-sm font-bold">{t('جارٍ التحميل...', 'Loading Vision Plus...')}</p>
         </div>
       </div>
@@ -126,11 +128,16 @@ const AppRouter: React.FC = () => {
     );
   }
 
-  if (!firebaseUser || authScreenMode === 'entry') {
+  if ((!firebaseUser && !guestSession) || authScreenMode === 'entry') {
     return <AuthScreen mode="page" />;
   }
 
-  if (authScreenMode === 'verify_email' && !firebaseUser.isAnonymous && !firebaseUser.emailVerified) {
+  if (
+    firebaseUser &&
+    authScreenMode === 'verify_email' &&
+    !firebaseUser.isAnonymous &&
+    !firebaseUser.emailVerified
+  ) {
     return <VerifyEmailScreen />;
   }
 

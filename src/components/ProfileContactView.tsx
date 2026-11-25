@@ -9,9 +9,6 @@ import {
   MessageCircle,
   HelpCircle,
   FileText,
-  LogIn,
-  UserPlus,
-  LogOut,
   MailCheck,
   MailWarning,
 } from 'lucide-react';
@@ -33,9 +30,7 @@ export const ProfileView: React.FC = () => {
     user,
     isGuest,
     isEmailVerified,
-    openAuthModal,
     openVerifyEmailScreen,
-    logout,
     settings,
     appearance,
     updateProfile,
@@ -88,7 +83,10 @@ export const ProfileView: React.FC = () => {
 
   const handleAddAddress = (e: React.FormEvent) => {
     e.preventDefault();
-    if (!addrLabel.trim() || !addrCity.trim()) return;
+    if (!addrLabel.trim() || !addrCity.trim() || !addrArea.trim() || !addrDetails.trim()) {
+      showToast(t('يرجى إكمال جميع حقول العنوان المطلوبة', 'Please complete all required address fields'));
+      return;
+    }
     const phoneToUse = addrPhone.trim() || user.phone;
     if (!isValidSudanPhone(phoneToUse)) {
       showToast(t('يرجى إدخال رقم سوداني صحيح للعنوان', 'Enter a valid Sudan phone number'));
@@ -116,7 +114,7 @@ export const ProfileView: React.FC = () => {
   const handleAddRx = (e: React.FormEvent) => {
     e.preventDefault();
     if (isGuest) {
-      openAuthModal('login', false);
+      showToast(t('هذه الميزة متاحة للحسابات المسجلة فقط', 'Available for registered accounts'));
       return;
     }
     if (!rxLabel.trim()) return;
@@ -148,50 +146,22 @@ export const ProfileView: React.FC = () => {
           >
             {t('المفضلة', 'Favorites')} ({user.favoriteProductIds.length})
           </button>
-          <button
-            type="button"
-            onClick={() => void logout()}
-            className="min-h-[44px] px-3.5 py-2 rounded-lg border border-rose-200 dark:border-rose-900/50 text-rose-700 dark:text-rose-400 bg-white dark:bg-[#181B1E] text-xs font-bold inline-flex items-center gap-1.5"
-          >
-            <LogOut className="w-3.5 h-3.5" />
-            {t('تسجيل الخروج', 'Sign Out')}
-          </button>
         </div>
       </div>
 
       {/* Auth / Verification Status Card */}
       {isGuest ? (
-        <div className="bg-amber-50 dark:bg-amber-950/25 border border-amber-200 dark:border-amber-900/50 rounded-2xl p-5 flex flex-wrap items-center justify-between gap-4">
+        <div className="bg-amber-50 dark:bg-amber-950/25 border border-amber-200 dark:border-amber-900/50 rounded-2xl p-5">
           <div className="space-y-1">
             <h2 className="text-base font-extrabold">
-              {t('أنت داخل كضيف، سجّل دخولك لإتمام الشراء', 'Browsing as Guest')}
+              {t('أنت تتصفح الآن كضيف', 'Browsing as Guest')}
             </h2>
-            <p className="text-xs text-stone-600 dark:text-zinc-400">
+            <p className="text-xs text-stone-600 dark:text-zinc-400 leading-relaxed">
               {t(
-                'سجّل دخولك أو أنشئ حساباً جديداً الآن لحفظ سلتك ومقاساتك وعناوينك وإتمام الطلبات.',
-                'Sign in or register to save your cart, prescriptions, addresses, and complete orders.'
+                'يمكنك متابعة التسوق وإضافة المنتجات إلى السلة والمفضلة. عند إتمام الطلب سيُطلب منك الدخول أو إنشاء حساب لحفظ عناوينك وقياساتك.',
+                'You can browse and add items to cart and favorites. Sign in or create an account during checkout to save addresses and prescriptions.'
               )}
             </p>
-          </div>
-          <div className="flex flex-wrap items-center gap-2">
-            <button
-              type="button"
-              onClick={() => openAuthModal('login', false)}
-              style={{ backgroundColor: appearance.primaryColor }}
-              className="min-h-[44px] px-4 rounded-xl text-white text-xs font-extrabold inline-flex items-center gap-1.5"
-            >
-              <LogIn className="w-4 h-4" />
-              {t('تسجيل الدخول', 'Sign In')}
-            </button>
-            <button
-              type="button"
-              onClick={() => openAuthModal('register', false)}
-              style={{ backgroundColor: appearance.secondaryColor, color: appearance.primaryColor }}
-              className="min-h-[44px] px-4 rounded-xl text-xs font-extrabold inline-flex items-center gap-1.5"
-            >
-              <UserPlus className="w-4 h-4" />
-              {t('إنشاء حساب جديد', 'Create Account')}
-            </button>
           </div>
         </div>
       ) : (
@@ -230,19 +200,10 @@ export const ProfileView: React.FC = () => {
         <div className="lg:col-span-4 bg-white dark:bg-[#181B1E] border border-stone-200 dark:border-zinc-800 rounded-xl p-5 space-y-4 text-xs">
           <h2 className="text-base font-bold">{t('البيانات الشخصية', 'Account Details')}</h2>
           {isGuest ? (
-            <div className="p-4 rounded-xl bg-amber-50 dark:bg-amber-950/25 border border-amber-200 dark:border-amber-900/50 space-y-3">
-              <p className="font-bold text-[#11223E] dark:text-amber-200">
-                {t('سجّل دخولك لاستخدام هذه الميزة', 'Sign in to use this feature')}
+            <div className="p-4 rounded-xl bg-amber-50 dark:bg-amber-950/25 border border-amber-200 dark:border-amber-900/50">
+              <p className="font-bold text-[#11223E] dark:text-amber-200 leading-relaxed">
+                {t('إدارة البيانات الشخصية متاحة للحسابات المسجلة.', 'Profile management is available for registered accounts.')}
               </p>
-              <button
-                type="button"
-                onClick={() => openAuthModal('login', false)}
-                style={{ backgroundColor: appearance.primaryColor }}
-                className="min-h-[44px] px-4 rounded-xl text-white font-bold inline-flex items-center gap-1.5"
-              >
-                <LogIn className="w-4 h-4" />
-                {t('تسجيل الدخول', 'Sign In')}
-              </button>
             </div>
           ) : (
             <form onSubmit={handleSaveProfile} className="space-y-4">
@@ -268,19 +229,10 @@ export const ProfileView: React.FC = () => {
         <div className="lg:col-span-4 bg-white dark:bg-[#181B1E] border border-stone-200 dark:border-zinc-800 rounded-xl p-5 space-y-4 text-xs">
           <h2 className="text-base font-bold">{t('العناوين المحفوظة', 'Saved Addresses')}</h2>
           {isGuest ? (
-            <div className="p-4 rounded-xl bg-amber-50 dark:bg-amber-950/25 border border-amber-200 dark:border-amber-900/50 space-y-3">
-              <p className="font-bold text-[#11223E] dark:text-amber-200">
-                {t('سجّل دخولك لاستخدام هذه الميزة', 'Sign in to use this feature')}
+            <div className="p-4 rounded-xl bg-amber-50 dark:bg-amber-950/25 border border-amber-200 dark:border-amber-900/50">
+              <p className="font-bold text-[#11223E] dark:text-amber-200 leading-relaxed">
+                {t('العناوين المحفوظة متاحة للحسابات المسجلة.', 'Saved addresses are available for registered accounts.')}
               </p>
-              <button
-                type="button"
-                onClick={() => openAuthModal('login', false)}
-                style={{ backgroundColor: appearance.primaryColor }}
-                className="min-h-[44px] px-4 rounded-xl text-white font-bold inline-flex items-center gap-1.5"
-              >
-                <LogIn className="w-4 h-4" />
-                {t('تسجيل الدخول', 'Sign In')}
-              </button>
             </div>
           ) : (
             <>
@@ -356,19 +308,10 @@ export const ProfileView: React.FC = () => {
         <div className="lg:col-span-4 bg-white dark:bg-[#181B1E] border border-stone-200 dark:border-zinc-800 rounded-xl p-5 space-y-4 text-xs">
           <h2 className="text-base font-bold">{t('وصفات النظر المحفوظة', 'Saved Prescriptions (Rx)')}</h2>
           {isGuest ? (
-            <div className="p-4 rounded-xl bg-amber-50 dark:bg-amber-950/25 border border-amber-200 dark:border-amber-900/50 space-y-3">
-              <p className="font-bold text-[#11223E] dark:text-amber-200">
-                {t('سجّل دخولك لاستخدام هذه الميزة', 'Sign in to use this feature')}
+            <div className="p-4 rounded-xl bg-amber-50 dark:bg-amber-950/25 border border-amber-200 dark:border-amber-900/50">
+              <p className="font-bold text-[#11223E] dark:text-amber-200 leading-relaxed">
+                {t('حفظ وصفات النظر متاح للحسابات المسجلة.', 'Saved prescriptions are available for registered accounts.')}
               </p>
-              <button
-                type="button"
-                onClick={() => openAuthModal('login', false)}
-                style={{ backgroundColor: appearance.primaryColor }}
-                className="min-h-[44px] px-4 rounded-xl text-white font-bold inline-flex items-center gap-1.5"
-              >
-                <LogIn className="w-4 h-4" />
-                {t('تسجيل الدخول', 'Sign In')}
-              </button>
             </div>
           ) : (
             <>

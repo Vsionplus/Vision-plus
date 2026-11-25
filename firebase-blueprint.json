@@ -228,11 +228,10 @@
       "description": "Server-side rate limiting and 15-minute lockout counter keyed by SHA-256 email hash.",
       "type": "object",
       "properties": {
-        "id": { "type": "string", "maxLength": 64, "pattern": "^[a-f0-9]{64}$" },
-        "failedCount": { "type": "integer", "minimum": 1, "maximum": 5 },
-        "lastAttemptAt": { "type": "string", "format": "date-time" }
+        "count": { "type": "integer", "minimum": 0, "maximum": 5 },
+        "lockedUntil": { "type": "string", "format": "date-time" }
       },
-      "required": ["id", "failedCount", "lastAttemptAt"]
+      "required": ["count", "lockedUntil"]
     }
   },
   "firestore": {

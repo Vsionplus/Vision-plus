@@ -1,10 +1,12 @@
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import {
   Check,
   X,
   Printer,
   Trash2,
   Plus,
+  Minus,
+  Edit3,
   Send,
   Shield,
   Ban,
@@ -23,9 +25,15 @@ import {
   RotateCcw,
 } from 'lucide-react';
 import { useStore } from '../../store/StoreContext';
-import { Order, OrderStatus } from '../../types';
+import { Order, OrderItem, OrderStatus, PaymentMethod } from '../../types';
 import { useAdminSecurity } from './AdminGuard';
-import { formatSdg, formatShortDate, getOrderStatusLabel } from '../../utils/format';
+import {
+  formatSdg,
+  formatShortDate,
+  getOrderStatusLabel,
+  isValidSudanPhone,
+  normalizeSudanPhone,
+} from '../../utils/format';
 import {
   calculateLensPricingBreakdown,
   getExtraOptionLabel,
@@ -51,9 +59,11 @@ export const AdminOrdersModule: React.FC<{
     locale,
     t,
     orders,
+    products,
     settings,
     lensOptions,
     updateOrderStatus,
+    updateOrderByAdmin,
     approveBankTransfer,
     rejectBankTransfer,
     approveOrderCancellation,
@@ -76,6 +86,28 @@ export const AdminOrdersModule: React.FC<{
   const [cancelAdminNote, setCancelAdminNote] = useState('');
   const [cancelReviewError, setCancelReviewError] = useState<string | null>(null);
   const [submittingCancelReview, setSubmittingCancelReview] = useState(false);
+
+  // Admin Edit Order Modal state
+  const [editOrder, setEditOrder] = useState<Order | null>(null);
+  const [adminEditName, setAdminEditName] = useState('');
+  const [adminEditPhone, setAdminEditPhone] = useState('');
+  const [adminEditStateId, setAdminEditStateId] = useState('');
+  const [adminEditCity, setAdminEditCity] = useState('');
+  const [adminEditArea, setAdminEditArea] = useState('');
+  const [adminEditDetails, setAdminEditDetails] = useState('');
+  const [adminEditItems, setAdminEditItems] = useState<OrderItem[]>([]);
+  const [adminEditDiscount, setAdminEditDiscount] = useState(0);
+  const [adminEditDelivery, setAdminEditDelivery] = useState(0);
+  const [adminEditPayment, setAdminEditPayment] = useState<PaymentMethod>('cod');
+  const [adminEditBankRef, setAdminEditBankRef] = useState('');
+  const [adminEditNote, setAdminEditNote] = useState('');
+  const [addProductId, setAddProductId] = useState('');
+  const [adminEditError, setAdminEditError] = useState<string | null>(null);
+  const [savingAdminEdit, setSavingAdminEdit] = useState(false);
+
+  useEffect(() => {
+    setStatusFilter(initialStatusFilter);
+  }, [initialStatusFilter]);
 
   const pendingCancelRequests = useMemo(
     () => orders.filter((o) => o.cancelRequest?.status === 'pending'),
@@ -103,6 +135,120 @@ export const AdminOrdersModule: React.FC<{
     setCancelReviewModal({ order, action });
     setCancelAdminNote('');
     setCancelReviewError(null);
+  };
+
+  const openAdminEditModal = (order: Order) => {
+    setEditOrder(order);
+    setAdminEditName(order.address?.recipientName || order.customerName);
+    setAdminEditPhone(order.address?.phone || order.customerPhone);
+    setAdminEditStateId(order.stateId);
+    setAdminEditCity(order.address?.city || order.city);
+    setAdminEditArea(order.address?.area || order.area);
+    setAdminEditDetails(order.address?.details || order.addressDetails);
+    setAdminEditItems(order.items.map((it) => ({ ...it })));
+    setAdminEditDiscount(order.discountSdg);
+    setAdminEditDelivery(order.deliveryFeeSdg);
+    setAdminEditPayment(order.paymentMethod);
+    setAdminEditBankRef(order.bankTransferReference || '');
+    setAdminEditNote(order.adminNote || '');
+    setAddProductId('');
+    setAdminEditError(null);
+  };
+
+  const adminEditPricing = useMemo(() => {
+    const itemsSubtotal = adminEditItems.reduce((s, it) => s + it.unitPriceSdg * it.quantity, 0);
+    const lensTotal = adminEditItems.reduce(
+      (s, it) => s + (it.lensExtraPriceSdg ?? it.prescription?.lensExtraPriceSdg ?? 0) * it.quantity,
+      0
+    );
+    const subtotal = itemsSubtotal + lensTotal;
+    const total = Math.max(0, subtotal - Math.max(0, adminEditDiscount) + Math.max(0, adminEditDelivery));
+    return { itemsSubtotal, lensTotal, subtotal, total };
+  }, [adminEditItems, adminEditDiscount, adminEditDelivery]);
+
+  const handleAdminAddItem = () => {
+    if (!addProductId) return;
+    const p = products.find((prod) => prod.id === addProductId && !prod.isDeleted);
+    if (!p) return;
+    setAdminEditItems((prev) => {
+      const existingIdx = prev.findIndex((it) => it.productId === p.id && !it.prescription);
+      if (existingIdx >= 0) {
+        return prev.map((it, i) =>
+          i === existingIdx ? { ...it, quantity: Math.min(99, it.quantity + 1) } : it
+        );
+      }
+      return [
+        ...prev,
+        {
+          productId: p.id,
+          titleAr: p.titleAr,
+          titleEn: p.titleEn,
+          image: p.images[0] || '',
+          unitPriceSdg: p.priceSdg,
+          quantity: 1,
+        },
+      ];
+    });
+    setAddProductId('');
+  };
+
+  const handleConfirmAdminEdit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!editOrder || savingAdminEdit) return;
+    if (!adminEditName.trim()) {
+      setAdminEditError(t('يرجى إدخال اسم المستلم.', 'Recipient name is required.'));
+      return;
+    }
+    if (!isValidSudanPhone(adminEditPhone)) {
+      setAdminEditError(t('رقم الهاتف غير صالح.', 'Valid Sudan phone number required.'));
+      return;
+    }
+    if (!adminEditCity.trim() || !adminEditArea.trim() || !adminEditDetails.trim()) {
+      setAdminEditError(t('يرجى إكمال بيانات العنوان.', 'City, area, and street details are required.'));
+      return;
+    }
+    if (adminEditItems.length === 0) {
+      setAdminEditError(t('يجب وجود منتج واحد على الأقل في الطلب.', 'Order must contain at least one item.'));
+      return;
+    }
+    const normalizedPhone = normalizeSudanPhone(adminEditPhone);
+    const stateObj = settings.deliveryFees.find((st) => st.id === adminEditStateId);
+    setAdminEditError(null);
+    setSavingAdminEdit(true);
+    try {
+      await updateOrderByAdmin(editOrder.id, {
+        customerName: adminEditName.trim(),
+        customerPhone: normalizedPhone,
+        stateId: adminEditStateId,
+        city: adminEditCity.trim(),
+        area: adminEditArea.trim(),
+        addressDetails: adminEditDetails.trim(),
+        address: {
+          recipientName: adminEditName.trim(),
+          phone: normalizedPhone,
+          stateId: adminEditStateId,
+          stateNameAr: stateObj?.nameAr || editOrder.address?.stateNameAr || adminEditStateId,
+          stateNameEn: stateObj?.nameEn || editOrder.address?.stateNameEn || adminEditStateId,
+          city: adminEditCity.trim(),
+          area: adminEditArea.trim(),
+          details: adminEditDetails.trim(),
+          label: editOrder.address?.label,
+          mapUrl: editOrder.address?.mapUrl,
+        },
+        items: adminEditItems,
+        discountSdg: Math.max(0, Math.round(adminEditDiscount || 0)),
+        deliveryFeeSdg: Math.max(0, Math.round(adminEditDelivery || 0)),
+        paymentMethod: adminEditPayment,
+        bankTransferReference:
+          adminEditPayment === 'bankak' ? adminEditBankRef.trim() || undefined : undefined,
+        adminNote: adminEditNote.trim() || undefined,
+      });
+      setEditOrder(null);
+    } catch {
+      setAdminEditError(t('تعذر حفظ تعديلات الطلب.', 'Failed to save order updates.'));
+    } finally {
+      setSavingAdminEdit(false);
+    }
   };
 
   const handleConfirmCancelReview = async (e: React.FormEvent) => {
@@ -295,6 +441,11 @@ export const AdminOrdersModule: React.FC<{
                         {t('تم رفض الإلغاء', 'Cancel Rejected')}
                       </span>
                     )}
+                    {order.lastEditedAt && (
+                      <span className="px-2 py-0.5 rounded-md bg-sky-100 dark:bg-sky-950/40 border border-sky-200 dark:border-sky-800 text-sky-800 dark:text-sky-300 text-[11px] font-bold">
+                        {t('مُعدّل', 'Edited')} · {formatShortDate(order.lastEditedAt, locale)}
+                      </span>
+                    )}
                   </div>
                   <div className="text-stone-500 dark:text-zinc-400">
                     {recipient} · <span className="font-mono-num" dir="ltr">{phone}</span> ·{' '}
@@ -361,6 +512,17 @@ export const AdminOrdersModule: React.FC<{
                       </option>
                     ))}
                   </select>
+
+                  {order.status !== 'cancelled' && (
+                    <button
+                      type="button"
+                      onClick={() => openAdminEditModal(order)}
+                      className="min-h-[36px] px-3 py-1.5 rounded-lg border border-[#11223E]/30 dark:border-[#E2BD5B]/40 bg-[#11223E]/5 dark:bg-[#E2BD5B]/10 text-[#11223E] dark:text-[#E2BD5B] font-bold inline-flex items-center gap-1"
+                    >
+                      <Edit3 className="w-3.5 h-3.5" />
+                      {t('تعديل الطلب', 'Edit Order')}
+                    </button>
+                  )}
 
                   <button
                     type="button"
@@ -551,6 +713,27 @@ export const AdminOrdersModule: React.FC<{
 
               {isDetailsOpen && (
                 <div className="space-y-3 pt-2 border-t border-stone-100 dark:border-zinc-800">
+                  {(order.customerNote || order.adminNote) && (
+                    <div className="grid sm:grid-cols-2 gap-2.5 text-[11px]">
+                      {order.customerNote && (
+                        <div className="p-2.5 rounded-lg bg-amber-50/70 dark:bg-amber-950/20 border border-amber-200 dark:border-amber-900/50 space-y-0.5">
+                          <div className="font-extrabold text-amber-800 dark:text-amber-300">
+                            {t('ملاحظة العميل:', 'Customer Note:')}
+                          </div>
+                          <div>{order.customerNote}</div>
+                        </div>
+                      )}
+                      {order.adminNote && (
+                        <div className="p-2.5 rounded-lg bg-sky-50/70 dark:bg-sky-950/20 border border-sky-200 dark:border-sky-900/50 space-y-0.5">
+                          <div className="font-extrabold text-sky-800 dark:text-sky-300">
+                            {t('ملاحظة الإدارة:', 'Admin Note:')}
+                          </div>
+                          <div>{order.adminNote}</div>
+                        </div>
+                      )}
+                    </div>
+                  )}
+
                   {/* Full Delivery Address Snapshot */}
                   <div className="p-3 rounded-lg bg-stone-50 dark:bg-zinc-900 border border-stone-200 dark:border-zinc-800 flex flex-wrap items-start justify-between gap-2">
                     <div className="space-y-0.5">
@@ -984,30 +1167,332 @@ export const AdminOrdersModule: React.FC<{
               </div>
             )}
 
-            <div className="flex justify-end gap-2">
+              <div className="flex justify-end gap-2">
+                <button
+                  type="button"
+                  disabled={submittingCancelReview}
+                  onClick={() => setCancelReviewModal(null)}
+                  className="min-h-[40px] px-4 py-1.5 rounded-lg border font-bold disabled:opacity-50"
+                >
+                  {t('تراجع', 'Cancel')}
+                </button>
+                <button
+                  type="submit"
+                  disabled={
+                    submittingCancelReview ||
+                    (cancelReviewModal.action === 'reject' && !cancelAdminNote.trim())
+                  }
+                  className={`min-h-[40px] px-4 py-1.5 rounded-lg text-white font-extrabold disabled:opacity-50 ${
+                    cancelReviewModal.action === 'approve' ? 'bg-emerald-700' : 'bg-rose-600'
+                  }`}
+                >
+                  {submittingCancelReview
+                    ? t('جارٍ التنفيذ...', 'Processing...')
+                    : cancelReviewModal.action === 'approve'
+                    ? t('الموافقة على الإلغاء', 'Approve Cancellation')
+                    : t('رفض الطلب', 'Reject Request')}
+                </button>
+              </div>
+          </form>
+        </div>
+      )}
+
+      {/* Admin Edit Order Modal */}
+      {editOrder && (
+        <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-xs flex items-center justify-center p-3 sm:p-4 overflow-y-auto">
+          <form
+            onSubmit={handleConfirmAdminEdit}
+            className="bg-white dark:bg-[#181B1E] rounded-2xl max-w-2xl w-full max-h-[92vh] overflow-y-auto p-5 sm:p-6 space-y-4 border border-stone-200 dark:border-zinc-800 shadow-2xl"
+          >
+            <div className="flex items-center justify-between border-b border-stone-100 dark:border-zinc-800 pb-3">
+              <div>
+                <h3 className="text-base font-extrabold text-[#11223E] dark:text-white">
+                  {t('تعديل الطلب إدارياً', 'Admin Edit Order')}
+                </h3>
+                <p className="text-[11px] text-slate-500 font-mono-num">
+                  #{editOrder.id} · {getOrderStatusLabel(editOrder.status, locale)}
+                </p>
+              </div>
               <button
                 type="button"
-                disabled={submittingCancelReview}
-                onClick={() => setCancelReviewModal(null)}
+                onClick={() => !savingAdminEdit && setEditOrder(null)}
+                aria-label={t('إغلاق', 'Close')}
+                className="min-h-[44px] min-w-[44px] flex items-center justify-center rounded-xl hover:bg-stone-100 dark:hover:bg-zinc-800"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <div className="grid sm:grid-cols-2 gap-3">
+              <div className="space-y-1">
+                <label className="block font-bold">{t('اسم العميل / المستلم *', 'Customer Name *')}</label>
+                <input
+                  required
+                  maxLength={120}
+                  value={adminEditName}
+                  onChange={(e) => setAdminEditName(e.target.value)}
+                  className="w-full min-h-[40px] px-3 py-1.5 rounded-lg border border-stone-200 dark:border-zinc-700 bg-stone-50 dark:bg-zinc-900"
+                />
+              </div>
+              <div className="space-y-1">
+                <label className="block font-bold">{t('رقم الهاتف *', 'Phone *')}</label>
+                <input
+                  required
+                  dir="ltr"
+                  maxLength={32}
+                  value={adminEditPhone}
+                  onChange={(e) => setAdminEditPhone(e.target.value)}
+                  className="w-full min-h-[40px] px-3 py-1.5 rounded-lg border border-stone-200 dark:border-zinc-700 bg-stone-50 dark:bg-zinc-900 font-mono-num"
+                />
+              </div>
+              <div className="space-y-1">
+                <label className="block font-bold">{t('الولاية', 'State')}</label>
+                <select
+                  value={adminEditStateId}
+                  onChange={(e) => {
+                    const nextId = e.target.value;
+                    setAdminEditStateId(nextId);
+                    const found = settings.deliveryFees.find((st) => st.id === nextId);
+                    if (found) setAdminEditDelivery(found.feeSdg);
+                  }}
+                  className="w-full min-h-[40px] px-3 py-1.5 rounded-lg border border-stone-200 dark:border-zinc-700 bg-stone-50 dark:bg-zinc-900"
+                >
+                  {settings.deliveryFees.map((st) => (
+                    <option key={st.id} value={st.id}>
+                      {locale === 'ar' ? st.nameAr : st.nameEn}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <div className="space-y-1">
+                <label className="block font-bold">{t('المدينة *', 'City *')}</label>
+                <input
+                  required
+                  maxLength={80}
+                  value={adminEditCity}
+                  onChange={(e) => setAdminEditCity(e.target.value)}
+                  className="w-full min-h-[40px] px-3 py-1.5 rounded-lg border border-stone-200 dark:border-zinc-700 bg-stone-50 dark:bg-zinc-900"
+                />
+              </div>
+              <div className="space-y-1">
+                <label className="block font-bold">{t('المنطقة *', 'Area *')}</label>
+                <input
+                  required
+                  maxLength={120}
+                  value={adminEditArea}
+                  onChange={(e) => setAdminEditArea(e.target.value)}
+                  className="w-full min-h-[40px] px-3 py-1.5 rounded-lg border border-stone-200 dark:border-zinc-700 bg-stone-50 dark:bg-zinc-900"
+                />
+              </div>
+              <div className="space-y-1">
+                <label className="block font-bold">{t('طريقة الدفع', 'Payment Method')}</label>
+                <select
+                  value={adminEditPayment}
+                  onChange={(e) => setAdminEditPayment(e.target.value as PaymentMethod)}
+                  className="w-full min-h-[40px] px-3 py-1.5 rounded-lg border border-stone-200 dark:border-zinc-700 bg-stone-50 dark:bg-zinc-900"
+                >
+                  <option value="cod">{t('الدفع عند الاستلام', 'Cash on Delivery')}</option>
+                  <option value="bankak">{t('تحويل بنكك', 'Bankak Transfer')}</option>
+                </select>
+              </div>
+              <div className="space-y-1 sm:col-span-2">
+                <label className="block font-bold">{t('العنوان التفصيلي *', 'Street Details *')}</label>
+                <input
+                  required
+                  maxLength={400}
+                  value={adminEditDetails}
+                  onChange={(e) => setAdminEditDetails(e.target.value)}
+                  className="w-full min-h-[40px] px-3 py-1.5 rounded-lg border border-stone-200 dark:border-zinc-700 bg-stone-50 dark:bg-zinc-900"
+                />
+              </div>
+            </div>
+
+            {adminEditPayment === 'bankak' && (
+              <div className="space-y-1">
+                <label className="block font-bold">{t('رقم مرجع بنكك', 'Bankak Reference')}</label>
+                <input
+                  dir="ltr"
+                  maxLength={120}
+                  value={adminEditBankRef}
+                  onChange={(e) => setAdminEditBankRef(e.target.value)}
+                  className="w-full min-h-[40px] px-3 py-1.5 rounded-lg border border-stone-200 dark:border-zinc-700 bg-stone-50 dark:bg-zinc-900 font-mono-num"
+                />
+              </div>
+            )}
+
+            {/* Order Items Management */}
+            <div className="space-y-2.5 pt-2 border-t border-stone-100 dark:border-zinc-800">
+              <div className="font-extrabold text-sm">{t('منتجات الطلب', 'Order Items')}</div>
+              <div className="space-y-2">
+                {adminEditItems.map((it, idx) => (
+                  <div
+                    key={`${it.productId}_${idx}`}
+                    className="p-2.5 rounded-lg bg-stone-50 dark:bg-zinc-900 border border-stone-200 dark:border-zinc-800 flex flex-wrap items-center justify-between gap-2"
+                  >
+                    <div className="min-w-0 flex-1">
+                      <div className="font-bold truncate">{locale === 'ar' ? it.titleAr : it.titleEn}</div>
+                      <div className="text-[11px] text-slate-500">
+                        {t('العدسات:', 'Lens:')} {formatSdg(it.lensExtraPriceSdg ?? it.prescription?.lensExtraPriceSdg ?? 0)}
+                      </div>
+                    </div>
+
+                    <div className="flex flex-wrap items-center gap-2">
+                      <input
+                        type="number"
+                        min={0}
+                        value={it.unitPriceSdg}
+                        onChange={(e) => {
+                          const val = Math.max(0, Number(e.target.value) || 0);
+                          setAdminEditItems((prev) =>
+                            prev.map((row, rIdx) => (rIdx === idx ? { ...row, unitPriceSdg: val } : row))
+                          );
+                        }}
+                        aria-label={t('سعر الوحدة', 'Unit Price')}
+                        className="w-24 min-h-[36px] px-2 py-1 rounded border border-stone-200 dark:border-zinc-700 bg-white dark:bg-[#181B1E] font-mono-num"
+                      />
+
+                      <div className="inline-flex items-center border border-stone-200 dark:border-zinc-700 rounded bg-white dark:bg-[#181B1E]">
+                        <button
+                          type="button"
+                          disabled={it.quantity <= 1}
+                          onClick={() =>
+                            setAdminEditItems((prev) =>
+                              prev.map((row, rIdx) =>
+                                rIdx === idx ? { ...row, quantity: Math.max(1, row.quantity - 1) } : row
+                              )
+                            )
+                          }
+                          className="min-h-[36px] min-w-[32px] flex items-center justify-center disabled:opacity-40"
+                        >
+                          <Minus className="w-3 h-3" />
+                        </button>
+                        <span className="px-2 font-mono-num font-bold">{it.quantity}</span>
+                        <button
+                          type="button"
+                          onClick={() =>
+                            setAdminEditItems((prev) =>
+                              prev.map((row, rIdx) =>
+                                rIdx === idx ? { ...row, quantity: Math.min(99, row.quantity + 1) } : row
+                              )
+                            )
+                          }
+                          className="min-h-[36px] min-w-[32px] flex items-center justify-center"
+                        >
+                          <Plus className="w-3 h-3" />
+                        </button>
+                      </div>
+
+                      {adminEditItems.length > 1 && (
+                        <button
+                          type="button"
+                          onClick={() =>
+                            setAdminEditItems((prev) => prev.filter((_, rIdx) => rIdx !== idx))
+                          }
+                          aria-label={t('حذف', 'Remove')}
+                          className="min-h-[36px] min-w-[36px] flex items-center justify-center text-rose-600 hover:bg-rose-50 dark:hover:bg-rose-950/30 rounded"
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                ))}
+              </div>
+
+              {/* Add Product from Catalog */}
+              <div className="flex flex-wrap gap-2">
+                <select
+                  value={addProductId}
+                  onChange={(e) => setAddProductId(e.target.value)}
+                  className="flex-1 min-w-[180px] min-h-[40px] px-3 py-1.5 rounded-lg border border-stone-200 dark:border-zinc-700 bg-stone-50 dark:bg-zinc-900"
+                >
+                  <option value="">{t('— إضافة منتج للطلب —', '— Add product to order —')}</option>
+                  {products
+                    .filter((p) => !p.isDeleted)
+                    .map((p) => (
+                      <option key={p.id} value={p.id}>
+                        {locale === 'ar' ? p.titleAr : p.titleEn} ({formatSdg(p.priceSdg)})
+                      </option>
+                    ))}
+                </select>
+                <button
+                  type="button"
+                  disabled={!addProductId}
+                  onClick={handleAdminAddItem}
+                  className="min-h-[40px] px-3.5 py-1.5 rounded-lg bg-[#11223E] text-white font-bold disabled:opacity-40 inline-flex items-center gap-1"
+                >
+                  <Plus className="w-3.5 h-3.5" />
+                  {t('إضافة', 'Add')}
+                </button>
+              </div>
+            </div>
+
+            {/* Pricing Overrides & Admin Note */}
+            <div className="grid sm:grid-cols-2 gap-3 pt-2 border-t border-stone-100 dark:border-zinc-800">
+              <div className="space-y-1">
+                <label className="block font-bold">{t('الخصم (ج.س)', 'Discount (SDG)')}</label>
+                <input
+                  type="number"
+                  min={0}
+                  value={adminEditDiscount}
+                  onChange={(e) => setAdminEditDiscount(Math.max(0, Number(e.target.value) || 0))}
+                  className="w-full min-h-[40px] px-3 py-1.5 rounded-lg border border-stone-200 dark:border-zinc-700 bg-stone-50 dark:bg-zinc-900 font-mono-num"
+                />
+              </div>
+              <div className="space-y-1">
+                <label className="block font-bold">{t('رسوم التوصيل (ج.س)', 'Delivery Fee (SDG)')}</label>
+                <input
+                  type="number"
+                  min={0}
+                  value={adminEditDelivery}
+                  onChange={(e) => setAdminEditDelivery(Math.max(0, Number(e.target.value) || 0))}
+                  className="w-full min-h-[40px] px-3 py-1.5 rounded-lg border border-stone-200 dark:border-zinc-700 bg-stone-50 dark:bg-zinc-900 font-mono-num"
+                />
+              </div>
+            </div>
+
+            <div className="p-3 rounded-xl bg-stone-50 dark:bg-zinc-900 border border-stone-200 dark:border-zinc-800 flex flex-wrap items-center justify-between gap-2 text-xs">
+              <span>{t('الإجمالي الجديد بعد التعديل:', 'Updated Order Total:')}</span>
+              <span className="font-mono-num text-base font-extrabold text-[#11223E] dark:text-[#E2BD5B]">
+                {formatSdg(adminEditPricing.total)}
+              </span>
+            </div>
+
+            <div className="space-y-1">
+              <label className="block font-bold">
+                {t('ملاحظة الإدارة للعميل (ستظهر في الطلب والإشعارات)', 'Admin Note (visible to customer)')}
+              </label>
+              <textarea
+                rows={2}
+                maxLength={600}
+                value={adminEditNote}
+                onChange={(e) => setAdminEditNote(e.target.value)}
+                placeholder={t('اكتب توضيحاً للتعديل ليظهر للعميل...', 'Explain edit for customer...')}
+                className="w-full px-3 py-2 rounded-lg border border-stone-200 dark:border-zinc-700 bg-stone-50 dark:bg-zinc-900"
+              />
+            </div>
+
+            {adminEditError && (
+              <div className="p-2.5 rounded-lg bg-rose-50 dark:bg-rose-950/30 border border-rose-200 dark:border-rose-800 text-rose-700 dark:text-rose-300 font-bold">
+                {adminEditError}
+              </div>
+            )}
+
+            <div className="flex justify-end gap-2 pt-2 border-t border-stone-100 dark:border-zinc-800">
+              <button
+                type="button"
+                disabled={savingAdminEdit}
+                onClick={() => setEditOrder(null)}
                 className="min-h-[40px] px-4 py-1.5 rounded-lg border font-bold disabled:opacity-50"
               >
-                {t('تراجع', 'Cancel')}
+                {t('إلغاء', 'Cancel')}
               </button>
               <button
                 type="submit"
-                disabled={
-                  submittingCancelReview ||
-                  (cancelReviewModal.action === 'reject' && !cancelAdminNote.trim())
-                }
-                className={`min-h-[40px] px-4 py-1.5 rounded-lg text-white font-extrabold disabled:opacity-50 ${
-                  cancelReviewModal.action === 'approve' ? 'bg-emerald-700' : 'bg-rose-600'
-                }`}
+                disabled={savingAdminEdit}
+                className="min-h-[40px] px-5 py-1.5 rounded-lg bg-[#11223E] text-white font-extrabold disabled:opacity-50"
               >
-                {submittingCancelReview
-                  ? t('جارٍ التنفيذ...', 'Processing...')
-                  : cancelReviewModal.action === 'approve'
-                  ? t('الموافقة على الإلغاء', 'Approve Cancellation')
-                  : t('رفض الطلب', 'Reject Request')}
+                {savingAdminEdit ? t('جارٍ الحفظ...', 'Saving...') : t('حفظ وإشعار العميل', 'Save & Notify Customer')}
               </button>
             </div>
           </form>

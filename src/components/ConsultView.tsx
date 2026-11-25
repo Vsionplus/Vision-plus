@@ -1,5 +1,6 @@
 import React, { useMemo, useState } from 'react';
 import { MessageCircle, Phone, Send, Upload, Stethoscope } from 'lucide-react';
+import { compressImageFileToBlob } from '../lib/firebase';
 import { useStore } from '../store/StoreContext';
 import { ConsultTopic } from '../types';
 import { formatShortDate, isValidSudanPhone, normalizeSudanPhone } from '../utils/format';
@@ -29,14 +30,19 @@ export const ConsultView: React.FC = () => {
   const [photoUrl, setPhotoUrl] = useState('');
   const [replyTexts, setReplyTexts] = useState<Record<string, string>>({});
 
-  const handlePhotoUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handlePhotoUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
-    const reader = new FileReader();
-    reader.onload = () => {
-      if (typeof reader.result === 'string') setPhotoUrl(reader.result);
-    };
-    reader.readAsDataURL(file);
+    try {
+      const { dataUrl } = await compressImageFileToBlob(file, 900, 0.78);
+      if (dataUrl) setPhotoUrl(dataUrl);
+    } catch {
+      const reader = new FileReader();
+      reader.onload = () => {
+        if (typeof reader.result === 'string') setPhotoUrl(reader.result);
+      };
+      reader.readAsDataURL(file);
+    }
   };
 
   const handleCreate = (e: React.FormEvent) => {
