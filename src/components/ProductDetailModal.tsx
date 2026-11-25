@@ -124,7 +124,7 @@ export const ProductDetailModal: React.FC = () => {
   const [qty, setQty] = useState(1);
 
   // Inline Lens & Prescription State ("أدخل مقاسك" card)
-  const [rxCardOpen, setRxCardOpen] = useState(true);
+  const [rxCardOpen, setRxCardOpen] = useState(false);
   const [visionType, setVisionType] = useState<VisionType>('none');
   const [extraOptions, setExtraOptions] = useState<ExtraLensOptionId[]>([]);
   const [mirrorColor, setMirrorColor] = useState<MirrorColorId>('silver');
@@ -160,7 +160,7 @@ export const ProductDetailModal: React.FC = () => {
     setZoomed(false);
     setVariantId('');
     setQty(1);
-    setRxCardOpen(true);
+    setRxCardOpen(false);
     setVisionType('none');
     setExtraOptions([]);
     setMirrorColor('silver');
@@ -653,8 +653,8 @@ export const ProductDetailModal: React.FC = () => {
     extraOptions.length > 0;
 
   return (
-    <div className="fixed inset-0 z-[60] bg-black/60 backdrop-blur-xs flex items-end sm:items-center justify-center sm:p-4">
-      <div className="w-full h-full sm:h-auto sm:max-h-[92vh] sm:max-w-5xl bg-white dark:bg-[#131C2E] sm:rounded-3xl border-t sm:border border-slate-200 dark:border-slate-800 flex flex-col overflow-hidden shadow-2xl">
+    <div className="fixed inset-0 z-[60] bg-black/55 backdrop-blur-xs flex items-end sm:items-center justify-center sm:p-4">
+      <div className="w-full h-full sm:h-auto sm:max-h-[92vh] sm:max-w-5xl bg-white dark:bg-[#111927] sm:rounded-2xl border-t sm:border border-slate-200 dark:border-slate-800 flex flex-col overflow-hidden shadow-xl">
         {/* Top Navigation Bar matching screenshot */}
         <header className="px-4 sm:px-6 py-3 border-b border-slate-100 dark:border-slate-800 bg-white dark:bg-[#131C2E] flex items-center justify-between gap-3 shrink-0">
           <div className="flex items-center gap-2">
@@ -945,19 +945,17 @@ export const ProductDetailModal: React.FC = () => {
                 <span>{deliveryFeeSummary}</span>
               </div>
 
-              {/* Optician Consult Green CTA Card (matching screenshot 2) */}
+              {/* Optician Consult Link Row */}
               <button
                 type="button"
                 onClick={() => {
                   openProduct(null);
                   setActiveTab('consult');
                 }}
-                className="w-full min-h-[52px] rounded-2xl border-2 border-emerald-400/70 dark:border-emerald-700/80 bg-emerald-50/75 hover:bg-emerald-50 dark:bg-emerald-950/25 dark:hover:bg-emerald-950/40 px-4 py-3 flex items-center justify-center gap-2.5 text-sm font-extrabold text-[#11223E] dark:text-emerald-200 transition-colors"
+                className="w-full min-h-[46px] rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50/70 hover:bg-slate-100 dark:bg-slate-900/60 dark:hover:bg-slate-900 px-4 py-2.5 flex items-center justify-center gap-2 text-xs sm:text-sm font-bold text-[#11223E] dark:text-slate-200 transition-colors"
               >
-                <span className="w-7 h-7 rounded-full bg-emerald-500 text-white flex items-center justify-center shrink-0">
-                  <MessageCircle className="w-4 h-4" />
-                </span>
-                <span>{t('استشر أخصائي البصريات', 'Consult an Optician')}</span>
+                <MessageCircle className="w-4 h-4 text-emerald-600 shrink-0" />
+                <span>{t('استشر أخصائي البصريات قبل الطلب', 'Consult an Optician')}</span>
               </button>
 
               {/* Inline Collapsible "أدخل مقاسك" Card (Screenshots 2 & 3) */}

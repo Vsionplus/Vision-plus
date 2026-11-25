@@ -11,6 +11,8 @@ import {
   FileText,
   MailCheck,
   MailWarning,
+  User,
+  Eye,
 } from 'lucide-react';
 import { useStore } from '../store/StoreContext';
 import { formatSdg, isValidSudanPhone, normalizeSudanPhone } from '../utils/format';
@@ -43,6 +45,7 @@ export const ProfileView: React.FC = () => {
     showToast,
   } = useStore();
 
+  const [sectionTab, setSectionTab] = useState<'account' | 'addresses' | 'rx'>('account');
   const [name, setName] = useState(user.name);
   const [phone, setPhone] = useState(user.phone);
   const [email, setEmail] = useState(user.email);
@@ -129,12 +132,12 @@ export const ProfileView: React.FC = () => {
   };
 
   return (
-    <div className="max-w-6xl mx-auto px-4 sm:px-6 pt-6 space-y-8">
+    <div className="max-w-3xl mx-auto px-4 sm:px-6 pt-6 space-y-6">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
-          <h1 className="text-2xl font-extrabold">{t('حسابي والوصفات المحفوظة', 'Profile & Saved Prescriptions')}</h1>
-          <p className="text-xs text-stone-500 dark:text-zinc-400 mt-1">
-            {t('إدارة بياناتك وعناوينك في السودان وقياسات النظر لإعادة الطلب بسهولة', 'Manage Sudan delivery addresses and reusable optical prescriptions')}
+          <h1 className="text-2xl font-extrabold">{t('حسابي والوصفات', 'Profile & Prescriptions')}</h1>
+          <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">
+            {t('إدارة بياناتك وعناوينك وقياسات النظر المحفوظة', 'Manage your details, addresses, and saved prescriptions')}
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
@@ -142,30 +145,26 @@ export const ProfileView: React.FC = () => {
           <button
             type="button"
             onClick={() => setActiveTab('favorites')}
-            className="min-h-[44px] px-3.5 py-2 rounded-lg border border-stone-200 dark:border-zinc-700 bg-white dark:bg-[#181B1E] text-xs font-semibold"
+            className="min-h-[42px] px-3.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-[#111927] text-xs font-semibold"
           >
             {t('المفضلة', 'Favorites')} ({user.favoriteProductIds.length})
           </button>
         </div>
       </div>
 
-      {/* Auth / Verification Status Card */}
+      {/* Verification / Guest Notice */}
       {isGuest ? (
-        <div className="bg-amber-50 dark:bg-amber-950/25 border border-amber-200 dark:border-amber-900/50 rounded-2xl p-5">
-          <div className="space-y-1">
-            <h2 className="text-base font-extrabold">
-              {t('أنت تتصفح الآن كضيف', 'Browsing as Guest')}
-            </h2>
-            <p className="text-xs text-stone-600 dark:text-zinc-400 leading-relaxed">
-              {t(
-                'يمكنك متابعة التسوق وإضافة المنتجات إلى السلة والمفضلة. عند إتمام الطلب سيُطلب منك الدخول أو إنشاء حساب لحفظ عناوينك وقياساتك.',
-                'You can browse and add items to cart and favorites. Sign in or create an account during checkout to save addresses and prescriptions.'
-              )}
-            </p>
-          </div>
+        <div className="bg-amber-50/70 dark:bg-amber-950/20 border border-amber-200/80 dark:border-amber-900/50 rounded-2xl p-4 space-y-1">
+          <h2 className="text-sm font-extrabold">{t('أنت تتصفح الآن كضيف', 'Browsing as Guest')}</h2>
+          <p className="text-xs text-slate-600 dark:text-slate-300 leading-relaxed">
+            {t(
+              'يمكنك التصفح والإضافة للسلة والمفضلة. عند إتمام الطلب سيُطلب منك تسجيل الدخول لحفظ عناوينك وقياساتك.',
+              'Browse and add items freely. Sign in during checkout to save addresses and prescriptions.'
+            )}
+          </p>
         </div>
       ) : (
-        <div className="bg-white dark:bg-[#181B1E] border border-stone-200 dark:border-zinc-800 rounded-2xl p-4 flex flex-wrap items-center justify-between gap-3 text-xs">
+        <div className="bg-white dark:bg-[#111927] border border-slate-200/80 dark:border-slate-800 rounded-2xl p-4 flex flex-wrap items-center justify-between gap-3 text-xs">
           <div className="flex items-center gap-2.5">
             {isEmailVerified ? (
               <MailCheck className="w-5 h-5 text-emerald-600 shrink-0" />
@@ -175,10 +174,10 @@ export const ProfileView: React.FC = () => {
             <div>
               <div className="font-bold">
                 {isEmailVerified
-                  ? t('البريد الإلكتروني مؤكد ومفعل', 'Email Address Verified')
+                  ? t('البريد الإلكتروني مؤكد', 'Email Verified')
                   : t('البريد الإلكتروني بانتظار التأكيد', 'Email Verification Pending')}
               </div>
-              <div dir="ltr" className="text-stone-500 dark:text-zinc-400 font-mono-num">
+              <div dir="ltr" className="text-slate-500 dark:text-slate-400 font-mono-num">
                 {user.email}
               </div>
             </div>
@@ -188,115 +187,177 @@ export const ProfileView: React.FC = () => {
               type="button"
               onClick={openVerifyEmailScreen}
               style={{ backgroundColor: appearance.secondaryColor, color: appearance.primaryColor }}
-              className="min-h-[44px] px-4 rounded-xl text-xs font-extrabold"
+              className="min-h-[40px] px-4 rounded-xl text-xs font-extrabold"
             >
-              {t('تأكيد البريد الآن', 'Verify Email Now')}
+              {t('تأكيد البريد', 'Verify Email')}
             </button>
           )}
         </div>
       )}
 
-      <div className="grid lg:grid-cols-12 gap-6 items-start">
-        <div className="lg:col-span-4 bg-white dark:bg-[#181B1E] border border-stone-200 dark:border-zinc-800 rounded-xl p-5 space-y-4 text-xs">
+      {/* Clean 3-Tab Switcher instead of 3 squeezed columns */}
+      <div className="flex items-center gap-2 border-b border-slate-200 dark:border-slate-800 pb-2 overflow-x-auto">
+        {(
+          [
+            { id: 'account', icon: User, ar: 'بياناتي', en: 'My Info' },
+            { id: 'addresses', icon: MapPin, ar: `العناوين (${user.addresses.length})`, en: `Addresses (${user.addresses.length})` },
+            { id: 'rx', icon: Eye, ar: `وصفات النظر (${user.prescriptions.length})`, en: `Prescriptions (${user.prescriptions.length})` },
+          ] as const
+        ).map((tab) => {
+          const Icon = tab.icon;
+          const active = sectionTab === tab.id;
+          return (
+            <button
+              key={tab.id}
+              type="button"
+              onClick={() => setSectionTab(tab.id)}
+              style={active ? { backgroundColor: appearance.primaryColor } : undefined}
+              className={`min-h-[42px] px-4 rounded-xl text-xs font-bold inline-flex items-center gap-1.5 whitespace-nowrap transition-colors ${
+                active
+                  ? 'text-white'
+                  : 'bg-white dark:bg-[#111927] border border-slate-200 dark:border-slate-800 text-slate-600 dark:text-slate-300'
+              }`}
+            >
+              <Icon className="w-4 h-4" />
+              <span>{t(tab.ar, tab.en)}</span>
+            </button>
+          );
+        })}
+      </div>
+
+      {/* Tab 1: Personal Info */}
+      {sectionTab === 'account' && (
+        <div className="bg-white dark:bg-[#111927] border border-slate-200/80 dark:border-slate-800 rounded-2xl p-5 sm:p-6 space-y-4 text-xs">
           <h2 className="text-base font-bold">{t('البيانات الشخصية', 'Account Details')}</h2>
           {isGuest ? (
-            <div className="p-4 rounded-xl bg-amber-50 dark:bg-amber-950/25 border border-amber-200 dark:border-amber-900/50">
-              <p className="font-bold text-[#11223E] dark:text-amber-200 leading-relaxed">
-                {t('إدارة البيانات الشخصية متاحة للحسابات المسجلة.', 'Profile management is available for registered accounts.')}
-              </p>
-            </div>
+            <p className="text-slate-600 dark:text-slate-400">
+              {t('إدارة البيانات الشخصية متاحة للحسابات المسجلة.', 'Available for registered accounts.')}
+            </p>
           ) : (
             <form onSubmit={handleSaveProfile} className="space-y-4">
               <div>
-                <label className="block font-semibold mb-1">{t('الاسم', 'Name')}</label>
-                <input value={name} onChange={(e) => setName(e.target.value)} className="w-full min-h-[44px] px-3 py-2 rounded-lg border border-stone-200 dark:border-zinc-700 bg-stone-50 dark:bg-zinc-900 text-base" />
+                <label className="block font-semibold mb-1.5">{t('الاسم', 'Name')}</label>
+                <input
+                  value={name}
+                  onChange={(e) => setName(e.target.value)}
+                  className="w-full min-h-[44px] px-3 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-900 text-sm"
+                />
               </div>
               <div>
-                <label className="block font-semibold mb-1">{t('الهاتف (+249)', 'Phone (+249)')}</label>
-                <input dir="ltr" value={phone} onChange={(e) => setPhone(e.target.value)} className="w-full min-h-[44px] px-3 py-2 rounded-lg border border-stone-200 dark:border-zinc-700 bg-stone-50 dark:bg-zinc-900 font-mono-num text-base" />
+                <label className="block font-semibold mb-1.5">{t('الهاتف (+249)', 'Phone (+249)')}</label>
+                <input
+                  dir="ltr"
+                  value={phone}
+                  onChange={(e) => setPhone(e.target.value)}
+                  className="w-full min-h-[44px] px-3 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-900 font-mono-num text-sm"
+                />
               </div>
               <div>
-                <label className="block font-semibold mb-1">{t('البريد الإلكتروني', 'Email')}</label>
-                <input dir="ltr" type="email" value={email} onChange={(e) => setEmail(e.target.value)} className="w-full min-h-[44px] px-3 py-2 rounded-lg border border-stone-200 dark:border-zinc-700 bg-stone-50 dark:bg-zinc-900 text-base" />
+                <label className="block font-semibold mb-1.5">{t('البريد الإلكتروني', 'Email')}</label>
+                <input
+                  dir="ltr"
+                  type="email"
+                  value={email}
+                  onChange={(e) => setEmail(e.target.value)}
+                  className="w-full min-h-[44px] px-3 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-900 text-sm"
+                />
               </div>
-              <button type="submit" style={{ backgroundColor: appearance.primaryColor }} className="w-full min-h-[44px] py-2.5 rounded-lg text-white font-bold">
+              <button
+                type="submit"
+                style={{ backgroundColor: appearance.primaryColor }}
+                className="min-h-[44px] px-6 rounded-xl text-white font-bold"
+              >
                 {t('حفظ التعديلات', 'Save Changes')}
               </button>
             </form>
           )}
         </div>
+      )}
 
-        <div className="lg:col-span-4 bg-white dark:bg-[#181B1E] border border-stone-200 dark:border-zinc-800 rounded-xl p-5 space-y-4 text-xs">
+      {/* Tab 2: Saved Addresses */}
+      {sectionTab === 'addresses' && (
+        <div className="bg-white dark:bg-[#111927] border border-slate-200/80 dark:border-slate-800 rounded-2xl p-5 sm:p-6 space-y-5 text-xs">
           <h2 className="text-base font-bold">{t('العناوين المحفوظة', 'Saved Addresses')}</h2>
           {isGuest ? (
-            <div className="p-4 rounded-xl bg-amber-50 dark:bg-amber-950/25 border border-amber-200 dark:border-amber-900/50">
-              <p className="font-bold text-[#11223E] dark:text-amber-200 leading-relaxed">
-                {t('العناوين المحفوظة متاحة للحسابات المسجلة.', 'Saved addresses are available for registered accounts.')}
-              </p>
-            </div>
+            <p className="text-slate-600 dark:text-slate-400">
+              {t('العناوين المحفوظة متاحة للحسابات المسجلة.', 'Available for registered accounts.')}
+            </p>
           ) : (
             <>
-              <div className="space-y-2">
-                {user.addresses.map((a) => {
-                  const st = settings.deliveryFees.find((s) => s.id === a.stateId);
-                  return (
-                    <div key={a.id} className="p-3 rounded-lg bg-stone-50 dark:bg-zinc-900 border border-stone-200 dark:border-zinc-800 flex justify-between gap-2">
-                      <div className="space-y-0.5">
-                        <div className="font-bold flex items-center gap-1.5">
-                          <span>{a.recipientName || user.name} ({a.label})</span>
-                          {a.isDefault && (
-                            <span className="px-1.5 py-0.5 rounded bg-[#11223E] text-white text-[10px]">
-                              {t('افتراضي', 'Default')}
-                            </span>
+              {user.addresses.length > 0 && (
+                <div className="divide-y divide-slate-100 dark:divide-slate-800">
+                  {user.addresses.map((a) => {
+                    const st = settings.deliveryFees.find((s) => s.id === a.stateId);
+                    return (
+                      <div key={a.id} className="py-3 first:pt-0 flex justify-between gap-3">
+                        <div className="space-y-0.5">
+                          <div className="font-bold flex items-center gap-2">
+                            <span>{a.recipientName || user.name} ({a.label})</span>
+                            {a.isDefault && (
+                              <span className="px-1.5 py-0.5 rounded bg-[#11223E] text-white text-[10px]">
+                                {t('افتراضي', 'Default')}
+                              </span>
+                            )}
+                          </div>
+                          <div className="font-mono-num text-[11px] text-slate-500" dir="ltr">{a.phone}</div>
+                          <div className="text-slate-500 dark:text-slate-400">
+                            {locale === 'ar' ? st?.nameAr : st?.nameEn} — {a.city}, {a.area} — {a.details}
+                          </div>
+                          {!a.isDefault && (
+                            <button
+                              type="button"
+                              onClick={() => setDefaultAddress(a.id)}
+                              className="text-[11px] font-bold text-[#B38B2D] hover:underline pt-1"
+                            >
+                              {t('تعيين كافتراضي', 'Set Default')}
+                            </button>
                           )}
                         </div>
-                        <div className="font-mono-num text-[11px] text-stone-500" dir="ltr">{a.phone}</div>
-                        <div className="text-stone-500 dark:text-zinc-400">
-                          {locale === 'ar' ? st?.nameAr : st?.nameEn} — {a.city}, {a.area}
-                        </div>
-                        <div className="text-stone-500 dark:text-zinc-400">{a.details}</div>
-                        {!a.isDefault && (
-                          <button
-                            type="button"
-                            onClick={() => setDefaultAddress(a.id)}
-                            className="min-h-[36px] text-[11px] font-bold text-[#B38B2D] hover:underline pt-1"
-                          >
-                            {t('تعيين كافتراضي', 'Set Default')}
-                          </button>
-                        )}
+                        <button
+                          type="button"
+                          onClick={() => deleteAddress(a.id)}
+                          aria-label={t('حذف العنوان', 'Delete address')}
+                          className="min-w-[40px] min-h-[40px] flex items-center justify-center text-slate-400 hover:text-rose-600 self-start"
+                        >
+                          <Trash2 className="w-4 h-4" />
+                        </button>
                       </div>
-                      <button type="button" onClick={() => deleteAddress(a.id)} className="min-w-[44px] min-h-[44px] flex items-center justify-center text-stone-400 hover:text-rose-600 self-start">
-                        <Trash2 className="w-4 h-4" />
-                      </button>
-                    </div>
-                  );
-                })}
-              </div>
+                    );
+                  })}
+                </div>
+              )}
 
-              <form onSubmit={handleAddAddress} className="space-y-2 pt-3 border-t border-stone-100 dark:border-zinc-800">
-                <div className="grid grid-cols-2 gap-2">
-                  <input required value={addrRecipient} onChange={(e) => setAddrRecipient(e.target.value)} placeholder={t('اسم المستلم', 'Recipient')} className="min-h-[44px] px-3 py-2 rounded-lg border border-stone-200 dark:border-zinc-700 bg-stone-50 dark:bg-zinc-900 text-base" />
-                  <input required value={addrLabel} onChange={(e) => setAddrLabel(e.target.value)} placeholder={t('التسمية (المنزل)', 'Label')} className="min-h-[44px] px-3 py-2 rounded-lg border border-stone-200 dark:border-zinc-700 bg-stone-50 dark:bg-zinc-900 text-base" />
+              <form onSubmit={handleAddAddress} className="space-y-3 pt-4 border-t border-slate-100 dark:border-slate-800">
+                <div className="font-bold text-sm">{t('إضافة عنوان جديد', 'Add New Address')}</div>
+                <div className="grid sm:grid-cols-2 gap-2.5">
+                  <input required value={addrRecipient} onChange={(e) => setAddrRecipient(e.target.value)} placeholder={t('اسم المستلم', 'Recipient')} className="min-h-[44px] px-3 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-900 text-sm" />
+                  <input required value={addrLabel} onChange={(e) => setAddrLabel(e.target.value)} placeholder={t('التسمية (المنزل / العمل)', 'Label')} className="min-h-[44px] px-3 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-900 text-sm" />
                 </div>
-                <input required dir="ltr" value={addrPhone} onChange={(e) => setAddrPhone(e.target.value)} placeholder="0912345678 / +249..." className="w-full min-h-[44px] px-3 py-2 rounded-lg border border-stone-200 dark:border-zinc-700 bg-stone-50 dark:bg-zinc-900 font-mono-num text-base" />
-                <select value={addrState} onChange={(e) => setAddrState(e.target.value)} className="w-full min-h-[44px] px-3 py-2 rounded-lg border border-stone-200 dark:border-zinc-700 bg-stone-50 dark:bg-zinc-900 text-base">
-                  {settings.deliveryFees.map((s) => (
-                    <option key={s.id} value={s.id}>
-                      {locale === 'ar' ? s.nameAr : s.nameEn} ({formatSdg(s.feeSdg)})
-                    </option>
-                  ))}
-                </select>
-                <div className="grid grid-cols-2 gap-2">
-                  <input required value={addrCity} onChange={(e) => setAddrCity(e.target.value)} placeholder={t('المدينة', 'City')} className="min-h-[44px] px-3 py-2 rounded-lg border border-stone-200 dark:border-zinc-700 bg-stone-50 dark:bg-zinc-900 text-base" />
-                  <input required value={addrArea} onChange={(e) => setAddrArea(e.target.value)} placeholder={t('الحي', 'Area')} className="min-h-[44px] px-3 py-2 rounded-lg border border-stone-200 dark:border-zinc-700 bg-stone-50 dark:bg-zinc-900 text-base" />
+                <div className="grid sm:grid-cols-2 gap-2.5">
+                  <input required dir="ltr" value={addrPhone} onChange={(e) => setAddrPhone(e.target.value)} placeholder="0912345678 / +249..." className="min-h-[44px] px-3 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-900 font-mono-num text-sm" />
+                  <select value={addrState} onChange={(e) => setAddrState(e.target.value)} className="min-h-[44px] px-3 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-900 text-sm">
+                    {settings.deliveryFees.map((s) => (
+                      <option key={s.id} value={s.id}>
+                        {locale === 'ar' ? s.nameAr : s.nameEn} ({formatSdg(s.feeSdg)})
+                      </option>
+                    ))}
+                  </select>
                 </div>
-                <input required value={addrDetails} onChange={(e) => setAddrDetails(e.target.value)} placeholder={t('الشارع وأقرب معلم', 'Details / Landmark')} className="w-full min-h-[44px] px-3 py-2 rounded-lg border border-stone-200 dark:border-zinc-700 bg-stone-50 dark:bg-zinc-900 text-base" />
-                <input dir="ltr" type="url" value={addrMapUrl} onChange={(e) => setAddrMapUrl(e.target.value)} placeholder={t('رابط الخريطة (اختياري)', 'Map URL (optional)')} className="w-full min-h-[44px] px-3 py-2 rounded-lg border border-stone-200 dark:border-zinc-700 bg-stone-50 dark:bg-zinc-900 text-base" />
-                <label className="min-h-[44px] flex items-center gap-2 cursor-pointer font-semibold">
+                <div className="grid sm:grid-cols-2 gap-2.5">
+                  <input required value={addrCity} onChange={(e) => setAddrCity(e.target.value)} placeholder={t('المدينة', 'City')} className="min-h-[44px] px-3 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-900 text-sm" />
+                  <input required value={addrArea} onChange={(e) => setAddrArea(e.target.value)} placeholder={t('الحي', 'Area')} className="min-h-[44px] px-3 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-900 text-sm" />
+                </div>
+                <input required value={addrDetails} onChange={(e) => setAddrDetails(e.target.value)} placeholder={t('الشارع وأقرب معلم', 'Details / Landmark')} className="w-full min-h-[44px] px-3 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-900 text-sm" />
+                <input dir="ltr" type="url" value={addrMapUrl} onChange={(e) => setAddrMapUrl(e.target.value)} placeholder={t('رابط الخريطة (اختياري)', 'Map URL (optional)')} className="w-full min-h-[44px] px-3 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-900 text-sm" />
+                <label className="min-h-[40px] flex items-center gap-2 cursor-pointer font-semibold">
                   <input type="checkbox" checked={addrDefault} onChange={(e) => setAddrDefault(e.target.checked)} className="w-4 h-4 accent-[#D9B24C]" />
                   <span>{t('اجعله العنوان الافتراضي', 'Set as default')}</span>
                 </label>
-                <button type="submit" className="w-full min-h-[44px] py-2 rounded-lg bg-stone-900 dark:bg-stone-100 text-white dark:text-stone-900 font-bold inline-flex items-center justify-center gap-1">
+                <button
+                  type="submit"
+                  style={{ backgroundColor: appearance.primaryColor }}
+                  className="min-h-[44px] px-6 rounded-xl text-white font-bold inline-flex items-center justify-center gap-1.5"
+                >
                   <Plus className="w-4 h-4" />
                   {t('إضافة عنوان', 'Add Address')}
                 </button>
@@ -304,77 +365,90 @@ export const ProfileView: React.FC = () => {
             </>
           )}
         </div>
+      )}
 
-        <div className="lg:col-span-4 bg-white dark:bg-[#181B1E] border border-stone-200 dark:border-zinc-800 rounded-xl p-5 space-y-4 text-xs">
+      {/* Tab 3: Saved Prescriptions */}
+      {sectionTab === 'rx' && (
+        <div className="bg-white dark:bg-[#111927] border border-slate-200/80 dark:border-slate-800 rounded-2xl p-5 sm:p-6 space-y-5 text-xs">
           <h2 className="text-base font-bold">{t('وصفات النظر المحفوظة', 'Saved Prescriptions (Rx)')}</h2>
           {isGuest ? (
-            <div className="p-4 rounded-xl bg-amber-50 dark:bg-amber-950/25 border border-amber-200 dark:border-amber-900/50">
-              <p className="font-bold text-[#11223E] dark:text-amber-200 leading-relaxed">
-                {t('حفظ وصفات النظر متاح للحسابات المسجلة.', 'Saved prescriptions are available for registered accounts.')}
-              </p>
-            </div>
+            <p className="text-slate-600 dark:text-slate-400">
+              {t('حفظ وصفات النظر متاح للحسابات المسجلة.', 'Available for registered accounts.')}
+            </p>
           ) : (
             <>
-              <div className="space-y-2">
-                {user.prescriptions.map((rx) => (
-                  <div key={rx.id} className="p-3 rounded-lg bg-stone-50 dark:bg-zinc-900 border border-stone-200 dark:border-zinc-800 flex justify-between gap-2">
-                    <div className="space-y-0.5">
-                      <div className="font-bold">{rx.label}</div>
-                      <div className="font-mono-num text-[11px] text-[#B38B2D]">
-                        OD: {rx.rightEye.sph} / {rx.rightEye.cyl} × {rx.rightEye.axis}°
+              {user.prescriptions.length > 0 && (
+                <div className="divide-y divide-slate-100 dark:divide-slate-800">
+                  {user.prescriptions.map((rx) => (
+                    <div key={rx.id} className="py-3 first:pt-0 flex justify-between gap-2">
+                      <div className="space-y-0.5">
+                        <div className="font-bold text-sm">{rx.label}</div>
+                        <div className="font-mono-num text-[11px] text-[#B38B2D] dark:text-[#E2BD5B]">
+                          OD: {rx.rightEye.sph} / {rx.rightEye.cyl} × {rx.rightEye.axis}°
+                        </div>
+                        <div className="font-mono-num text-[11px] text-[#B38B2D] dark:text-[#E2BD5B]">
+                          OS: {rx.leftEye.sph} / {rx.leftEye.cyl} × {rx.leftEye.axis}° · PD {rx.pd}
+                        </div>
                       </div>
-                      <div className="font-mono-num text-[11px] text-[#B38B2D]">
-                        OS: {rx.leftEye.sph} / {rx.leftEye.cyl} × {rx.leftEye.axis}° · PD {rx.pd}
-                      </div>
+                      <button
+                        type="button"
+                        onClick={() => deletePrescription(rx.id)}
+                        aria-label={t('حذف الوصفة', 'Delete prescription')}
+                        className="min-w-[40px] min-h-[40px] flex items-center justify-center text-slate-400 hover:text-rose-600 self-start"
+                      >
+                        <Trash2 className="w-4 h-4" />
+                      </button>
                     </div>
-                    <button type="button" onClick={() => deletePrescription(rx.id)} className="min-w-[44px] min-h-[44px] flex items-center justify-center text-stone-400 hover:text-rose-600 self-start">
-                      <Trash2 className="w-4 h-4" />
-                    </button>
-                  </div>
-                ))}
-              </div>
+                  ))}
+                </div>
+              )}
 
-              <form onSubmit={handleAddRx} className="space-y-2 pt-3 border-t border-stone-100 dark:border-zinc-800">
-                <input required value={rxLabel} onChange={(e) => setRxLabel(e.target.value)} placeholder={t('اسم الوصفة (مثلاً: كشف 2026)', 'Rx Label')} className="w-full min-h-[44px] px-3 py-2 rounded-lg border border-stone-200 dark:border-zinc-700 bg-stone-50 dark:bg-zinc-900 text-base" />
-                <div className="grid grid-cols-4 gap-1.5 items-center font-mono-num">
+              <form onSubmit={handleAddRx} className="space-y-3 pt-4 border-t border-slate-100 dark:border-slate-800">
+                <div className="font-bold text-sm">{t('حفظ وصفة جديدة', 'Save New Rx')}</div>
+                <input required value={rxLabel} onChange={(e) => setRxLabel(e.target.value)} placeholder={t('اسم الوصفة (مثلاً: كشف 2026)', 'Rx Label')} className="w-full min-h-[44px] px-3 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-900 text-sm" />
+                <div className="grid grid-cols-4 gap-2 items-center font-mono-num">
                   <span className="font-bold">OD</span>
-                  <select value={odSph} onChange={(e) => setOdSph(e.target.value)} className="min-h-[44px] p-1.5 rounded border border-stone-200 dark:border-zinc-700 bg-stone-50 dark:bg-zinc-900 text-base">
+                  <select value={odSph} onChange={(e) => setOdSph(e.target.value)} className="min-h-[42px] p-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-900 text-sm">
                     {SPH_OPTIONS.map((o) => <option key={o} value={o}>{o}</option>)}
                   </select>
-                  <select value={odCyl} onChange={(e) => setOdCyl(e.target.value)} className="min-h-[44px] p-1.5 rounded border border-stone-200 dark:border-zinc-700 bg-stone-50 dark:bg-zinc-900 text-base">
+                  <select value={odCyl} onChange={(e) => setOdCyl(e.target.value)} className="min-h-[42px] p-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-900 text-sm">
                     {CYL_OPTIONS.map((o) => <option key={o} value={o}>{o}</option>)}
                   </select>
-                  <select disabled={!isNonZeroCyl(odCyl)} value={odAxis} onChange={(e) => setOdAxis(e.target.value)} className="min-h-[44px] p-1.5 rounded border border-stone-200 dark:border-zinc-700 bg-stone-50 dark:bg-zinc-900 text-base disabled:opacity-45">
+                  <select disabled={!isNonZeroCyl(odCyl)} value={odAxis} onChange={(e) => setOdAxis(e.target.value)} className="min-h-[42px] p-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-900 text-sm disabled:opacity-45">
                     {AXIS_OPTIONS.map((o) => <option key={o} value={o}>{o}°</option>)}
                   </select>
                 </div>
-                <div className="grid grid-cols-4 gap-1.5 items-center font-mono-num">
+                <div className="grid grid-cols-4 gap-2 items-center font-mono-num">
                   <span className="font-bold">OS</span>
-                  <select value={osSph} onChange={(e) => setOsSph(e.target.value)} className="min-h-[44px] p-1.5 rounded border border-stone-200 dark:border-zinc-700 bg-stone-50 dark:bg-zinc-900 text-base">
+                  <select value={osSph} onChange={(e) => setOsSph(e.target.value)} className="min-h-[42px] p-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-900 text-sm">
                     {SPH_OPTIONS.map((o) => <option key={o} value={o}>{o}</option>)}
                   </select>
-                  <select value={osCyl} onChange={(e) => setOsCyl(e.target.value)} className="min-h-[44px] p-1.5 rounded border border-stone-200 dark:border-zinc-700 bg-stone-50 dark:bg-zinc-900 text-base">
+                  <select value={osCyl} onChange={(e) => setOsCyl(e.target.value)} className="min-h-[42px] p-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-900 text-sm">
                     {CYL_OPTIONS.map((o) => <option key={o} value={o}>{o}</option>)}
                   </select>
-                  <select disabled={!isNonZeroCyl(osCyl)} value={osAxis} onChange={(e) => setOsAxis(e.target.value)} className="min-h-[44px] p-1.5 rounded border border-stone-200 dark:border-zinc-700 bg-stone-50 dark:bg-zinc-900 text-base disabled:opacity-45">
+                  <select disabled={!isNonZeroCyl(osCyl)} value={osAxis} onChange={(e) => setOsAxis(e.target.value)} className="min-h-[42px] p-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-900 text-sm disabled:opacity-45">
                     {AXIS_OPTIONS.map((o) => <option key={o} value={o}>{o}°</option>)}
                   </select>
                 </div>
-                <div className="flex items-center gap-2">
+                <div className="flex items-center gap-3">
                   <span className="font-bold">PD (mm)</span>
-                  <select value={pd} onChange={(e) => setPd(e.target.value)} className="flex-1 min-h-[44px] p-1.5 rounded border border-stone-200 dark:border-zinc-700 bg-stone-50 dark:bg-zinc-900 font-mono-num text-base">
+                  <select value={pd} onChange={(e) => setPd(e.target.value)} className="flex-1 min-h-[42px] p-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-900 font-mono-num text-sm">
                     {PD_SINGLE_OPTIONS.map((o) => <option key={o} value={o}>{o} mm</option>)}
                   </select>
                 </div>
-                <button type="submit" className="w-full min-h-[44px] py-2 rounded-lg bg-stone-900 dark:bg-stone-100 text-white dark:text-stone-900 font-bold inline-flex items-center justify-center gap-1">
+                <button
+                  type="submit"
+                  style={{ backgroundColor: appearance.primaryColor }}
+                  className="min-h-[44px] px-6 rounded-xl text-white font-bold inline-flex items-center justify-center gap-1.5"
+                >
                   <Plus className="w-4 h-4" />
-                  {t('حفظ وصفة جديدة', 'Save New Rx')}
+                  {t('حفظ الوصفة', 'Save New Rx')}
                 </button>
               </form>
             </>
           )}
         </div>
-      </div>
+      )}
     </div>
   );
 };
@@ -396,22 +470,22 @@ export const ContactAboutView: React.FC = () => {
   const visibleFaqs = appTexts.faq.filter((f) => f.visible);
 
   return (
-    <div className="max-w-5xl mx-auto px-4 sm:px-6 pt-6 space-y-6">
+    <div className="max-w-4xl mx-auto px-4 sm:px-6 pt-6 space-y-6">
       <div>
         <h1 className="text-2xl font-extrabold">
           {t(`عن ${settings.storeNameAr} والتواصل`, `About ${settings.storeNameEn} & Policies`)}
         </h1>
-        <p className="text-xs text-stone-500 dark:text-zinc-400 mt-1">
+        <p className="text-xs text-slate-500 dark:text-slate-400 mt-1 leading-relaxed">
           {locale === 'ar' ? appTexts.aboutUsAr : appTexts.aboutUsEn}
         </p>
       </div>
 
-      <div className="bg-white dark:bg-[#181B1E] border border-stone-200 dark:border-zinc-800 rounded-2xl p-6 space-y-5 text-sm">
+      <div className="bg-white dark:bg-[#111927] border border-slate-200/80 dark:border-slate-800 rounded-2xl p-6 space-y-5 text-sm">
         <div className="flex items-start gap-3">
           <MapPin className="w-5 h-5 shrink-0 mt-0.5" style={{ color: appearance.secondaryColor }} />
           <div>
             <h2 className="font-bold">{t('عنوان المتجر', 'Store Address')}</h2>
-            <p className="text-stone-600 dark:text-zinc-400 mt-0.5">
+            <p className="text-slate-600 dark:text-slate-400 mt-0.5">
               {locale === 'ar' ? settings.addressAr : settings.addressEn}
             </p>
             <a
@@ -430,7 +504,7 @@ export const ContactAboutView: React.FC = () => {
           <Clock className="w-5 h-5 shrink-0 mt-0.5" style={{ color: appearance.secondaryColor }} />
           <div>
             <h2 className="font-bold">{t('ساعات العمل', 'Working Hours')}</h2>
-            <p className="text-stone-600 dark:text-zinc-400 mt-0.5">
+            <p className="text-slate-600 dark:text-slate-400 mt-0.5">
               {locale === 'ar' ? settings.workingHoursAr : settings.workingHoursEn}
             </p>
           </div>
@@ -444,7 +518,7 @@ export const ContactAboutView: React.FC = () => {
               <a
                 href={`tel:${settings.phone}`}
                 dir="ltr"
-                className="px-4 py-2 rounded-lg border border-stone-200 dark:border-zinc-700 font-mono-num text-xs font-bold inline-flex items-center gap-1.5"
+                className="min-h-[40px] px-4 rounded-xl border border-slate-200 dark:border-slate-700 font-mono-num text-xs font-bold inline-flex items-center gap-1.5"
               >
                 <Phone className="w-3.5 h-3.5" />
                 {settings.phone}
@@ -453,78 +527,80 @@ export const ContactAboutView: React.FC = () => {
                 href={`https://wa.me/${settings.whatsapp.replace(/[^\d]/g, '')}`}
                 target="_blank"
                 rel="noopener noreferrer"
-                className="px-4 py-2 rounded-lg bg-emerald-700 text-white text-xs font-bold inline-flex items-center gap-1.5"
+                className="min-h-[40px] px-4 rounded-xl bg-emerald-700 text-white text-xs font-bold inline-flex items-center gap-1.5"
               >
                 <MessageCircle className="w-3.5 h-3.5" />
-                {t('تواصل عبر واتساب', 'Chat on WhatsApp')}
+                {t('واتساب', 'Chat on WhatsApp')}
               </a>
             </div>
           </div>
         </div>
 
-        <div className="pt-4 border-t border-stone-100 dark:border-zinc-800">
-          <h2 className="font-bold mb-3">{t('حسابات التواصل الاجتماعي', 'Social Media')}</h2>
-          <div className="flex flex-wrap gap-2">
-            {socialItems.map((s) => (
-              <a
-                key={s.key}
-                href={s.item.url}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="px-3.5 py-2 rounded-lg border border-stone-200 dark:border-zinc-700 bg-stone-50 dark:bg-zinc-900 text-xs font-semibold hover:border-[var(--vp-secondary)]"
-              >
-                {s.label}
-              </a>
-            ))}
+        {socialItems.length > 0 && (
+          <div className="pt-4 border-t border-slate-100 dark:border-slate-800">
+            <h2 className="font-bold mb-2.5">{t('حسابات التواصل الاجتماعي', 'Social Media')}</h2>
+            <div className="flex flex-wrap gap-2">
+              {socialItems.map((s) => (
+                <a
+                  key={s.key}
+                  href={s.item.url}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="px-3.5 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-900 text-xs font-semibold hover:border-[var(--vp-secondary)]"
+                >
+                  {s.label}
+                </a>
+              ))}
+            </div>
           </div>
-        </div>
+        )}
       </div>
 
-      {/* Policies managed dynamically from Admin */}
-      <div className="grid md:grid-cols-3 gap-4 text-xs">
-        <div className="bg-white dark:bg-[#181B1E] border border-stone-200 dark:border-zinc-800 rounded-xl p-4 space-y-1.5">
-          <h3 className="font-bold flex items-center gap-1.5">
+      {/* Policies */}
+      <div className="bg-white dark:bg-[#111927] border border-slate-200/80 dark:border-slate-800 rounded-2xl p-6 divide-y divide-slate-100 dark:divide-slate-800 text-xs">
+        <div className="pb-4 space-y-1.5">
+          <h3 className="font-bold text-sm flex items-center gap-1.5">
             <FileText className="w-4 h-4" style={{ color: appearance.secondaryColor }} />
             {t('سياسة الخصوصية', 'Privacy Policy')}
           </h3>
-          <p className="text-stone-600 dark:text-zinc-400 leading-relaxed">
+          <p className="text-slate-600 dark:text-slate-400 leading-relaxed">
             {locale === 'ar' ? appTexts.privacyPolicyAr : appTexts.privacyPolicyEn}
           </p>
         </div>
-        <div className="bg-white dark:bg-[#181B1E] border border-stone-200 dark:border-zinc-800 rounded-xl p-4 space-y-1.5">
-          <h3 className="font-bold flex items-center gap-1.5">
+        <div className="py-4 space-y-1.5">
+          <h3 className="font-bold text-sm flex items-center gap-1.5">
             <FileText className="w-4 h-4" style={{ color: appearance.secondaryColor }} />
             {t('الشروط والأحكام', 'Terms & Conditions')}
           </h3>
-          <p className="text-stone-600 dark:text-zinc-400 leading-relaxed">
+          <p className="text-slate-600 dark:text-slate-400 leading-relaxed">
             {locale === 'ar' ? appTexts.termsConditionsAr : appTexts.termsConditionsEn}
           </p>
         </div>
-        <div className="bg-white dark:bg-[#181B1E] border border-stone-200 dark:border-zinc-800 rounded-xl p-4 space-y-1.5">
-          <h3 className="font-bold flex items-center gap-1.5">
+        <div className="pt-4 space-y-1.5">
+          <h3 className="font-bold text-sm flex items-center gap-1.5">
             <FileText className="w-4 h-4" style={{ color: appearance.secondaryColor }} />
             {t('سياسة الإرجاع والاستبدال', 'Return Policy')}
           </h3>
-          <p className="text-stone-600 dark:text-zinc-400 leading-relaxed">
+          <p className="text-slate-600 dark:text-slate-400 leading-relaxed">
             {locale === 'ar' ? appTexts.returnPolicyAr : appTexts.returnPolicyEn}
           </p>
         </div>
       </div>
 
-      {/* FAQ Section managed dynamically from Admin */}
+      {/* FAQ */}
       {visibleFaqs.length > 0 && (
-        <div className="bg-white dark:bg-[#181B1E] border border-stone-200 dark:border-zinc-800 rounded-2xl p-6 space-y-4">
+        <div className="bg-white dark:bg-[#111927] border border-slate-200/80 dark:border-slate-800 rounded-2xl p-6 space-y-4">
           <h2 className="text-base font-bold flex items-center gap-2">
             <HelpCircle className="w-5 h-5" style={{ color: appearance.secondaryColor }} />
             {t('الأسئلة الشائعة', 'Frequently Asked Questions')}
           </h2>
-          <div className="divide-y divide-stone-100 dark:divide-zinc-800 text-xs">
+          <div className="divide-y divide-slate-100 dark:divide-slate-800 text-xs">
             {visibleFaqs.map((f) => (
               <div key={f.id} className="py-3 first:pt-0 last:pb-0 space-y-1">
                 <div className="font-bold text-sm">
                   {locale === 'ar' ? f.questionAr : f.questionEn}
                 </div>
-                <p className="text-stone-600 dark:text-zinc-400 leading-relaxed">
+                <p className="text-slate-600 dark:text-slate-400 leading-relaxed">
                   {locale === 'ar' ? f.answerAr : f.answerEn}
                 </p>
               </div>

@@ -8,7 +8,6 @@ import {
   ChevronDown,
   ChevronUp,
   Copy,
-  CreditCard,
   Download,
   Edit3,
   ExternalLink,
@@ -897,24 +896,22 @@ export const CartCheckoutView: React.FC = () => {
             );
           })}
 
-          {/* Optician Help CTA Card matching screenshot 2 */}
+          {/* Optician Help Link */}
           <button
             type="button"
             onClick={() => setActiveTab('consult')}
-            className="w-full min-h-[52px] rounded-2xl border-2 border-emerald-400/70 dark:border-emerald-700/80 bg-emerald-50/75 hover:bg-emerald-50 dark:bg-emerald-950/25 dark:hover:bg-emerald-950/40 px-4 py-3 flex items-center justify-center gap-2.5 text-sm font-extrabold text-[#11223E] dark:text-emerald-200 transition-colors"
+            className="w-full min-h-[46px] rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-[#111927] hover:bg-slate-50 dark:hover:bg-slate-900 px-4 py-2.5 flex items-center justify-center gap-2 text-xs sm:text-sm font-bold text-[#11223E] dark:text-slate-200 transition-colors"
           >
-            <span className="w-7 h-7 rounded-full bg-emerald-500 text-white flex items-center justify-center shrink-0">
-              <MessageCircle className="w-4 h-4" />
-            </span>
-            <span>{t('استشر أخصائي البصريات قبل إتمام الطلب', 'Need help with your Rx? Consult Optician')}</span>
+            <MessageCircle className="w-4 h-4 text-emerald-600 shrink-0" />
+            <span>{t('هل تحتاج مساعدة في المقاس؟ استشر أخصائي البصريات', 'Need help with your Rx? Consult Optician')}</span>
           </button>
 
           {/* Payment Method Card */}
-          <div className="bg-white dark:bg-[#131C2E] border border-slate-200 dark:border-slate-800 rounded-2xl p-5 space-y-4 shadow-xs">
+          <div className="bg-white dark:bg-[#111927] border border-slate-200/80 dark:border-slate-800 rounded-2xl p-5 space-y-4">
             <h2 className="text-base font-extrabold text-[#11223E] dark:text-white">
               {t('طريقة الدفع', 'Payment Method')}
             </h2>
-            <div className="grid sm:grid-cols-3 gap-3 text-xs">
+            <div className="grid sm:grid-cols-2 gap-3 text-xs">
               <button
                 type="button"
                 onClick={() => setPaymentMethod('bankak')}
@@ -946,14 +943,6 @@ export const CartCheckoutView: React.FC = () => {
                   {t('نقداً لمندوب التوصيل', 'Pay cash on delivery')}
                 </div>
               </button>
-
-              <div className="p-3.5 rounded-xl border border-dashed border-slate-200 dark:border-slate-800 text-start space-y-1 opacity-65">
-                <CreditCard className="w-5 h-5 text-slate-400" />
-                <div className="font-bold">{t('الدفع الإلكتروني', 'Online Card Gateway')}</div>
-                <div className="text-[11px] text-slate-500 dark:text-slate-400">
-                  {t('بوابة الدفع جاهزة للتفعيل لاحقاً', 'Extensible gateway adapter ready')}
-                </div>
-              </div>
             </div>
 
             {paymentMethod === 'bankak' && (
@@ -1032,7 +1021,7 @@ export const CartCheckoutView: React.FC = () => {
         </div>
 
         {/* Order Summary Column */}
-        <div className="lg:col-span-5 bg-white dark:bg-[#131C2E] border border-slate-200 dark:border-slate-800 rounded-2xl p-5 space-y-5 lg:sticky lg:top-28 shadow-xs">
+        <div className="lg:col-span-5 bg-white dark:bg-[#111927] border border-slate-200/80 dark:border-slate-800 rounded-2xl p-5 space-y-5 lg:sticky lg:top-28">
           <div className="flex items-center justify-between gap-2">
             <h2 className="text-base font-extrabold text-[#11223E] dark:text-white">
               {t('ملخص الطلب', 'Order Summary')}

@@ -84,143 +84,118 @@ export const Footer: React.FC = () => {
 
   const quickLinks = [
     { id: 'home', label: t('الرئيسية', 'Home'), action: () => setActiveTab('home') },
-    { id: 'catalog', label: t('التصنيفات', 'Categories'), action: () => openCatalog('all', '') },
-    { id: 'cart', label: t('سلة المشتريات', 'Cart'), action: () => setActiveTab('cart') },
+    { id: 'catalog', label: t('المتجر', 'Catalog'), action: () => openCatalog('all', '') },
+    { id: 'cart', label: t('السلة', 'Cart'), action: () => setActiveTab('cart') },
     { id: 'orders', label: t('طلباتي', 'Orders'), action: () => setActiveTab('orders') },
-    { id: 'consult', label: t('استشارة أخصائي البصريات', 'Consult an Optician'), action: () => setActiveTab('consult') },
+    { id: 'consult', label: t('أخصائي البصريات', 'Optician'), action: () => setActiveTab('consult') },
+    { id: 'contact', label: t('من نحن والسياسات', 'About & Policies'), action: () => setActiveTab('contact') },
   ];
 
   const currentYear = new Date().getFullYear();
 
   return (
-    <footer
-      style={{ backgroundColor: appearance.primaryColor }}
-      className="mt-0 md:mt-6 text-white border-t border-white/10 pt-10 pb-[calc(80px+env(safe-area-inset-bottom))] md:pb-10"
-    >
-      <div className="max-w-7xl mx-auto px-4 sm:px-6 flex flex-col items-center text-center space-y-7">
-        {/* 1. Title: تواصل معنا */}
-        <div className="space-y-1.5">
-          <h2
-            className="text-xl sm:text-2xl font-extrabold tracking-tight"
-            style={{ color: appearance.secondaryColor }}
-          >
-            {t('تواصل معنا', 'Contact Us')}
-          </h2>
-          <p className="text-xs sm:text-sm text-slate-300 font-semibold">
-            {settings.storeNameAr || 'فيجن بلس'} - {settings.storeNameEn || 'Vision Plus'}
-          </p>
-        </div>
+    <footer className="mt-4 bg-white dark:bg-[#111927] border-t border-slate-200 dark:border-slate-800 text-[#11223E] dark:text-slate-200 pt-8 pb-[calc(84px+env(safe-area-inset-bottom))] md:pb-8">
+      <div className="max-w-7xl mx-auto px-4 sm:px-6 space-y-6">
+        <div className="flex flex-col md:flex-row md:items-start justify-between gap-6">
+          {/* Store Name & Contact Links */}
+          <div className="space-y-3">
+            <div>
+              <h2 className="text-lg font-extrabold tracking-tight" dir="ltr">
+                Vision <span style={{ color: appearance.secondaryColor }}>Plus</span>
+              </h2>
+              <p className="text-xs text-slate-500 dark:text-slate-400">
+                {locale === 'ar' ? settings.storeNameAr || 'فيجن بلس للبصريات' : settings.storeNameEn || 'Vision Plus Optics'}
+              </p>
+            </div>
 
-        {/* 2. Contact buttons & store details (Firestore settings/store) */}
-        {(showPhone || showWhatsapp || showEmail || showAddress || showHours) && (
-          <div className="w-full max-w-4xl grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 text-xs">
-            {showPhone && (
-              <a
-                href={`tel:${settings.phone}`}
-                className="min-h-[44px] px-4 py-2.5 rounded-xl bg-white/8 hover:bg-white/15 border border-white/12 flex items-center justify-center gap-2 transition-colors"
-              >
-                <Phone className="w-4 h-4 shrink-0" style={{ color: appearance.secondaryColor }} />
-                <span dir="ltr" className="font-mono-num font-bold">
-                  {settings.phone}
-                </span>
-              </a>
-            )}
-
-            {showWhatsapp && (
-              <a
-                href={`https://wa.me/${settings.whatsapp.replace(/[^\d]/g, '')}`}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="min-h-[44px] px-4 py-2.5 rounded-xl bg-emerald-600/25 hover:bg-emerald-600/40 border border-emerald-400/30 flex items-center justify-center gap-2 transition-colors font-bold"
-              >
-                <MessageCircle className="w-4 h-4 shrink-0 text-emerald-300" />
-                <span>{t('واتساب خدمة العملاء', 'WhatsApp Support')}</span>
-              </a>
-            )}
-
-            {showEmail && (
-              <a
-                href={`mailto:${settings.email}`}
-                className="min-h-[44px] px-4 py-2.5 rounded-xl bg-white/8 hover:bg-white/15 border border-white/12 flex items-center justify-center gap-2 transition-colors"
-              >
-                <Mail className="w-4 h-4 shrink-0" style={{ color: appearance.secondaryColor }} />
-                <span dir="ltr" className="truncate font-medium">
-                  {settings.email}
-                </span>
-              </a>
-            )}
-
-            {showAddress && (
-              <a
-                href={settings.mapUrl || '#'}
-                target={settings.mapUrl ? '_blank' : undefined}
-                rel={settings.mapUrl ? 'noopener noreferrer' : undefined}
-                className="min-h-[44px] sm:col-span-2 lg:col-span-2 px-4 py-2.5 rounded-xl bg-white/8 hover:bg-white/15 border border-white/12 flex items-center justify-center gap-2 transition-colors"
-              >
-                <MapPin className="w-4 h-4 shrink-0" style={{ color: appearance.secondaryColor }} />
-                <span className="leading-snug">{addressText}</span>
-                {settings.mapUrl && <ExternalLink className="w-3.5 h-3.5 shrink-0 opacity-75" />}
-              </a>
-            )}
-
-            {showHours && (
-              <div className="min-h-[44px] px-4 py-2.5 rounded-xl bg-white/6 border border-white/10 flex items-center justify-center gap-2 text-slate-200">
-                <Clock className="w-4 h-4 shrink-0" style={{ color: appearance.secondaryColor }} />
-                <span className="leading-snug">{hoursText}</span>
+            {(showPhone || showWhatsapp || showEmail || showAddress || showHours) && (
+              <div className="flex flex-wrap items-center gap-x-5 gap-y-2 text-xs text-slate-600 dark:text-slate-300">
+                {showPhone && (
+                  <a href={`tel:${settings.phone}`} className="inline-flex items-center gap-1.5 hover:text-[#B38B2D]">
+                    <Phone className="w-3.5 h-3.5 text-[#B38B2D]" />
+                    <span dir="ltr" className="font-mono-num">{settings.phone}</span>
+                  </a>
+                )}
+                {showWhatsapp && (
+                  <a
+                    href={`https://wa.me/${settings.whatsapp.replace(/[^\d]/g, '')}`}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="inline-flex items-center gap-1.5 hover:text-emerald-600"
+                  >
+                    <MessageCircle className="w-3.5 h-3.5 text-emerald-600" />
+                    <span>{t('واتساب', 'WhatsApp')}</span>
+                  </a>
+                )}
+                {showEmail && (
+                  <a href={`mailto:${settings.email}`} className="inline-flex items-center gap-1.5 hover:text-[#B38B2D]">
+                    <Mail className="w-3.5 h-3.5 text-[#B38B2D]" />
+                    <span dir="ltr">{settings.email}</span>
+                  </a>
+                )}
+                {showAddress && (
+                  <a
+                    href={settings.mapUrl || '#'}
+                    target={settings.mapUrl ? '_blank' : undefined}
+                    rel={settings.mapUrl ? 'noopener noreferrer' : undefined}
+                    className="inline-flex items-center gap-1.5 hover:text-[#B38B2D]"
+                  >
+                    <MapPin className="w-3.5 h-3.5 text-[#B38B2D]" />
+                    <span>{addressText}</span>
+                    {settings.mapUrl && <ExternalLink className="w-3 h-3 opacity-60" />}
+                  </a>
+                )}
+                {showHours && (
+                  <span className="inline-flex items-center gap-1.5">
+                    <Clock className="w-3.5 h-3.5 text-[#B38B2D]" />
+                    <span>{hoursText}</span>
+                  </span>
+                )}
               </div>
             )}
           </div>
-        )}
 
-        {/* 3. Social Media Icon Buttons */}
-        {socialItems.length > 0 && (
-          <div className="flex flex-wrap items-center justify-center gap-2.5">
-            {socialItems.map((s) => (
-              <a
-                key={s.key}
-                href={s.item.url}
-                target="_blank"
-                rel="noopener noreferrer"
-                aria-label={s.label}
-                title={s.label}
-                className="w-11 h-11 rounded-full bg-white/10 hover:bg-[#D9B24C] hover:text-[#11223E] border border-white/15 flex items-center justify-center transition-all hover:scale-105"
-              >
-                <SocialBrandIcon platform={s.key} />
-              </a>
-            ))}
-          </div>
-        )}
-
-        {/* 4. Quick Links */}
-        <nav
-          aria-label={t('روابط سريعة', 'Quick Links')}
-          className="flex flex-wrap items-center justify-center gap-x-6 gap-y-2 text-xs sm:text-sm font-semibold text-slate-200 pt-2 border-t border-white/10 w-full max-w-3xl"
-        >
-          {quickLinks.map((lnk) => (
-            <button
-              key={lnk.id}
-              type="button"
-              onClick={lnk.action}
-              className="min-h-[40px] px-2 hover:text-[#D9B24C] transition-colors whitespace-nowrap"
+          {/* Quick Links & Social */}
+          <div className="space-y-3 md:text-end">
+            <nav
+              aria-label={t('روابط سريعة', 'Quick Links')}
+              className="flex flex-wrap items-center md:justify-end gap-x-5 gap-y-2 text-xs sm:text-sm font-semibold text-slate-600 dark:text-slate-300"
             >
-              {lnk.label}
-            </button>
-          ))}
-          <button
-            type="button"
-            onClick={() => setActiveTab('contact')}
-            className="min-h-[40px] px-2 text-slate-300 hover:text-[#D9B24C] transition-colors whitespace-nowrap"
-          >
-            {t('من نحن والسياسات', 'About & Policies')}
-          </button>
-        </nav>
+              {quickLinks.map((lnk) => (
+                <button
+                  key={lnk.id}
+                  type="button"
+                  onClick={lnk.action}
+                  className="py-1 hover:text-[#11223E] dark:hover:text-[#E2BD5B] transition-colors whitespace-nowrap"
+                >
+                  {lnk.label}
+                </button>
+              ))}
+            </nav>
 
-        {/* PWA Install Prompt Button (auto-hidden when standalone) */}
-        <PWAInstallButton variant="footer" />
+            {socialItems.length > 0 && (
+              <div className="flex flex-wrap items-center md:justify-end gap-2">
+                {socialItems.map((s) => (
+                  <a
+                    key={s.key}
+                    href={s.item.url}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    aria-label={s.label}
+                    title={s.label}
+                    className="w-9 h-9 rounded-full border border-slate-200 dark:border-slate-700 hover:border-[#D9B24C] hover:text-[#B38B2D] flex items-center justify-center transition-colors"
+                  >
+                    <SocialBrandIcon platform={s.key} />
+                  </a>
+                ))}
+              </div>
+            )}
+          </div>
+        </div>
 
-        {/* 5. Copyright line */}
-        <div className="text-xs text-slate-300/90 pt-2 border-t border-white/10 w-full max-w-3xl">
-          © {currentYear} Vision Plus - فيجن بلس
+        <div className="pt-4 border-t border-slate-100 dark:border-slate-800 flex flex-wrap items-center justify-between gap-3 text-xs text-slate-500 dark:text-slate-400">
+          <span>© {currentYear} Vision Plus - فيجن بلس</span>
+          <PWAInstallButton variant="profile" />
         </div>
       </div>
     </footer>

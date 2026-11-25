@@ -514,7 +514,7 @@ export const OrdersView: React.FC = () => {
           <div className="flex items-center justify-between gap-2">
             <div className="flex items-center gap-2 text-xs font-extrabold text-[#11223E] dark:text-[#E2BD5B]">
               {unreadOrderNotifications.length > 0 ? (
-                <BellRing className="w-4 h-4 text-amber-600 animate-pulse" />
+                <BellRing className="w-4 h-4 text-amber-600" />
               ) : (
                 <Bell className="w-4 h-4" />
               )}
@@ -806,23 +806,36 @@ export const OrdersView: React.FC = () => {
               )}
 
               {order.status !== 'cancelled' ? (
-                <div className="grid grid-cols-2 sm:grid-cols-6 gap-2 text-[11px]">
-                  {TIMELINE_STEPS.map((st, idx) => {
-                    const reached = idx <= stepIndex;
-                    return (
-                      <div
-                        key={st}
-                        className={`p-2 rounded-lg border ${
-                          reached
-                            ? 'border-[var(--vp-secondary)] bg-[#D9B24C]/15 font-semibold'
-                            : 'border-stone-200 dark:border-zinc-800 text-stone-400 dark:text-zinc-500'
-                        }`}
-                      >
-                        <span className="font-mono-num block text-[10px]">0{idx + 1}</span>
-                        <span className="line-clamp-1">{getOrderStatusLabel(st, locale)}</span>
-                      </div>
-                    );
-                  })}
+                <div className="space-y-2 pt-1">
+                  <div className="h-1.5 rounded-full bg-slate-100 dark:bg-zinc-800 overflow-hidden">
+                    <div
+                      className="h-full rounded-full transition-all"
+                      style={{
+                        backgroundColor: appearance.secondaryColor,
+                        width: `${Math.max(15, ((stepIndex + 1) / TIMELINE_STEPS.length) * 100)}%`,
+                      }}
+                    />
+                  </div>
+                  <div className="flex flex-wrap items-center justify-between gap-2 text-[11px] text-slate-500 dark:text-zinc-400">
+                    {TIMELINE_STEPS.map((st, idx) => {
+                      const reached = idx <= stepIndex;
+                      const current = idx === stepIndex;
+                      return (
+                        <span
+                          key={st}
+                          className={
+                            current
+                              ? 'font-extrabold text-[#11223E] dark:text-[#E2BD5B]'
+                              : reached
+                              ? 'font-semibold text-slate-700 dark:text-zinc-300'
+                              : ''
+                          }
+                        >
+                          {getOrderStatusLabel(st, locale)}
+                        </span>
+                      );
+                    })}
+                  </div>
                 </div>
               ) : (
                 <div className="p-3.5 rounded-xl bg-rose-50 dark:bg-rose-950/20 border border-rose-200 dark:border-rose-900/50 text-rose-700 dark:text-rose-300 text-xs space-y-1">
