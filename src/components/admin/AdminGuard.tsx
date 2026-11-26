@@ -10,6 +10,8 @@ import {
   ADMIN_IDLE_WARNING_BEFORE_MS,
   isOwnerAdminUid,
 } from '../../utils/adminAuth';
+import { FieldValidationRule, useFormValidation } from '../../hooks/useFormValidation';
+import { FieldError, ValidationSummaryBanner } from '../FormValidationUI';
 
 interface AdminSecurityContextValue {
   requireSensitiveReauth: (actionTitle: string, onAuthorized: () => void | Promise<void>) => void;
@@ -51,6 +53,12 @@ export const AdminGuard: React.FC<{ children: React.ReactNode }> = ({ children }
   // Logout confirmation modal
   const [logoutConfirmOpen, setLogoutConfirmOpen] = useState(false);
   const [logoutLoading, setLogoutLoading] = useState(false);
+
+  const reauthFormRef = useRef<HTMLFormElement | null>(null);
+  const reauthVal = useFormValidation({
+    containerRef: reauthFormRef,
+    formId: 'admin-reauth',
+  });
 
   // 1) Server-side Firestore verification of role & non-blocked status
   useEffect(() => {
@@ -207,12 +215,31 @@ export const AdminGuard: React.FC<{ children: React.ReactNode }> = ({ children }
     }
   };
 
+  const buildReauthRules = useCallback((): FieldValidationRule[] => {
+    return [
+      {
+        field: 'password',
+        label: 'كلمة المرور الحالية',
+        error: !reauthPassword ? 'يرجى إدخال كلمة المرور الحالية' : null,
+      },
+    ];
+  }, [reauthPassword]);
+
+  useEffect(() => {
+    if (pendingReauth && reauthVal.submitted) {
+      reauthVal.revalidate(buildReauthRules());
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pendingReauth, reauthVal.submitted, buildReauthRules]);
+
   const requireSensitiveReauth = useCallback(
     (actionTitle: string, onAuthorized: () => void | Promise<void>) => {
       setReauthPassword('');
       setReauthError(null);
+      reauthVal.reset();
       setPendingReauth({ title: actionTitle, onAuthorized });
     },
+    // eslint-disable-next-line react-hooks/exhaustive-deps
     []
   );
 
@@ -224,15 +251,14 @@ export const AdminGuard: React.FC<{ children: React.ReactNode }> = ({ children }
     e.preventDefault();
     if (!pendingReauth || reauthLoading) return;
 
+    if (!reauthVal.validateAll(buildReauthRules())) {
+      return;
+    }
+
     const current = auth.currentUser;
     const currentEmail = current?.email || user.email;
     if (!current || !currentEmail) {
       setReauthError('انتهت صلاحية الجلسة، يرجى إعادة تسجيل الدخول');
-      return;
-    }
-
-    if (!reauthPassword) {
-      setReauthError('يرجى إدخال كلمة المرور الحالية');
       return;
     }
 
@@ -242,6 +268,7 @@ export const AdminGuard: React.FC<{ children: React.ReactNode }> = ({ children }
       const cred = EmailAuthProvider.credential(currentEmail, reauthPassword);
       await reauthenticateWithCredential(current, cred);
       const callback = pendingReauth.onAuthorized;
+      reauthVal.reset();
       setPendingReauth(null);
       setReauthPassword('');
       await callback();
@@ -334,8 +361,10 @@ export const AdminGuard: React.FC<{ children: React.ReactNode }> = ({ children }
           className="fixed inset-0 z-[85] bg-black/60 backdrop-blur-xs flex items-center justify-center p-4"
         >
           <form
+            ref={reauthFormRef}
+            noValidate
             onSubmit={handleSubmitReauth}
-            className="bg-white dark:bg-[#131C2E] border border-slate-200 dark:border-slate-800 rounded-2xl max-w-sm w-full p-6 space-y-4 shadow-2xl text-xs"
+            className="bg-white dark:bg-[#131C2E] border border-slate-200 dark:border-slate-800 rounded-2xl max-w-sm w-full max-h-[90vh] overflow-y-auto p-6 space-y-4 shadow-2xl text-xs"
           >
             <div className="flex items-center gap-2.5 text-sm font-extrabold">
               <ShieldCheck className="w-5 h-5 text-[#D9B24C] shrink-0" />
@@ -345,13 +374,22 @@ export const AdminGuard: React.FC<{ children: React.ReactNode }> = ({ children }
               حمايةً للبيانات الحساسة، يرجى إعادة إدخال كلمة مرور الإدارة الحالية للمتابعة.
             </p>
 
+            <ValidationSummaryBanner
+              errors={reauthVal.errors}
+              onSelectField={reauthVal.focusField}
+              mode="form"
+            />
+
             {reauthError && (
-              <div className="p-3 rounded-xl bg-rose-50 dark:bg-rose-950/30 border border-rose-200 dark:border-rose-900/50 text-rose-700 dark:text-rose-300 font-bold">
+              <div
+                role="alert"
+                className="p-3 rounded-xl bg-rose-50 dark:bg-rose-950/30 border border-rose-200 dark:border-rose-900/50 text-rose-700 dark:text-rose-300 font-bold"
+              >
                 {reauthError}
               </div>
             )}
 
-            <div>
+            <div {...reauthVal.getFieldWrapperProps('password')}>
               <label htmlFor="vp-reauth-pw" className="block font-bold mb-1.5">
                 كلمة المرور الحالية
               </label>
@@ -362,13 +400,20 @@ export const AdminGuard: React.FC<{ children: React.ReactNode }> = ({ children }
                   type="password"
                   dir="ltr"
                   autoFocus
-                  required
                   value={reauthPassword}
                   onChange={(e) => setReauthPassword(e.target.value)}
                   placeholder="••••••••"
-                  className="w-full min-h-[44px] ps-9 pe-3 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-[#0D131F] text-base"
+                  {...reauthVal.getInputA11yProps('password')}
+                  className={`w-full min-h-[44px] ps-9 pe-3 rounded-xl text-base ${reauthVal.getControlClasses(
+                    'password',
+                    'border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-[#0D131F]'
+                  )}`}
                 />
               </div>
+              <FieldError
+                id={reauthVal.getErrorId('password')}
+                message={reauthVal.getError('password')}
+              />
             </div>
 
             <div className="flex items-center justify-end gap-2 pt-1">
@@ -376,6 +421,7 @@ export const AdminGuard: React.FC<{ children: React.ReactNode }> = ({ children }
                 type="button"
                 disabled={reauthLoading}
                 onClick={() => {
+                  reauthVal.reset();
                   setPendingReauth(null);
                   setReauthPassword('');
                   setReauthError(null);

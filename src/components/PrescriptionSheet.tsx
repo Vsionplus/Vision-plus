@@ -1,10 +1,11 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Camera,
   Check,
   ChevronDown,
   ChevronUp,
   Copy,
+  Download,
   Eye,
   FileText,
   HelpCircle,
@@ -31,9 +32,7 @@ import { formatSdg } from '../utils/format';
 import {
   ADD_OPTIONS,
   AXIS_OPTIONS,
-  BC_OPTIONS,
   CYL_OPTIONS,
-  DIA_OPTIONS,
   EXTRA_OPTION_IDS,
   FITTING_HEIGHT_OPTIONS,
   MIRROR_COLOR_OPTIONS,
@@ -42,18 +41,21 @@ import {
   SPH_OPTIONS,
   VISION_TYPE_IDS,
   calculateLensPricingBreakdown,
-  compressPrescriptionImage,
   getExtraOptionLabel,
   getMirrorColorLabel,
   getVisionTypeLabel,
   isContactLensProduct,
   isNonZeroCyl,
+  isPdfPrescriptionUrl,
   resolveExtraOptions,
   resolveVisionType,
   validateContactEye,
   validateEyeglassesEye,
 } from '../utils/prescription';
-import { auth, deletePrescriptionImage, uploadPrescriptionImage } from '../lib/firebase';
+import { auth, deletePrescriptionImage, uploadPrescriptionDocument } from '../lib/firebase';
+import { FieldValidationRule, useFormValidation } from '../hooks/useFormValidation';
+import { FieldError, ValidationSummaryBanner } from './FormValidationUI';
+import { VALIDATION_MESSAGES, pickMsg } from '../utils/validationMessages';
 
 interface PrescriptionSheetProps {
   open: boolean;
@@ -69,9 +71,7 @@ const DEFAULT_CL_EYE: ContactLensEyePrescription = {
   sph: '-1.00',
   cyl: '0.00',
   axis: '0',
-  bc: '8.6',
-  dia: '14.2',
-  boxes: 1,
+  add: '',
 };
 
 export const PrescriptionSheet: React.FC<PrescriptionSheetProps> = ({
@@ -136,6 +136,8 @@ export const PrescriptionSheet: React.FC<PrescriptionSheetProps> = ({
 
   const [imageUrl, setImageUrl] = useState('');
   const [storagePath, setStoragePath] = useState('');
+  const [fileName, setFileName] = useState('');
+  const [fileType, setFileType] = useState<'image' | 'pdf' | undefined>(undefined);
   const [uploading, setUploading] = useState(false);
   const [uploadProgress, setUploadProgress] = useState(0);
   const [uploadError, setUploadError] = useState<string | null>(null);
@@ -144,11 +146,18 @@ export const PrescriptionSheet: React.FC<PrescriptionSheetProps> = ({
   const [saveToAccount, setSaveToAccount] = useState(false);
   const [rxLabel, setRxLabel] = useState('');
   const [showHowToRead, setShowHowToRead] = useState(false);
-  const [validationError, setValidationError] = useState<string | null>(null);
+
+  const sheetBodyRef = useRef<HTMLDivElement | null>(null);
+  const cameraInputRef = useRef<HTMLInputElement | null>(null);
+  const galleryInputRef = useRef<HTMLInputElement | null>(null);
+  const rxValidation = useFormValidation({
+    containerRef: sheetBodyRef,
+    formId: 'prescription-sheet',
+  });
 
   useEffect(() => {
     if (!open) return;
-    setValidationError(null);
+    rxValidation.reset();
     setUploadError(null);
 
     const init = initialPrescription;
@@ -167,8 +176,22 @@ export const PrescriptionSheet: React.FC<PrescriptionSheetProps> = ({
           init.values.contactRight &&
           init.values.contactLeft
         ) {
-          setClRight(init.values.contactRight);
-          setClLeft(init.values.contactLeft);
+          setClRight({
+            sph: init.values.contactRight.sph || '-1.00',
+            cyl: init.values.contactRight.cyl || '0.00',
+            axis: init.values.contactRight.axis || '0',
+            add: init.values.contactRight.add || '',
+          });
+          setClLeft({
+            sph: init.values.contactLeft.sph || '-1.00',
+            cyl: init.values.contactLeft.cyl || '0.00',
+            axis: init.values.contactLeft.axis || '0',
+            add: init.values.contactLeft.add || '',
+          });
+          setPdMode(init.values.pdMode || init.pdMode || 'single');
+          setPd(init.values.pd || init.pd || '63');
+          setPdRight(init.values.pdRight || init.pdRight || '31.5');
+          setPdLeft(init.values.pdLeft || init.pdLeft || '31.5');
         } else {
           const r = init.values?.rightEye || init.rightEye || DEFAULT_EYE;
           const l = init.values?.leftEye || init.leftEye || DEFAULT_EYE;
@@ -194,9 +217,15 @@ export const PrescriptionSheet: React.FC<PrescriptionSheetProps> = ({
         }
         setImageUrl('');
         setStoragePath('');
+        setFileName('');
+        setFileType(undefined);
       } else if (init.type === 'image') {
         setImageUrl(init.imageUrl || '');
         setStoragePath(init.storagePath || '');
+        setFileName(init.fileName || '');
+        setFileType(
+          isPdfPrescriptionUrl(init.imageUrl, init.fileType) ? 'pdf' : init.fileType || 'image'
+        );
       } else {
         setRightEye({
           sph: '0.00',
@@ -217,6 +246,8 @@ export const PrescriptionSheet: React.FC<PrescriptionSheetProps> = ({
         setFittingHeight('18');
         setImageUrl('');
         setStoragePath('');
+        setFileName('');
+        setFileType(undefined);
       }
     } else {
       setVisionType(
@@ -241,23 +272,21 @@ export const PrescriptionSheet: React.FC<PrescriptionSheetProps> = ({
           ? {
               ...DEFAULT_CL_EYE,
               sph: product.contactLensSpecs.sphOptions[0] || '-1.00',
-              bc: product.contactLensSpecs.baseCurve || '8.6',
-              dia: product.contactLensSpecs.diameter || '14.2',
             }
-          : DEFAULT_CL_EYE
+          : { ...DEFAULT_CL_EYE }
       );
       setClLeft(
         product.contactLensSpecs
           ? {
               ...DEFAULT_CL_EYE,
               sph: product.contactLensSpecs.sphOptions[0] || '-1.00',
-              bc: product.contactLensSpecs.baseCurve || '8.6',
-              dia: product.contactLensSpecs.diameter || '14.2',
             }
-          : DEFAULT_CL_EYE
+          : { ...DEFAULT_CL_EYE }
       );
       setImageUrl('');
       setStoragePath('');
+      setFileName('');
+      setFileType(undefined);
       setNotes('');
       setSaveToAccount(false);
       setRxLabel('');
@@ -293,12 +322,129 @@ export const PrescriptionSheet: React.FC<PrescriptionSheetProps> = ({
     showToast(t('تم نسخ مقاس العين اليمنى إلى اليسرى', 'Right eye copied to left eye'));
   };
 
-  if (!open) return null;
-
   const isProgressive = !isContact && visionType === 'progressive';
   const isBifocal = !isContact && visionType === 'bifocal';
   const showAddRequired = isBifocal || isProgressive;
   const effectivePdMode = isProgressive ? 'dual' : pdMode;
+
+  const buildRxRules = useCallback((): FieldValidationRule[] => {
+    const rules: FieldValidationRule[] = [];
+
+    if (!isContact && extraOptions.includes('mirror')) {
+      rules.push({
+        field: 'mirrorColor',
+        label: t('لون العدسة العاكسة', 'Mirror lens color'),
+        error: !mirrorColor ? pickMsg(VALIDATION_MESSAGES.mirrorColorRequired, locale) : null,
+      });
+    }
+
+    if (choice === 'manual') {
+      if (isContact) {
+        const normalizedClRight: ContactLensEyePrescription = {
+          sph: clRight.sph,
+          cyl: clRight.cyl,
+          axis: isNonZeroCyl(clRight.cyl) ? clRight.axis : '0',
+          add: clRight.add || undefined,
+        };
+        const normalizedClLeft: ContactLensEyePrescription = {
+          sph: clLeft.sph,
+          cyl: clLeft.cyl,
+          axis: isNonZeroCyl(clLeft.cyl) ? clLeft.axis : '0',
+          add: clLeft.add || undefined,
+        };
+        rules.push(
+          {
+            field: 'clRight',
+            label: t('مقاس العين اليمنى (OD)', 'Right Eye (OD)'),
+            error: validateContactEye(normalizedClRight, 'العين اليمنى', 'Right Eye', locale),
+          },
+          {
+            field: 'clLeft',
+            label: t('مقاس العين اليسرى (OS)', 'Left Eye (OS)'),
+            error: validateContactEye(normalizedClLeft, 'العين اليسرى', 'Left Eye', locale),
+          }
+        );
+      } else {
+        const normalizedRightEye: EyePrescription = {
+          sph: rightEye.sph,
+          cyl: rightEye.cyl,
+          axis: isNonZeroCyl(rightEye.cyl) ? rightEye.axis : '0',
+          add: rightEye.add || (showAddRequired ? '+1.50' : undefined),
+        };
+        const normalizedLeftEye: EyePrescription = {
+          sph: leftEye.sph,
+          cyl: leftEye.cyl,
+          axis: isNonZeroCyl(leftEye.cyl) ? leftEye.axis : '0',
+          add: leftEye.add || (showAddRequired ? '+1.50' : undefined),
+        };
+        rules.push(
+          {
+            field: 'odEye',
+            label: t('مقاس العين اليمنى (OD)', 'Right Eye (OD)'),
+            error: validateEyeglassesEye(
+              normalizedRightEye,
+              'العين اليمنى (OD)',
+              'Right Eye (OD)',
+              locale
+            ),
+          },
+          {
+            field: 'osEye',
+            label: t('مقاس العين اليسرى (OS)', 'Left Eye (OS)'),
+            error: validateEyeglassesEye(
+              normalizedLeftEye,
+              'العين اليسرى (OS)',
+              'Left Eye (OS)',
+              locale
+            ),
+          }
+        );
+      }
+
+      if (saveToAccount && !isGuest) {
+        rules.push({
+          field: 'rxLabel',
+          label: t('اسم الوصفة الطبية', 'Prescription label'),
+          error: !rxLabel.trim() ? pickMsg(VALIDATION_MESSAGES.rxLabelRequired, locale) : null,
+        });
+      }
+    }
+
+    if (choice === 'image') {
+      rules.push({
+        field: 'rxImage',
+        label: t('صورة أو ملف PDF للوصفة الطبية', 'Prescription photo or PDF'),
+        error: !imageUrl ? pickMsg(VALIDATION_MESSAGES.rxImageRequired, locale) : null,
+      });
+    }
+
+    return rules;
+  }, [
+    isContact,
+    extraOptions,
+    mirrorColor,
+    choice,
+    clRight,
+    clLeft,
+    rightEye,
+    leftEye,
+    showAddRequired,
+    saveToAccount,
+    isGuest,
+    rxLabel,
+    imageUrl,
+    locale,
+    t,
+  ]);
+
+  useEffect(() => {
+    if (open && rxValidation.submitted) {
+      rxValidation.revalidate(buildRxRules());
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open, rxValidation.submitted, buildRxRules]);
+
+  if (!open) return null;
 
   const pricing = isContact
     ? calculateLensPricingBreakdown('none', [], lensOptions)
@@ -311,8 +457,22 @@ export const PrescriptionSheet: React.FC<PrescriptionSheetProps> = ({
     if (!found) return;
     setChoice('manual');
     if (found.kind === 'contact_lenses' && found.contactRight && found.contactLeft && isContact) {
-      setClRight(found.contactRight);
-      setClLeft(found.contactLeft);
+      setClRight({
+        sph: found.contactRight.sph || '-1.00',
+        cyl: found.contactRight.cyl || '0.00',
+        axis: found.contactRight.axis || '0',
+        add: found.contactRight.add || '',
+      });
+      setClLeft({
+        sph: found.contactLeft.sph || '-1.00',
+        cyl: found.contactLeft.cyl || '0.00',
+        axis: found.contactLeft.axis || '0',
+        add: found.contactLeft.add || '',
+      });
+      setPdMode(found.pdMode || 'single');
+      setPd(found.pd || '63');
+      setPdRight(found.pdRight || '31.5');
+      setPdLeft(found.pdLeft || '31.5');
     } else {
       setRightEye(found.rightEye || { ...DEFAULT_EYE });
       setLeftEye(found.leftEye || { ...DEFAULT_EYE });
@@ -329,44 +489,48 @@ export const PrescriptionSheet: React.FC<PrescriptionSheetProps> = ({
     const file = e.target.files?.[0];
     e.target.value = '';
     if (!file) return;
-    if (!file.type.startsWith('image/')) {
-      setUploadError(t('يرجى اختيار ملف صورة فقط (JPG أو PNG)', 'Please select an image file only'));
-      return;
-    }
-
-    const fbUid = auth.currentUser?.uid || user.uid;
-    if (!fbUid || fbUid === 'guest_pending') {
+    const isPdf = file.type === 'application/pdf' || file.name.toLowerCase().endsWith('.pdf');
+    const isImage = file.type.startsWith('image/');
+    if (!isImage && !isPdf) {
       setUploadError(
-        t('يرجى الانتظار لحظة أو تسجيل الدخول لرفع الصورة', 'Please sign in first to upload image')
+        t('يرجى اختيار صورة (JPG/PNG) أو ملف PDF للوصفة الطبية', 'Please select an image or PDF file')
       );
       return;
     }
 
+    if (isPdf && file.size > 700 * 1024) {
+      setUploadError(
+        t('حجم ملف PDF يتجاوز الحد الأقصى 700 كيلوبايت', 'PDF file exceeds 700 KB limit')
+      );
+      return;
+    }
+
+    const fbUid = auth.currentUser?.uid || user.uid || 'guest';
     setUploadError(null);
     setUploading(true);
-    setUploadProgress(5);
+    setUploadProgress(10);
     try {
-      const compressedBlob = await compressPrescriptionImage(file, 1200);
-      if (compressedBlob.size > 5 * 1024 * 1024) {
-        setUploadError(t('حجم الصورة يتجاوز الحد الأقصى 5 ميجابايت', 'Image exceeds 5MB limit'));
-        setUploading(false);
-        return;
-      }
       if (storagePath) {
         await deletePrescriptionImage(storagePath);
       }
-      const uploaded = await uploadPrescriptionImage(fbUid, compressedBlob, file.name, (pct) =>
+      const uploaded = await uploadPrescriptionDocument(fbUid, file, (pct) =>
         setUploadProgress(pct)
       );
       setImageUrl(uploaded.url);
       setStoragePath(uploaded.path);
+      setFileName(uploaded.fileName);
+      setFileType(uploaded.fileType);
       setChoice('image');
-      showToast(t('تم رفع صورة الروشتة بنجاح', 'Prescription image uploaded'));
+      showToast(
+        uploaded.fileType === 'pdf'
+          ? t('تم رفع ملف PDF للوصفة بنجاح', 'Prescription PDF uploaded')
+          : t('تم رفع صورة الروشتة بنجاح', 'Prescription image uploaded')
+      );
     } catch {
       setUploadError(
         t(
-          'تعذر رفع الصورة إلى الخادم. تأكد من الاتصال بالإنترنت وحاول مرة أخرى.',
-          'Failed to upload image to Firebase Storage. Please check your connection and try again.'
+          'تعذر معالجة أو رفع الملف. يرجى اختيار ملف آخر والمحاولة مرة أخرى.',
+          'Failed to process or upload file. Please try again.'
         )
       );
     } finally {
@@ -380,6 +544,8 @@ export const PrescriptionSheet: React.FC<PrescriptionSheetProps> = ({
     }
     setImageUrl('');
     setStoragePath('');
+    setFileName('');
+    setFileType(undefined);
     setUploadProgress(0);
   };
 
@@ -400,7 +566,10 @@ export const PrescriptionSheet: React.FC<PrescriptionSheetProps> = ({
   });
 
   const handleConfirm = () => {
-    setValidationError(null);
+    if (!rxValidation.validateAll(buildRxRules())) {
+      return;
+    }
+
     const lensFields = buildBaseLensFields();
 
     if (choice === 'none') {
@@ -426,32 +595,32 @@ export const PrescriptionSheet: React.FC<PrescriptionSheetProps> = ({
 
     if (choice === 'manual') {
       if (isContact) {
-        const errR = validateContactEye(clRight, 'العين اليمنى', 'Right Eye', locale);
-        if (errR) {
-          setValidationError(errR);
-          return;
-        }
-        const errL = validateContactEye(clLeft, 'العين اليسرى', 'Left Eye', locale);
-        if (errL) {
-          setValidationError(errL);
-          return;
-        }
-        if (clRight.boxes === 0 && clLeft.boxes === 0) {
-          setValidationError(
-            t('يرجى تحديد علبة واحدة على الأقل لإحدى العينين', 'Select at least 1 box for either eye')
-          );
-          return;
-        }
+        const normalizedClRight: ContactLensEyePrescription = {
+          sph: clRight.sph,
+          cyl: clRight.cyl,
+          axis: isNonZeroCyl(clRight.cyl) ? clRight.axis : '0',
+          add: clRight.add || undefined,
+        };
+        const normalizedClLeft: ContactLensEyePrescription = {
+          sph: clLeft.sph,
+          cyl: clLeft.cyl,
+          axis: isNonZeroCyl(clLeft.cyl) ? clLeft.axis : '0',
+          add: clLeft.add || undefined,
+        };
+        const computedPd = effectivePdMode === 'single' ? pd : `${pdRight}/${pdLeft}`;
 
         if (saveToAccount && !isGuest) {
           savePrescription({
             label: rxLabel.trim() || t('عدسات لاصقة', 'Contact Lens Rx'),
             kind: 'contact_lenses',
-            rightEye: { sph: clRight.sph, cyl: clRight.cyl, axis: clRight.axis },
-            leftEye: { sph: clLeft.sph, cyl: clLeft.cyl, axis: clLeft.axis },
-            pd: '63',
-            contactRight: clRight,
-            contactLeft: clLeft,
+            rightEye: normalizedClRight,
+            leftEye: normalizedClLeft,
+            pd: computedPd,
+            pdMode: effectivePdMode,
+            pdRight: effectivePdMode === 'dual' ? pdRight : undefined,
+            pdLeft: effectivePdMode === 'dual' ? pdLeft : undefined,
+            contactRight: normalizedClRight,
+            contactLeft: normalizedClLeft,
             notes: notes.trim() || undefined,
           });
         }
@@ -460,12 +629,20 @@ export const PrescriptionSheet: React.FC<PrescriptionSheetProps> = ({
           type: 'manual',
           mode: 'manual',
           ...lensFields,
-          rightEye: { sph: clRight.sph, cyl: clRight.cyl, axis: clRight.axis },
-          leftEye: { sph: clLeft.sph, cyl: clLeft.cyl, axis: clLeft.axis },
+          rightEye: normalizedClRight,
+          leftEye: normalizedClLeft,
+          pd: computedPd,
+          pdMode: effectivePdMode,
+          pdRight: effectivePdMode === 'dual' ? pdRight : undefined,
+          pdLeft: effectivePdMode === 'dual' ? pdLeft : undefined,
           values: {
             kind: 'contact_lenses',
-            contactRight: clRight,
-            contactLeft: clLeft,
+            pdMode: effectivePdMode,
+            pd: computedPd,
+            pdRight: effectivePdMode === 'dual' ? pdRight : undefined,
+            pdLeft: effectivePdMode === 'dual' ? pdLeft : undefined,
+            contactRight: normalizedClRight,
+            contactLeft: normalizedClLeft,
           },
           notes: notes.trim() || undefined,
         });
@@ -485,27 +662,6 @@ export const PrescriptionSheet: React.FC<PrescriptionSheetProps> = ({
         axis: isNonZeroCyl(leftEye.cyl) ? leftEye.axis : '0',
         add: leftEye.add || (showAddRequired ? '+1.50' : undefined),
       };
-
-      const errR = validateEyeglassesEye(
-        normalizedRightEye,
-        'العين اليمنى (OD)',
-        'Right Eye (OD)',
-        locale
-      );
-      if (errR) {
-        setValidationError(errR);
-        return;
-      }
-      const errL = validateEyeglassesEye(
-        normalizedLeftEye,
-        'العين اليسرى (OS)',
-        'Left Eye (OS)',
-        locale
-      );
-      if (errL) {
-        setValidationError(errL);
-        return;
-      }
 
       const computedPd = effectivePdMode === 'single' ? pd : `${pdRight}/${pdLeft}`;
       const resolvedFittingHeight = isProgressive ? fittingHeight || '18' : undefined;
@@ -558,17 +714,13 @@ export const PrescriptionSheet: React.FC<PrescriptionSheetProps> = ({
     }
 
     if (choice === 'image') {
-      if (!imageUrl) {
-        setValidationError(
-          t('يرجى رفع صورة الروشتة أولاً أو اختيار طريقة أخرى', 'Please upload the prescription photo first')
-        );
-        return;
-      }
       onSave({
         type: 'image',
         mode: 'image',
         imageUrl,
         storagePath,
+        fileName: fileName || undefined,
+        fileType: fileType || (isPdfPrescriptionUrl(imageUrl) ? 'pdf' : 'image'),
         ...lensFields,
         notes: notes.trim() || undefined,
       });
@@ -620,7 +772,12 @@ export const PrescriptionSheet: React.FC<PrescriptionSheetProps> = ({
         </div>
 
         {/* Scrollable Body */}
-        <div className="flex-1 overflow-y-auto p-4 sm:p-6 space-y-5 text-xs">
+        <div ref={sheetBodyRef} className="flex-1 overflow-y-auto p-4 sm:p-6 space-y-5 text-xs">
+          <ValidationSummaryBanner
+            errors={rxValidation.errors}
+            onSelectField={rxValidation.focusField}
+            mode="form"
+          />
           {/* 1 & 2: Vision Type & Extra Lens Options */}
           {!isContact && (
             <div className="p-4 rounded-2xl bg-slate-50 dark:bg-slate-900/75 border border-slate-200/80 dark:border-slate-800 space-y-4">
@@ -711,7 +868,14 @@ export const PrescriptionSheet: React.FC<PrescriptionSheetProps> = ({
                   </div>
 
                   {extraOptions.includes('mirror') && (
-                    <div className="p-3 rounded-xl bg-white dark:bg-[#131C2E] border border-[#D9B24C]/60 space-y-2">
+                    <div
+                      {...rxValidation.getFieldWrapperProps('mirrorColor')}
+                      className={rxValidation.getControlClasses(
+                        'mirrorColor',
+                        'p-3 rounded-xl bg-white dark:bg-[#131C2E] border border-[#D9B24C]/60 space-y-2',
+                        'p-3 rounded-xl space-y-2'
+                      )}
+                    >
                       <span className="block text-[11px] font-extrabold text-[#11223E] dark:text-[#E2BD5B]">
                         {t('لون العدسة العاكسة:', 'Mirror Lens Color:')}
                       </span>
@@ -723,7 +887,7 @@ export const PrescriptionSheet: React.FC<PrescriptionSheetProps> = ({
                               key={c.id}
                               type="button"
                               onClick={() => setMirrorColor(c.id)}
-                              className={`min-h-[42px] px-3 py-1.5 rounded-xl border flex items-center gap-2 font-bold ${
+                              className={`min-h-[44px] px-3 py-1.5 rounded-xl border flex items-center gap-2 font-bold ${
                                 active
                                   ? 'border-[#D9B24C] bg-[#D9B24C]/15'
                                   : 'border-slate-200 dark:border-slate-700'
@@ -738,6 +902,10 @@ export const PrescriptionSheet: React.FC<PrescriptionSheetProps> = ({
                           );
                         })}
                       </div>
+                      <FieldError
+                        id={rxValidation.getErrorId('mirrorColor')}
+                        message={rxValidation.getError('mirrorColor')}
+                      />
                     </div>
                   )}
                 </div>
@@ -791,7 +959,7 @@ export const PrescriptionSheet: React.FC<PrescriptionSheetProps> = ({
               }`}
             >
               <Camera className="w-4 h-4 shrink-0" />
-              <span>{t('صورة الروشتة', 'Upload Photo')}</span>
+              <span>{t('صورة / PDF للروشتة', 'Upload Photo / PDF')}</span>
             </button>
 
             <button
@@ -869,6 +1037,7 @@ export const PrescriptionSheet: React.FC<PrescriptionSheetProps> = ({
                   {[
                     {
                       key: 'right',
+                      field: 'clRight',
                       title: t('العين اليمنى (OD)', 'Right Eye (OD)'),
                       val: clRight,
                       setVal: setClRight,
@@ -876,6 +1045,7 @@ export const PrescriptionSheet: React.FC<PrescriptionSheetProps> = ({
                     },
                     {
                       key: 'left',
+                      field: 'clLeft',
                       title: t('العين اليسرى (OS)', 'Left Eye (OS)'),
                       val: clLeft,
                       setVal: setClLeft,
@@ -883,10 +1053,16 @@ export const PrescriptionSheet: React.FC<PrescriptionSheetProps> = ({
                     },
                   ].map((eye) => {
                     const axisRequired = isNonZeroCyl(eye.val.cyl);
+                    const hasEyeErr = rxValidation.hasError(eye.field);
                     return (
                       <div
                         key={eye.key}
-                        className="p-4 rounded-xl bg-slate-50 dark:bg-slate-900/75 border border-slate-200/80 dark:border-slate-800 space-y-3"
+                        {...rxValidation.getFieldWrapperProps(eye.field)}
+                        className={rxValidation.getControlClasses(
+                          eye.field,
+                          'p-4 rounded-xl bg-slate-50 dark:bg-slate-900/75 border border-slate-200/80 dark:border-slate-800 space-y-3',
+                          'p-4 rounded-xl space-y-3'
+                        )}
                       >
                         <div className="flex items-center justify-between gap-2">
                           <span className="font-extrabold text-sm text-[#11223E] dark:text-white">
@@ -942,8 +1118,13 @@ export const PrescriptionSheet: React.FC<PrescriptionSheetProps> = ({
                             <select
                               disabled={!axisRequired}
                               value={eye.val.axis}
+                              aria-invalid={hasEyeErr && axisRequired ? true : undefined}
                               onChange={(e) => eye.setVal({ ...eye.val, axis: e.target.value })}
-                              className="w-full min-h-[44px] px-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-[#131C2E] font-mono-num text-sm disabled:opacity-45"
+                              className={`w-full min-h-[44px] px-2 rounded-xl font-mono-num text-sm disabled:opacity-45 ${
+                                hasEyeErr && axisRequired
+                                  ? 'border-2 border-[#DC2626] bg-[#FEF2F2] dark:bg-rose-950/30'
+                                  : 'border border-slate-200 dark:border-slate-700 bg-white dark:bg-[#131C2E]'
+                              }`}
                             >
                               {AXIS_OPTIONS.map((o) => (
                                 <option key={o} value={o}>{o}</option>
@@ -952,48 +1133,26 @@ export const PrescriptionSheet: React.FC<PrescriptionSheetProps> = ({
                           </div>
                         </div>
 
-                        <div className="grid grid-cols-3 gap-2">
-                          <div>
-                            <label className="block text-[11px] font-bold mb-1">BC</label>
-                            <select
-                              value={eye.val.bc}
-                              onChange={(e) => eye.setVal({ ...eye.val, bc: e.target.value })}
-                              className="w-full min-h-[44px] px-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-[#131C2E] font-mono-num text-sm"
-                            >
-                              {BC_OPTIONS.map((o) => (
-                                <option key={o} value={o}>{o}</option>
-                              ))}
-                            </select>
-                          </div>
-                          <div>
-                            <label className="block text-[11px] font-bold mb-1">DIA</label>
-                            <select
-                              value={eye.val.dia}
-                              onChange={(e) => eye.setVal({ ...eye.val, dia: e.target.value })}
-                              className="w-full min-h-[44px] px-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-[#131C2E] font-mono-num text-sm"
-                            >
-                              {DIA_OPTIONS.map((o) => (
-                                <option key={o} value={o}>{o}</option>
-                              ))}
-                            </select>
-                          </div>
-                          <div>
-                            <label className="block text-[11px] font-bold mb-1">
-                              {t('عدد العلب', 'Boxes')}
-                            </label>
-                            <select
-                              value={eye.val.boxes}
-                              onChange={(e) =>
-                                eye.setVal({ ...eye.val, boxes: Number(e.target.value) })
-                              }
-                              className="w-full min-h-[44px] px-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-[#131C2E] font-mono-num text-sm"
-                            >
-                              {Array.from({ length: 13 }, (_, n) => n).map((n) => (
-                                <option key={n} value={n}>{n}</option>
-                              ))}
-                            </select>
-                          </div>
+                        <div>
+                          <label className="block text-[11px] font-bold mb-1">
+                            {t('ADD (اختياري)', 'ADD (Optional)')}
+                          </label>
+                          <select
+                            value={eye.val.add || ''}
+                            onChange={(e) => eye.setVal({ ...eye.val, add: e.target.value })}
+                            className="w-full min-h-[44px] px-3 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-[#131C2E] font-mono-num text-sm"
+                          >
+                            <option value="">{t('غير محدد (+1.50 اختياري)', 'None (+1.50 optional)')}</option>
+                            {ADD_OPTIONS.map((o) => (
+                              <option key={o} value={o}>{o}</option>
+                            ))}
+                          </select>
                         </div>
+
+                        <FieldError
+                          id={rxValidation.getErrorId(eye.field)}
+                          message={rxValidation.getError(eye.field)}
+                        />
                       </div>
                     );
                   })}
@@ -1003,6 +1162,7 @@ export const PrescriptionSheet: React.FC<PrescriptionSheetProps> = ({
                   {[
                     {
                       key: 'od',
+                      field: 'odEye',
                       title: t('العين اليمنى (OD)', 'Right Eye (OD)'),
                       val: rightEye,
                       setVal: setRightEye,
@@ -1010,6 +1170,7 @@ export const PrescriptionSheet: React.FC<PrescriptionSheetProps> = ({
                     },
                     {
                       key: 'os',
+                      field: 'osEye',
                       title: t('العين اليسرى (OS)', 'Left Eye (OS)'),
                       val: leftEye,
                       setVal: setLeftEye,
@@ -1017,10 +1178,16 @@ export const PrescriptionSheet: React.FC<PrescriptionSheetProps> = ({
                     },
                   ].map((eye) => {
                     const axisRequired = isNonZeroCyl(eye.val.cyl);
+                    const hasEyeErr = rxValidation.hasError(eye.field);
                     return (
                       <div
                         key={eye.key}
-                        className="p-4 rounded-xl bg-slate-50 dark:bg-slate-900/75 border border-slate-200/80 dark:border-slate-800 space-y-3"
+                        {...rxValidation.getFieldWrapperProps(eye.field)}
+                        className={rxValidation.getControlClasses(
+                          eye.field,
+                          'p-4 rounded-xl bg-slate-50 dark:bg-slate-900/75 border border-slate-200/80 dark:border-slate-800 space-y-3',
+                          'p-4 rounded-xl space-y-3'
+                        )}
                       >
                         <div className="flex items-center justify-between gap-2">
                           <span className="font-extrabold text-sm text-[#11223E] dark:text-white">
@@ -1076,8 +1243,13 @@ export const PrescriptionSheet: React.FC<PrescriptionSheetProps> = ({
                             <select
                               disabled={!axisRequired}
                               value={eye.val.axis}
+                              aria-invalid={hasEyeErr && axisRequired ? true : undefined}
                               onChange={(e) => eye.setVal({ ...eye.val, axis: e.target.value })}
-                              className="w-full min-h-[44px] px-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-[#131C2E] font-mono-num text-sm disabled:opacity-45"
+                              className={`w-full min-h-[44px] px-2 rounded-xl font-mono-num text-sm disabled:opacity-45 ${
+                                hasEyeErr && axisRequired
+                                  ? 'border-2 border-[#DC2626] bg-[#FEF2F2] dark:bg-rose-950/30'
+                                  : 'border border-slate-200 dark:border-slate-700 bg-white dark:bg-[#131C2E]'
+                              }`}
                             >
                               {AXIS_OPTIONS.map((o) => (
                                 <option key={o} value={o}>{o}</option>
@@ -1105,108 +1277,113 @@ export const PrescriptionSheet: React.FC<PrescriptionSheetProps> = ({
                             ))}
                           </select>
                         </div>
+
+                        <FieldError
+                          id={rxValidation.getErrorId(eye.field)}
+                          message={rxValidation.getError(eye.field)}
+                        />
                       </div>
                     );
                   })}
-
-                  {/* PD Card with Segmented Control */}
-                  <div className="p-4 rounded-xl bg-slate-50 dark:bg-slate-900/75 border border-slate-200/80 dark:border-slate-800 space-y-3">
-                    <div className="flex flex-wrap items-center justify-between gap-2">
-                      <span className="text-sm font-extrabold text-[#11223E] dark:text-white">
-                        {isProgressive
-                          ? t('المسافة الحدقية لكل عين (PD — للعدسة التدريجية)', 'Per-Eye PD (Progressive)')
-                          : t('المسافة الحدقية (PD)', 'Pupillary Distance (PD)')}
-                      </span>
-                      {!isProgressive && (
-                        <div className="bg-white dark:bg-[#131C2E] p-1 rounded-xl border border-slate-200 dark:border-slate-700 inline-flex items-center gap-1">
-                          <button
-                            type="button"
-                            onClick={() => setPdMode('single')}
-                            className={`min-h-[34px] px-3 rounded-lg text-xs font-bold transition-colors ${
-                              pdMode === 'single'
-                                ? 'bg-[#11223E] text-white dark:bg-[#D9B24C] dark:text-[#11223E]'
-                                : 'text-slate-600 dark:text-slate-300'
-                            }`}
-                          >
-                            {t('قيمة واحدة', 'Single')}
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => setPdMode('dual')}
-                            className={`min-h-[34px] px-3 rounded-lg text-xs font-bold transition-colors ${
-                              pdMode === 'dual'
-                                ? 'bg-[#11223E] text-white dark:bg-[#D9B24C] dark:text-[#11223E]'
-                                : 'text-slate-600 dark:text-slate-300'
-                            }`}
-                          >
-                            {t('عينين منفصلتين', 'Dual Eyes')}
-                          </button>
-                        </div>
-                      )}
-                    </div>
-
-                    {effectivePdMode === 'single' ? (
-                      <select
-                        value={pd}
-                        onChange={(e) => setPd(e.target.value)}
-                        className="w-full min-h-[44px] px-3 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-[#131C2E] font-mono-num text-sm"
-                      >
-                        {PD_SINGLE_OPTIONS.map((o) => (
-                          <option key={o} value={o}>{o}</option>
-                        ))}
-                      </select>
-                    ) : (
-                      <div className="grid grid-cols-2 gap-2.5">
-                        <div>
-                          <label className="block text-[11px] font-bold mb-1">
-                            PD {t('العين اليمنى (OD)', 'Right (OD)')}
-                          </label>
-                          <select
-                            value={pdRight}
-                            onChange={(e) => setPdRight(e.target.value)}
-                            className="w-full min-h-[44px] px-3 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-[#131C2E] font-mono-num text-sm"
-                          >
-                            {PD_DUAL_OPTIONS.map((o) => (
-                              <option key={o} value={o}>{o} mm</option>
-                            ))}
-                          </select>
-                        </div>
-                        <div>
-                          <label className="block text-[11px] font-bold mb-1">
-                            PD {t('العين اليسرى (OS)', 'Left (OS)')}
-                          </label>
-                          <select
-                            value={pdLeft}
-                            onChange={(e) => setPdLeft(e.target.value)}
-                            className="w-full min-h-[44px] px-3 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-[#131C2E] font-mono-num text-sm"
-                          >
-                            {PD_DUAL_OPTIONS.map((o) => (
-                              <option key={o} value={o}>{o} mm</option>
-                            ))}
-                          </select>
-                        </div>
-                      </div>
-                    )}
-
-                    {isProgressive && (
-                      <div>
-                        <label className="block text-[11px] font-bold text-[#11223E] dark:text-[#E2BD5B] mb-1">
-                          {t('ارتفاع التركيب (Fitting Height — مم)', 'Fitting Height (mm)')}
-                        </label>
-                        <select
-                          value={fittingHeight}
-                          onChange={(e) => setFittingHeight(e.target.value)}
-                          className="w-full min-h-[44px] px-3 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-[#131C2E] font-mono-num text-sm"
-                        >
-                          {FITTING_HEIGHT_OPTIONS.map((o) => (
-                            <option key={o} value={o}>{o} mm</option>
-                          ))}
-                        </select>
-                      </div>
-                    )}
-                  </div>
                 </div>
               )}
+
+              {/* PD Card with Segmented Control (for both Glasses & Contact Lenses) */}
+              <div className="p-4 rounded-xl bg-slate-50 dark:bg-slate-900/75 border border-slate-200/80 dark:border-slate-800 space-y-3">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <span className="text-sm font-extrabold text-[#11223E] dark:text-white">
+                    {isProgressive
+                      ? t('المسافة الحدقية لكل عين (PD — للعدسة التدريجية)', 'Per-Eye PD (Progressive)')
+                      : t('المسافة الحدقية (PD)', 'Pupillary Distance (PD)')}
+                  </span>
+                  {!isProgressive && (
+                    <div className="bg-white dark:bg-[#131C2E] p-1 rounded-xl border border-slate-200 dark:border-slate-700 inline-flex items-center gap-1">
+                      <button
+                        type="button"
+                        onClick={() => setPdMode('single')}
+                        className={`min-h-[34px] px-3 rounded-lg text-xs font-bold transition-colors ${
+                          pdMode === 'single'
+                            ? 'bg-[#11223E] text-white dark:bg-[#D9B24C] dark:text-[#11223E]'
+                            : 'text-slate-600 dark:text-slate-300'
+                        }`}
+                      >
+                        {t('قيمة واحدة', 'Single')}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setPdMode('dual')}
+                        className={`min-h-[34px] px-3 rounded-lg text-xs font-bold transition-colors ${
+                          pdMode === 'dual'
+                            ? 'bg-[#11223E] text-white dark:bg-[#D9B24C] dark:text-[#11223E]'
+                            : 'text-slate-600 dark:text-slate-300'
+                        }`}
+                      >
+                        {t('عينين منفصلتين', 'Dual Eyes')}
+                      </button>
+                    </div>
+                  )}
+                </div>
+
+                {effectivePdMode === 'single' ? (
+                  <select
+                    value={pd}
+                    onChange={(e) => setPd(e.target.value)}
+                    className="w-full min-h-[44px] px-3 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-[#131C2E] font-mono-num text-sm"
+                  >
+                    {PD_SINGLE_OPTIONS.map((o) => (
+                      <option key={o} value={o}>{o}</option>
+                    ))}
+                  </select>
+                ) : (
+                  <div className="grid grid-cols-2 gap-2.5">
+                    <div>
+                      <label className="block text-[11px] font-bold mb-1">
+                        PD {t('العين اليمنى (OD)', 'Right (OD)')}
+                      </label>
+                      <select
+                        value={pdRight}
+                        onChange={(e) => setPdRight(e.target.value)}
+                        className="w-full min-h-[44px] px-3 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-[#131C2E] font-mono-num text-sm"
+                      >
+                        {PD_DUAL_OPTIONS.map((o) => (
+                          <option key={o} value={o}>{o} mm</option>
+                        ))}
+                      </select>
+                    </div>
+                    <div>
+                      <label className="block text-[11px] font-bold mb-1">
+                        PD {t('العين اليسرى (OS)', 'Left (OS)')}
+                      </label>
+                      <select
+                        value={pdLeft}
+                        onChange={(e) => setPdLeft(e.target.value)}
+                        className="w-full min-h-[44px] px-3 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-[#131C2E] font-mono-num text-sm"
+                      >
+                        {PD_DUAL_OPTIONS.map((o) => (
+                          <option key={o} value={o}>{o} mm</option>
+                        ))}
+                      </select>
+                    </div>
+                  </div>
+                )}
+
+                {isProgressive && (
+                  <div>
+                    <label className="block text-[11px] font-bold text-[#11223E] dark:text-[#E2BD5B] mb-1">
+                      {t('ارتفاع التركيب (Fitting Height — مم)', 'Fitting Height (mm)')}
+                    </label>
+                    <select
+                      value={fittingHeight}
+                      onChange={(e) => setFittingHeight(e.target.value)}
+                      className="w-full min-h-[44px] px-3 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-[#131C2E] font-mono-num text-sm"
+                    >
+                      {FITTING_HEIGHT_OPTIONS.map((o) => (
+                        <option key={o} value={o}>{o} mm</option>
+                      ))}
+                    </select>
+                  </div>
+                )}
+              </div>
 
               {/* Quick guide + Save Rx */}
               <div className="p-3 rounded-xl bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 space-y-2">
@@ -1241,68 +1418,104 @@ export const PrescriptionSheet: React.FC<PrescriptionSheetProps> = ({
                     <span>{t('حفظ هذا المقاس في حسابي للطلبات القادمة', 'Save Rx to my account')}</span>
                   </label>
                   {saveToAccount && (
-                    <input
-                      type="text"
-                      value={rxLabel}
-                      onChange={(e) => setRxLabel(e.target.value)}
-                      placeholder={t('اسم المقاس (مثلاً: نظارة القراءة 2026)', 'Rx Label')}
-                      className="w-full min-h-[44px] px-3 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-900 text-sm"
-                    />
+                    <div {...rxValidation.getFieldWrapperProps('rxLabel')} className="space-y-1">
+                      <input
+                        type="text"
+                        value={rxLabel}
+                        onChange={(e) => setRxLabel(e.target.value)}
+                        placeholder={t('اسم المقاس (مثلاً: نظارة القراءة 2026) *', 'Rx Label *')}
+                        {...rxValidation.getInputA11yProps('rxLabel')}
+                        className={`w-full min-h-[44px] px-3 rounded-xl text-sm ${rxValidation.getControlClasses(
+                          'rxLabel',
+                          'border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-900'
+                        )}`}
+                      />
+                      <FieldError
+                        id={rxValidation.getErrorId('rxLabel')}
+                        message={rxValidation.getError('rxLabel')}
+                      />
+                    </div>
                   )}
                 </div>
               )}
             </div>
           )}
 
-          {/* Upload Rx Photo Section */}
+          {/* Upload Rx Photo / PDF Section */}
           {choice === 'image' && (
             <div className="space-y-3">
               <div className="flex items-center gap-3">
                 <div className="h-px flex-1 bg-slate-200 dark:bg-slate-800" />
                 <span className="text-xs font-semibold text-slate-500 dark:text-slate-400">
-                  {t('ارفع صورة وصفة الطبيب', 'Upload doctor prescription photo')}
+                  {t('ارفع صورة أو ملف PDF لوصفة الطبيب', 'Upload doctor prescription photo or PDF')}
                 </span>
                 <div className="h-px flex-1 bg-slate-200 dark:bg-slate-800" />
               </div>
 
-              <div className="p-4 rounded-xl border-2 border-dashed border-slate-300 dark:border-slate-700 bg-slate-50 dark:bg-slate-900 text-center space-y-3">
+              <div
+                {...rxValidation.getFieldWrapperProps('rxImage')}
+                className={rxValidation.getControlClasses(
+                  'rxImage',
+                  'p-4 rounded-xl border-2 border-dashed border-slate-300 dark:border-slate-700 bg-slate-50 dark:bg-slate-900 text-center space-y-3',
+                  'p-4 rounded-xl border-dashed text-center space-y-3'
+                )}
+              >
                 <p className="text-slate-600 dark:text-slate-300 font-semibold">
                   {t(
-                    'التقط صورة واضحة للروشتة أو اخترها من المعرض (تُضغط تلقائياً حتى 1200px)',
-                    'Take a photo or choose from gallery (auto-compressed up to 1200px)'
+                    'التقط صورة واضحة للروشتة أو اختر صورة أو ملف PDF من جهازك',
+                    'Take a photo or choose an image or PDF file from your device'
                   )}
                 </p>
 
+                <input
+                  ref={cameraInputRef}
+                  type="file"
+                  accept="image/*"
+                  capture="environment"
+                  onChange={handleImagePick}
+                  className="hidden"
+                />
+                <input
+                  ref={galleryInputRef}
+                  type="file"
+                  accept="image/*,application/pdf,.pdf"
+                  onChange={handleImagePick}
+                  className="hidden"
+                />
+
                 <div className="flex flex-wrap justify-center gap-2.5">
-                  <label className="min-h-[46px] px-4 rounded-xl bg-[#11223E] text-white font-bold inline-flex items-center gap-1.5 cursor-pointer">
+                  <button
+                    type="button"
+                    disabled={uploading}
+                    onClick={() => cameraInputRef.current?.click()}
+                    className="min-h-[46px] px-4 rounded-xl bg-[#11223E] text-white font-bold inline-flex items-center gap-1.5 cursor-pointer disabled:opacity-50"
+                  >
                     <Camera className="w-4 h-4" />
                     <span>{t('فتح الكاميرا', 'Take Photo')}</span>
-                    <input
-                      type="file"
-                      accept="image/*"
-                      capture="environment"
-                      onChange={handleImagePick}
-                      className="hidden"
-                    />
-                  </label>
+                  </button>
 
-                  <label className="min-h-[46px] px-4 rounded-xl border-2 border-dashed border-slate-300 dark:border-slate-600 bg-white dark:bg-[#131C2E] font-extrabold inline-flex items-center gap-1.5 cursor-pointer">
+                  <button
+                    type="button"
+                    disabled={uploading}
+                    onClick={() => galleryInputRef.current?.click()}
+                    className="min-h-[46px] px-4 rounded-xl bg-[#D9B24C] hover:bg-[#c9a13c] text-[#11223E] border border-[#b38b2d] shadow-xs font-extrabold inline-flex items-center gap-1.5 cursor-pointer disabled:opacity-50"
+                  >
                     <ImagePlus className="w-4 h-4" />
-                    <span>{t('رفع صورة المقاس / الوصفة', 'From Gallery')}</span>
-                    <input
-                      type="file"
-                      accept="image/*"
-                      onChange={handleImagePick}
-                      className="hidden"
-                    />
-                  </label>
+                    <span>{t('رفع صورة أو PDF للمقاس', 'Upload Photo / PDF')}</span>
+                  </button>
                 </div>
+
+                <FieldError
+                  id={rxValidation.getErrorId('rxImage')}
+                  message={rxValidation.getError('rxImage')}
+                  className="justify-center"
+                />
 
                 {uploading && (
                   <div className="space-y-1.5 pt-2">
                     <div className="flex items-center justify-center gap-2 font-bold text-[#B38B2D]">
                       <Loader2 className="w-4 h-4 animate-spin" />
-                      <span>{t(`جارٍ رفع الصورة... ${uploadProgress}%`, `Uploading... ${uploadProgress}%`)}</span>
+                      <span>{t(`جارٍ رفع الملف... ${uploadProgress}%`, `Uploading... ${uploadProgress}%`)}</span>
                     </div>
                     <div className="h-2 rounded-full bg-slate-200 dark:bg-slate-800 overflow-hidden max-w-xs mx-auto">
                       <div
@@ -1318,19 +1531,47 @@ export const PrescriptionSheet: React.FC<PrescriptionSheetProps> = ({
                 )}
 
                 {imageUrl && (
-                  <div className="pt-2 space-y-2">
-                    <img
-                      src={imageUrl}
-                      alt={t('معاينة الروشتة', 'Prescription preview')}
-                      className="max-h-56 mx-auto rounded-xl border border-slate-200 dark:border-slate-700 object-contain"
-                    />
+                  <div className="pt-2 space-y-2.5">
+                    {isPdfPrescriptionUrl(imageUrl, fileType) ? (
+                      <div className="p-3 rounded-xl bg-white dark:bg-[#131C2E] border border-slate-200 dark:border-slate-700 flex flex-wrap items-center justify-between gap-2 text-start max-w-md mx-auto">
+                        <div className="flex items-center gap-2.5 min-w-0">
+                          <div className="w-10 h-10 rounded-lg bg-rose-50 dark:bg-rose-950/40 text-rose-600 flex items-center justify-center shrink-0">
+                            <FileText className="w-5 h-5" />
+                          </div>
+                          <div className="min-w-0">
+                            <div className="font-bold text-xs text-[#11223E] dark:text-white truncate">
+                              {fileName || t('ملف الوصفة الطبية (PDF)', 'Prescription Document (PDF)')}
+                            </div>
+                            <div className="text-[11px] text-emerald-600 dark:text-emerald-400 font-semibold">
+                              {t('جاهز للإرفاق مع الطلب', 'Ready to attach')}
+                            </div>
+                          </div>
+                        </div>
+                        <a
+                          href={imageUrl}
+                          download={fileName || 'prescription.pdf'}
+                          className="min-h-[36px] px-3 rounded-lg bg-slate-100 dark:bg-slate-800 text-xs font-bold inline-flex items-center gap-1"
+                        >
+                          <Download className="w-3.5 h-3.5" />
+                          <span>{t('تحميل', 'Download')}</span>
+                        </a>
+                      </div>
+                    ) : (
+                      <img
+                        src={imageUrl}
+                        alt={t('معاينة الروشتة', 'Prescription preview')}
+                        className="max-h-56 mx-auto rounded-xl border border-slate-200 dark:border-slate-700 object-contain"
+                      />
+                    )}
                     <button
                       type="button"
                       onClick={() => void handleDeleteUploadedImage()}
                       className="min-h-[40px] px-3 rounded-lg bg-rose-50 dark:bg-rose-950/30 text-rose-700 dark:text-rose-400 font-bold inline-flex items-center gap-1"
                     >
                       <Trash2 className="w-3.5 h-3.5" />
-                      {t('حذف الصورة', 'Delete Photo')}
+                      {isPdfPrescriptionUrl(imageUrl, fileType)
+                        ? t('حذف الملف', 'Delete File')
+                        : t('حذف الصورة', 'Delete Photo')}
                     </button>
                   </div>
                 )}
@@ -1405,11 +1646,6 @@ export const PrescriptionSheet: React.FC<PrescriptionSheetProps> = ({
             </span>
           </div>
 
-          {validationError && (
-            <div className="p-3 rounded-xl bg-rose-50 dark:bg-rose-950/30 border border-rose-200 dark:border-rose-900 text-rose-700 dark:text-rose-300 font-bold">
-              {validationError}
-            </div>
-          )}
         </div>
 
         {/* Sticky Footer */}

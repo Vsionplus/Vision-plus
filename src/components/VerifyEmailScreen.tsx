@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useState } from 'react';
 import {
   MailCheck,
   RefreshCw,
@@ -10,9 +10,13 @@ import {
   Lock,
 } from 'lucide-react';
 import { useStore } from '../store/StoreContext';
+import { FieldValidationRule, useFormValidation } from '../hooks/useFormValidation';
+import { FieldError, ValidationSummaryBanner } from './FormValidationUI';
+import { VALIDATION_MESSAGES, pickMsg } from '../utils/validationMessages';
 
 export const VerifyEmailScreen: React.FC = () => {
   const {
+    locale,
     t,
     appearance,
     firebaseUser,
@@ -35,6 +39,38 @@ export const VerifyEmailScreen: React.FC = () => {
   const [changingEmail, setChangingEmail] = useState(false);
   const [statusMsg, setStatusMsg] = useState<string | null>(null);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
+
+  const emailChangeValidation = useFormValidation({ formId: 'verify-email-change' });
+
+  const buildEmailRules = useCallback((): FieldValidationRule[] => {
+    const cleanEmail = newEmail.trim();
+    const rules: FieldValidationRule[] = [
+      {
+        field: 'newEmail',
+        label: t('البريد الإلكتروني الجديد', 'New Email Address'),
+        error: !cleanEmail
+          ? pickMsg(VALIDATION_MESSAGES.emailRequired, locale)
+          : !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(cleanEmail)
+          ? pickMsg(VALIDATION_MESSAGES.emailInvalid, locale)
+          : null,
+      },
+    ];
+    if (needsPassword) {
+      rules.push({
+        field: 'currentPassword',
+        label: t('كلمة المرور الحالية', 'Current Password'),
+        error: !currentPassword ? pickMsg(VALIDATION_MESSAGES.passwordRequired, locale) : null,
+      });
+    }
+    return rules;
+  }, [newEmail, needsPassword, currentPassword, t, locale]);
+
+  useEffect(() => {
+    if (emailChangeValidation.submitted) {
+      emailChangeValidation.revalidate(buildEmailRules());
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [emailChangeValidation.submitted, buildEmailRules]);
 
   // 60-second resend countdown
   useEffect(() => {
@@ -127,8 +163,7 @@ export const VerifyEmailScreen: React.FC = () => {
     e.preventDefault();
     setErrorMsg(null);
     setStatusMsg(null);
-    if (!newEmail.trim() || !newEmail.includes('@')) {
-      setErrorMsg(t('يرجى إدخال بريد إلكتروني صحيح.', 'Please enter a valid email address.'));
+    if (!emailChangeValidation.validateAll(buildEmailRules())) {
       return;
     }
 
@@ -137,6 +172,7 @@ export const VerifyEmailScreen: React.FC = () => {
       const res = await changeVerificationEmail(newEmail.trim(), currentPassword || undefined);
       if (res.requiresPassword) {
         setNeedsPassword(true);
+        emailChangeValidation.reset();
         setErrorMsg(
           t(
             'يرجى إدخال كلمة المرور الحالية لتأكيد تغيير البريد الإلكتروني.',
@@ -257,6 +293,7 @@ export const VerifyEmailScreen: React.FC = () => {
               onClick={() => {
                 setEditingEmail(true);
                 setErrorMsg(null);
+                emailChangeValidation.reset();
               }}
               className="w-full min-h-[44px] px-4 py-2.5 rounded-2xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-[#0D131F] font-bold text-xs flex items-center justify-center gap-2 hover:border-[var(--vp-secondary)] transition-colors"
             >
@@ -265,39 +302,63 @@ export const VerifyEmailScreen: React.FC = () => {
             </button>
           ) : (
             <form
+              noValidate
               onSubmit={handleChangeEmail}
               className="p-4 rounded-2xl bg-slate-50 dark:bg-[#0D131F] border border-slate-200 dark:border-slate-800 space-y-3"
             >
-              <label className="block text-xs font-bold">
-                {t('البريد الإلكتروني الجديد', 'New Email Address')}
-              </label>
-              <input
-                required
-                type="email"
-                dir="ltr"
-                value={newEmail}
-                onChange={(e) => setNewEmail(e.target.value)}
-                placeholder="new@example.com"
-                className="w-full min-h-[44px] px-3.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-[#131C2E] text-sm"
+              <ValidationSummaryBanner
+                errors={emailChangeValidation.errors}
+                onSelectField={emailChangeValidation.focusField}
               />
 
+              <div {...emailChangeValidation.getFieldWrapperProps('newEmail')}>
+                <label htmlFor="verify-new-email" className="block text-xs font-bold mb-1">
+                  {t('البريد الإلكتروني الجديد', 'New Email Address')} *
+                </label>
+                <input
+                  id="verify-new-email"
+                  type="email"
+                  dir="ltr"
+                  value={newEmail}
+                  onChange={(e) => setNewEmail(e.target.value)}
+                  placeholder="new@example.com"
+                  {...emailChangeValidation.getInputA11yProps('newEmail')}
+                  className={`w-full min-h-[44px] px-3.5 rounded-xl text-sm transition-colors ${emailChangeValidation.getControlClasses(
+                    'newEmail',
+                    'border border-slate-200 dark:border-slate-700 bg-white dark:bg-[#131C2E]'
+                  )}`}
+                />
+                <FieldError
+                  id={emailChangeValidation.getErrorId('newEmail')}
+                  message={emailChangeValidation.getError('newEmail')}
+                />
+              </div>
+
               {needsPassword && (
-                <div>
-                  <label className="block text-xs font-bold mb-1">
-                    {t('كلمة المرور الحالية', 'Current Password')}
+                <div {...emailChangeValidation.getFieldWrapperProps('currentPassword')}>
+                  <label htmlFor="verify-current-pass" className="block text-xs font-bold mb-1">
+                    {t('كلمة المرور الحالية', 'Current Password')} *
                   </label>
                   <div className="relative">
-                    <Lock className="w-4 h-4 text-slate-400 absolute top-1/2 -translate-y-1/2 start-3" />
+                    <Lock className="w-4 h-4 text-slate-400 absolute top-1/2 -translate-y-1/2 start-3 pointer-events-none" />
                     <input
-                      required
+                      id="verify-current-pass"
                       type="password"
                       dir="ltr"
                       value={currentPassword}
                       onChange={(e) => setCurrentPassword(e.target.value)}
                       placeholder="••••••••"
-                      className="w-full min-h-[44px] ps-9 pe-3 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-[#131C2E] text-sm"
+                      {...emailChangeValidation.getInputA11yProps('currentPassword')}
+                      className={`w-full min-h-[44px] ps-9 pe-3 rounded-xl text-sm transition-colors ${emailChangeValidation.getControlClasses(
+                        'currentPassword',
+                        'border border-slate-200 dark:border-slate-700 bg-white dark:bg-[#131C2E]'
+                      )}`}
                     />
                   </div>
+                  <FieldError
+                    id={emailChangeValidation.getErrorId('currentPassword')}
+                    message={emailChangeValidation.getError('currentPassword')}
+                  />
                 </div>
               )}
 
@@ -316,6 +377,7 @@ export const VerifyEmailScreen: React.FC = () => {
                     setEditingEmail(false);
                     setNeedsPassword(false);
                     setErrorMsg(null);
+                    emailChangeValidation.reset();
                   }}
                   className="min-h-[44px] px-4 rounded-xl border border-slate-200 dark:border-slate-700 text-xs font-semibold"
                 >

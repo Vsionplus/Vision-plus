@@ -1,9 +1,12 @@
-import React, { useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { MessageCircle, Phone, Send, Upload, Stethoscope } from 'lucide-react';
 import { compressImageFileToBlob } from '../lib/firebase';
 import { useStore } from '../store/StoreContext';
 import { ConsultTopic } from '../types';
 import { formatShortDate, isValidSudanPhone, normalizeSudanPhone } from '../utils/format';
+import { FieldValidationRule, useFormValidation } from '../hooks/useFormValidation';
+import { FieldError, ValidationSummaryBanner } from './FormValidationUI';
+import { VALIDATION_MESSAGES, pickMsg } from '../utils/validationMessages';
 
 export const ConsultView: React.FC = () => {
   const {
@@ -16,7 +19,6 @@ export const ConsultView: React.FC = () => {
     appearance,
     createConsult,
     replyConsult,
-    showToast,
   } = useStore();
 
   const visibleTopics = useMemo(
@@ -29,6 +31,40 @@ export const ConsultView: React.FC = () => {
   const [message, setMessage] = useState('');
   const [photoUrl, setPhotoUrl] = useState('');
   const [replyTexts, setReplyTexts] = useState<Record<string, string>>({});
+
+  const v = useFormValidation({ formId: 'consult-optician' });
+
+  const buildRules = useCallback((): FieldValidationRule[] => {
+    const cleanPhone = phone.trim();
+    return [
+      {
+        field: 'topic',
+        label: t('موضوع الاستشارة', 'Topic'),
+        error: !topic ? pickMsg(VALIDATION_MESSAGES.consultTopicRequired, locale) : null,
+      },
+      {
+        field: 'phone',
+        label: t('رقم الهاتف', 'Phone Number'),
+        error: !cleanPhone
+          ? pickMsg(VALIDATION_MESSAGES.phoneRequired, locale)
+          : !isValidSudanPhone(cleanPhone)
+          ? pickMsg(VALIDATION_MESSAGES.phoneInvalidSudan, locale)
+          : null,
+      },
+      {
+        field: 'message',
+        label: t('تفاصيل الاستشارة', 'Consultation Details'),
+        error: !message.trim() ? pickMsg(VALIDATION_MESSAGES.consultMessageRequired, locale) : null,
+      },
+    ];
+  }, [topic, phone, message, locale, t]);
+
+  useEffect(() => {
+    if (v.submitted) {
+      v.revalidate(buildRules());
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [v.submitted, buildRules]);
 
   const handlePhotoUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -47,18 +83,16 @@ export const ConsultView: React.FC = () => {
 
   const handleCreate = (e: React.FormEvent) => {
     e.preventDefault();
-    if (!message.trim()) return;
-    if (!isValidSudanPhone(phone)) {
-      showToast(t('أدخل رقم هاتف سوداني صحيح +249', 'Enter a valid +249 Sudan phone'));
-      return;
-    }
+    if (!v.validateAll(buildRules())) return;
+
     createConsult(topic, message.trim(), normalizeSudanPhone(phone), photoUrl || undefined);
     setMessage('');
     setPhotoUrl('');
+    v.reset();
   };
 
   return (
-    <div className="max-w-5xl mx-auto px-4 sm:px-6 pt-6 space-y-6">
+    <div className="max-w-5xl mx-auto px-4 sm:px-6 pt-6 pb-8 space-y-6">
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div>
           <h1 className="text-2xl font-extrabold flex items-center gap-2">
@@ -78,14 +112,14 @@ export const ConsultView: React.FC = () => {
             href={`https://wa.me/${settings.whatsapp.replace(/[^\d]/g, '')}`}
             target="_blank"
             rel="noopener noreferrer"
-            className="min-h-[42px] px-4 rounded-xl bg-emerald-700 hover:bg-emerald-800 text-white text-xs font-bold inline-flex items-center gap-1.5"
+            className="min-h-[44px] px-4 rounded-xl bg-emerald-700 hover:bg-emerald-800 text-white text-xs font-bold inline-flex items-center gap-1.5"
           >
             <MessageCircle className="w-4 h-4" />
             {t('واتساب', 'WhatsApp')}
           </a>
           <a
             href={`tel:${settings.phone}`}
-            className="min-h-[42px] px-4 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-[#111927] text-xs font-bold inline-flex items-center gap-1.5"
+            className="min-h-[44px] px-4 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-[#111927] text-xs font-bold inline-flex items-center gap-1.5"
           >
             <Phone className="w-4 h-4" />
             {t('اتصال', 'Call')}
@@ -95,17 +129,24 @@ export const ConsultView: React.FC = () => {
 
       <div className="grid lg:grid-cols-12 gap-6 items-start">
         <form
+          noValidate
           onSubmit={handleCreate}
           className="lg:col-span-5 bg-white dark:bg-[#111927] border border-slate-200/80 dark:border-slate-800 rounded-2xl p-5 space-y-4 text-xs"
         >
           <h2 className="text-base font-bold">{t('استشارة جديدة', 'New Consultation')}</h2>
 
-          <div>
+          <ValidationSummaryBanner errors={v.errors} onSelectField={v.focusField} />
+
+          <div {...v.getFieldWrapperProps('topic')}>
             <label className="block font-semibold mb-1.5">{t('الموضوع', 'Topic')}</label>
             <select
               value={topic}
               onChange={(e) => setTopic(e.target.value)}
-              className="w-full min-h-[42px] px-3 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-900"
+              {...v.getInputA11yProps('topic')}
+              className={`w-full min-h-[44px] px-3 rounded-xl ${v.getControlClasses(
+                'topic',
+                'border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-900'
+              )}`}
             >
               {visibleTopics.map((tp) => (
                 <option key={tp.id} value={tp.id}>
@@ -113,29 +154,39 @@ export const ConsultView: React.FC = () => {
                 </option>
               ))}
             </select>
+            <FieldError id={v.getErrorId('topic')} message={v.getError('topic')} />
           </div>
 
-          <div>
+          <div {...v.getFieldWrapperProps('phone')}>
             <label className="block font-semibold mb-1.5">{t('رقم الهاتف (+249)', 'Phone (+249)')}</label>
             <input
-              required
               dir="ltr"
               value={phone}
               onChange={(e) => setPhone(e.target.value)}
-              className="w-full min-h-[42px] px-3 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-900 font-mono-num"
+              placeholder="+249912345678"
+              {...v.getInputA11yProps('phone')}
+              className={`w-full min-h-[44px] px-3 rounded-xl font-mono-num ${v.getControlClasses(
+                'phone',
+                'border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-900'
+              )}`}
             />
+            <FieldError id={v.getErrorId('phone')} message={v.getError('phone')} />
           </div>
 
-          <div>
+          <div {...v.getFieldWrapperProps('message')}>
             <label className="block font-semibold mb-1.5">{t('تفاصيل استشارتك', 'Message')}</label>
             <textarea
-              required
               rows={4}
               value={message}
               onChange={(e) => setMessage(e.target.value)}
               placeholder={t('اكتب استفسارك للأخصائي...', 'Describe your question...')}
-              className="w-full px-3 py-2.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-900"
+              {...v.getInputA11yProps('message')}
+              className={`w-full px-3 py-2.5 rounded-xl ${v.getControlClasses(
+                'message',
+                'border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-900'
+              )}`}
             />
+            <FieldError id={v.getErrorId('message')} message={v.getError('message')} />
           </div>
 
           <label className="min-h-[44px] flex items-center justify-center gap-2 p-3 rounded-xl border border-dashed border-slate-300 dark:border-slate-700 cursor-pointer hover:bg-slate-50 dark:hover:bg-slate-900">
@@ -214,7 +265,7 @@ export const ConsultView: React.FC = () => {
                         value={replyTexts[c.id] || ''}
                         onChange={(e) => setReplyTexts((prev) => ({ ...prev, [c.id]: e.target.value }))}
                         placeholder={t('اكتب رداً...', 'Reply in thread...')}
-                        className="flex-1 min-h-[42px] px-3 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-900 text-xs"
+                        className="flex-1 min-h-[44px] px-3 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-900 text-xs"
                       />
                       <button
                         type="button"
@@ -225,7 +276,7 @@ export const ConsultView: React.FC = () => {
                           setReplyTexts((prev) => ({ ...prev, [c.id]: '' }));
                         }}
                         style={{ backgroundColor: appearance.primaryColor }}
-                        className="min-h-[42px] px-4 rounded-xl text-white text-xs font-bold inline-flex items-center gap-1.5"
+                        className="min-h-[44px] px-4 rounded-xl text-white text-xs font-bold inline-flex items-center gap-1.5"
                       >
                         <Send className="w-3.5 h-3.5" />
                         {t('إرسال', 'Send')}

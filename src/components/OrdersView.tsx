@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   RotateCcw,
   XCircle,
@@ -18,10 +18,17 @@ import {
   Upload,
   Info,
   FileText,
+  Printer,
+  Copy,
+  Truck,
+  ChevronDown,
+  ChevronUp,
+  Eye,
+  Receipt,
 } from 'lucide-react';
 import { compressImageFileToBlob } from '../lib/firebase';
 import { useStore } from '../store/StoreContext';
-import { Order, OrderItem, OrderStatus, PrescriptionData, Product, SavedAddress } from '../types';
+import { Order, OrderItem, OrderStatus, PaymentMethod, PrescriptionData, Product, SavedAddress } from '../types';
 import {
   formatSdg,
   formatShortDate,
@@ -38,6 +45,9 @@ import {
 } from '../utils/prescription';
 import { ResilientImage } from './ResilientImage';
 import { PrescriptionSheet } from './PrescriptionSheet';
+import { FieldValidationRule, useFormValidation } from '../hooks/useFormValidation';
+import { FieldError, ValidationSummaryBanner } from './FormValidationUI';
+import { VALIDATION_MESSAGES, pickMsg } from '../utils/validationMessages';
 
 const TIMELINE_STEPS: OrderStatus[] = [
   'pending',
@@ -66,35 +76,49 @@ const CANCEL_REASONS = [
   { ar: 'أخرى', en: 'Other' },
 ];
 
-function getStatusGuidance(status: OrderStatus, locale: 'ar' | 'en'): string {
+function getTrackingSteps(paymentMethod: PaymentMethod): { status: OrderStatus; ar: string; en: string }[] {
+  const firstStep =
+    paymentMethod === 'bankak' || paymentMethod === 'split'
+      ? { status: 'awaiting_payment_verification' as OrderStatus, ar: 'مراجعة التحويل', en: 'Payment' }
+      : { status: 'pending' as OrderStatus, ar: 'تم الاستلام', en: 'Received' };
+  return [
+    firstStep,
+    { status: 'confirmed', ar: 'تأكيد الطلب', en: 'Confirmed' },
+    { status: 'preparing', ar: 'التجهيز', en: 'Preparing' },
+    { status: 'shipped', ar: 'في الطريق', en: 'Shipped' },
+    { status: 'delivered', ar: 'تم التسليم', en: 'Delivered' },
+  ];
+}
+
+function getShortStatusHint(status: OrderStatus, locale: 'ar' | 'en'): string {
   const map: Record<OrderStatus, { ar: string; en: string }> = {
     pending: {
-      ar: 'طلبك مستلم وفي انتظار المراجعة. يمكنك تعديل المنتجات أو العنوان بحرية قبل التأكيد.',
-      en: 'Your order is received and awaiting review. You can edit items or address before confirmation.',
+      ar: 'تم استلام طلبك وبانتظار التأكيد.',
+      en: 'Order received and awaiting confirmation.',
     },
     awaiting_payment_verification: {
-      ar: 'نراجع حالياً إيصال تحويل بنكك. يمكنك تحديث الإيصال أو تعديل الطلب حتى يتم الاعتماد.',
-      en: 'We are verifying your Bankak transfer receipt. You can still update details before approval.',
+      ar: 'جارٍ مراجعة إشعار تحويل بنكك.',
+      en: 'Verifying your Bankak transfer receipt.',
     },
     confirmed: {
-      ar: 'تم تأكيد طلبك وبدء جدولته. يمكنك تعديل بيانات التواصل وعنوان الشارع قبل الشحن.',
-      en: 'Your order is confirmed. You can still update contact and street address details before shipping.',
+      ar: 'تم تأكيد طلبك وجارٍ جدولته للتجهيز.',
+      en: 'Your order is confirmed and queued.',
     },
     preparing: {
-      ar: 'يقوم فريق البصريات الآن بتجهيز وفحص نظارتك. لا يزال بإمكانك تعديل العنوان أو رقم الهاتف.',
-      en: 'Our opticians are preparing and checking your eyewear. Contact & street details can still be updated.',
+      ar: 'يقوم فريق البصريات بتجهيز وفحص نظارتك.',
+      en: 'Our opticians are preparing your eyewear.',
     },
     shipped: {
-      ar: 'خرج طلبك مع مندوب الشحن وهو في الطريق إليك.',
-      en: 'Your order has been handed over to our delivery courier.',
+      ar: 'طلبك في الطريق مع مندوب التوصيل.',
+      en: 'Your order is on the way with the courier.',
     },
     delivered: {
-      ar: 'تم تسليم الطلب بنجاح. نتمنى لك رؤية واضحة ومريحة!',
-      en: 'Your order was delivered. Enjoy clear and comfortable vision!',
+      ar: 'تم تسليم الطلب بنجاح.',
+      en: 'Order delivered successfully.',
     },
     cancelled: {
-      ar: 'تم إلغاء هذا الطلب ولم يعد قيد التنفيذ.',
-      en: 'This order was cancelled and is no longer active.',
+      ar: 'تم إلغاء هذا الطلب.',
+      en: 'This order was cancelled.',
     },
   };
   return map[status][locale];
@@ -119,7 +143,11 @@ export const OrdersView: React.FC = () => {
     requestOrderCancellation,
     updateOrderByCustomer,
     openCatalog,
+    showToast,
   } = useStore();
+
+  const [expandedOlderIds, setExpandedOlderIds] = useState<Record<string, boolean>>({});
+  const [invoiceOrder, setInvoiceOrder] = useState<Order | null>(null);
 
   const [cancelTargetOrder, setCancelTargetOrder] = useState<Order | null>(null);
   const [selectedReason, setSelectedReason] = useState('');
@@ -145,6 +173,17 @@ export const OrdersView: React.FC = () => {
   const [uploadingReceipt, setUploadingReceipt] = useState(false);
   const [rxEditIndex, setRxEditIndex] = useState<number | null>(null);
 
+  const editOrderModalRef = useRef<HTMLFormElement | null>(null);
+  const editVal = useFormValidation({
+    containerRef: editOrderModalRef,
+    formId: 'customer-edit-order',
+  });
+  const cancelModalRef = useRef<HTMLFormElement | null>(null);
+  const cancelVal = useFormValidation({
+    containerRef: cancelModalRef,
+    formId: 'customer-cancel-order',
+  });
+
   const whatsappDigits = (settings.whatsapp || '').replace(/[^\d]/g, '');
 
   const orderNotifications = useMemo(
@@ -159,6 +198,36 @@ export const OrdersView: React.FC = () => {
     () => orderNotifications.filter((n) => !n.isRead),
     [orderNotifications]
   );
+
+  const toggleOlderOrder = (id: string) => {
+    setExpandedOlderIds((prev) => ({ ...prev, [id]: !prev[id] }));
+  };
+
+  const copyInvoiceSummary = (order: Order) => {
+    const breakdown = getOrderPaymentBreakdown(order);
+    const lines = [
+      `${locale === 'ar' ? settings.storeNameAr : settings.storeNameEn} — ${t('فاتورة طلب', 'Order Invoice')}`,
+      `${t('رقم الطلب:', 'Order #')}: ${order.id}`,
+      `${t('التاريخ:', 'Date')}: ${formatShortDate(order.createdAt, locale)}`,
+      `${t('الحالة:', 'Status')}: ${getOrderStatusLabel(order.status, locale)}`,
+      `${t('العميل:', 'Customer')}: ${order.customerName} (${order.customerPhone})`,
+      ...order.items.map((it) => {
+        const extra = it.lensExtraPriceSdg ?? it.prescription?.lensExtraPriceSdg ?? 0;
+        return `- ${locale === 'ar' ? it.titleAr : it.titleEn} × ${it.quantity}: ${formatSdg((it.unitPriceSdg + extra) * it.quantity)}`;
+      }),
+      `${t('التوصيل:', 'Delivery')}: ${formatSdg(order.deliveryFeeSdg)}`,
+      ...(order.discountSdg > 0 ? [`${t('الخصم:', 'Discount')}: -${formatSdg(order.discountSdg)}`] : []),
+      `${t('الإجمالي النهائي:', 'Total')}: ${formatSdg(order.totalSdg)}`,
+      ...(order.paymentMethod === 'split'
+        ? [
+            `${t('عربون بنكك:', 'Bankak Deposit')}: ${formatSdg(breakdown.bankakSdg)}`,
+            `${t('المتبقي عند الاستلام:', 'Remaining COD')}: ${formatSdg(breakdown.codSdg)}`,
+          ]
+        : []),
+    ];
+    navigator.clipboard?.writeText(lines.join('\n'));
+    showToast(t('تم نسخ ملخص الفاتورة', 'Invoice summary copied'));
+  };
 
   const isFullEditMode = editTargetOrder
     ? FULL_EDIT_STATUSES.includes(editTargetOrder.status)
@@ -193,6 +262,7 @@ export const OrdersView: React.FC = () => {
     setEditNote(order.customerNote || '');
     setEditError(null);
     setRxEditIndex(null);
+    editVal.reset();
   };
 
   const closeEditDialog = () => {
@@ -200,7 +270,81 @@ export const OrdersView: React.FC = () => {
     setEditTargetOrder(null);
     setEditError(null);
     setRxEditIndex(null);
+    editVal.reset();
   };
+
+  const buildEditOrderRules = useCallback((): FieldValidationRule[] => {
+    if (!editTargetOrder) return [];
+    return [
+      {
+        field: 'name',
+        label: t('اسم المستلم', 'Recipient Name'),
+        error: !editName.trim()
+          ? pickMsg(VALIDATION_MESSAGES.recipientNameRequired, locale)
+          : null,
+      },
+      {
+        field: 'phone',
+        label: t('رقم الهاتف', 'Phone'),
+        error: !editPhone.trim()
+          ? pickMsg(VALIDATION_MESSAGES.phoneRequired, locale)
+          : !isValidSudanPhone(editPhone)
+          ? pickMsg(VALIDATION_MESSAGES.phoneInvalidSudan, locale)
+          : null,
+      },
+      {
+        field: 'city',
+        label: t('المدينة', 'City'),
+        error: !editCity.trim()
+          ? pickMsg(VALIDATION_MESSAGES.cityRequired, locale)
+          : null,
+      },
+      {
+        field: 'area',
+        label: t('المنطقة / الحي', 'Area / District'),
+        error: !editArea.trim()
+          ? pickMsg(VALIDATION_MESSAGES.areaRequired, locale)
+          : null,
+      },
+      {
+        field: 'details',
+        label: t('تفاصيل الشارع', 'Street & Landmark'),
+        error: !editDetails.trim()
+          ? pickMsg(VALIDATION_MESSAGES.streetDetailsRequired, locale)
+          : null,
+      },
+      ...(isFullEditMode
+        ? [
+            {
+              field: 'items',
+              label: t('المنتجات والعدسات', 'Items & Prescriptions'),
+              error:
+                editItems.length === 0
+                  ? t('يجب أن يحتوي الطلب على منتج واحد على الأقل.', 'At least one item is required.')
+                  : null,
+            },
+          ]
+        : []),
+    ];
+  }, [
+    editTargetOrder,
+    editName,
+    editPhone,
+    editCity,
+    editArea,
+    editDetails,
+    isFullEditMode,
+    editItems.length,
+    locale,
+    t,
+  ]);
+
+  useEffect(() => {
+    if (editTargetOrder && editVal.submitted) {
+      editVal.revalidate(buildEditOrderRules());
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [editTargetOrder, editVal.submitted, buildEditOrderRules]);
 
   const applySavedAddress = (addr: SavedAddress) => {
     if (addr.recipientName) setEditName(addr.recipientName);
@@ -268,30 +412,7 @@ export const OrdersView: React.FC = () => {
     e.preventDefault();
     if (!editTargetOrder || savingEdit || uploadingReceipt) return;
 
-    if (!editName.trim()) {
-      setEditError(t('يرجى إدخال اسم المستلم.', 'Please enter recipient name.'));
-      return;
-    }
-    if (!isValidSudanPhone(editPhone)) {
-      setEditError(
-        t(
-          'يرجى إدخال رقم هاتف سوداني صحيح (مثال: 0912345678).',
-          'Please enter a valid Sudan phone number.'
-        )
-      );
-      return;
-    }
-    if (!editCity.trim() || !editArea.trim() || !editDetails.trim()) {
-      setEditError(
-        t(
-          'يرجى إكمال بيانات المدينة والمنطقة والشارع.',
-          'Please complete city, area, and street details.'
-        )
-      );
-      return;
-    }
-    if (editItems.length === 0) {
-      setEditError(t('يجب أن يحتوي الطلب على منتج واحد على الأقل.', 'At least one item is required.'));
+    if (!editVal.validateAll(buildEditOrderRules())) {
       return;
     }
 
@@ -333,6 +454,7 @@ export const OrdersView: React.FC = () => {
             : undefined,
         customerNote: editNote.trim() || undefined,
       });
+      editVal.reset();
       setEditTargetOrder(null);
     } catch {
       setEditError(
@@ -353,28 +475,50 @@ export const OrdersView: React.FC = () => {
     setCancelNote('');
     setConfirmCancelAck(false);
     setCancelError(null);
+    cancelVal.reset();
   };
 
   const closeCancelDialog = () => {
     if (submittingCancel) return;
     setCancelTargetOrder(null);
     setCancelError(null);
+    cancelVal.reset();
   };
+
+  const buildCancelRules = useCallback((): FieldValidationRule[] => {
+    if (!cancelTargetOrder) return [];
+    return [
+      {
+        field: 'reason',
+        label: t('سبب طلب الإلغاء', 'Cancellation Reason'),
+        error: !selectedReason.trim()
+          ? t('يرجى اختيار سبب طلب الإلغاء أولاً.', 'Please select a cancellation reason first.')
+          : null,
+      },
+      {
+        field: 'confirmAck',
+        label: t('تأكيد شروط الإلغاء', 'Cancellation Acknowledgment'),
+        error: !confirmCancelAck
+          ? t(
+              'يرجى تأكيد فهمك أن الإلغاء يتطلب موافقة الإدارة.',
+              'Please confirm that cancellation requires admin approval.'
+            )
+          : null,
+      },
+    ];
+  }, [cancelTargetOrder, selectedReason, confirmCancelAck, t]);
+
+  useEffect(() => {
+    if (cancelTargetOrder && cancelVal.submitted) {
+      cancelVal.revalidate(buildCancelRules());
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [cancelTargetOrder, cancelVal.submitted, buildCancelRules]);
 
   const handleSubmitCancelRequest = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!cancelTargetOrder || submittingCancel) return;
-    if (!selectedReason.trim()) {
-      setCancelError(t('يرجى اختيار سبب طلب الإلغاء أولاً.', 'Please select a cancellation reason first.'));
-      return;
-    }
-    if (!confirmCancelAck) {
-      setCancelError(
-        t(
-          'يرجى تأكيد فهمك أن الإلغاء يتطلب موافقة الإدارة.',
-          'Please confirm that cancellation requires admin approval.'
-        )
-      );
+    if (!cancelVal.validateAll(buildCancelRules())) {
       return;
     }
     setCancelError(null);
@@ -385,6 +529,7 @@ export const OrdersView: React.FC = () => {
         selectedReason,
         cancelNote.trim() || undefined
       );
+      cancelVal.reset();
       setCancelTargetOrder(null);
       setCancelNote('');
       setConfirmCancelAck(false);
@@ -479,406 +624,251 @@ export const OrdersView: React.FC = () => {
       }
     : null;
 
-  return (
-    <div className="max-w-5xl mx-auto px-4 sm:px-6 pt-6 space-y-6">
-      <div className="flex flex-wrap items-start justify-between gap-3">
-        <div>
-          <h1 className="text-2xl font-extrabold">{t('سجل الطلبات وتتبع الشحن', 'Orders & Tracking')}</h1>
-          <p className="text-xs text-stone-500 dark:text-zinc-400 mt-1">
-            {t('تابع حالة تجهيز نظارتك وتأكيد تحويلات بنكك خطوة بخطوة', 'Track prescription preparation and Bankak verification live')}
-          </p>
-        </div>
-        {unreadOrderNotifications.length > 0 && (
-          <button
-            type="button"
-            onClick={markAllNotificationsRead}
-            className="min-h-[44px] px-4 py-2 rounded-xl border border-amber-300 dark:border-amber-700 bg-amber-50 dark:bg-amber-950/30 text-amber-900 dark:text-amber-200 text-xs font-extrabold inline-flex items-center gap-1.5 hover:bg-amber-100 dark:hover:bg-amber-950/50"
-          >
-            <Check className="w-4 h-4" />
-            <span>
-              {t(
-                `تحديد إشعارات الطلبات كمقروءة (${unreadOrderNotifications.length})`,
-                `Mark order alerts read (${unreadOrderNotifications.length})`
-              )}
-            </span>
-          </button>
-        )}
-      </div>
+  const latestOrder = orders[0];
+  const previousOrders = orders.slice(1);
 
-      {/* In-Page Order Status Notification Center */}
-      {orderNotifications.length > 0 && (
-        <section
-          aria-label={t('تنبيهات تحديث حالة الطلبات', 'Order Status Alerts')}
-          className={`rounded-2xl border p-4 space-y-2.5 ${
-            unreadOrderNotifications.length > 0
-              ? 'bg-amber-50/80 dark:bg-amber-950/20 border-amber-300 dark:border-amber-800'
-              : 'bg-white dark:bg-[#181B1E] border-stone-200 dark:border-zinc-800'
+  const renderOrderCard = (order: Order, isLatest: boolean) => {
+    const stateObj = settings.deliveryFees.find((s) => s.id === order.stateId);
+    const trackingSteps = getTrackingSteps(order.paymentMethod);
+    let stepIndex = trackingSteps.findIndex((s) => s.status === order.status);
+    if (stepIndex < 0 && order.status !== 'cancelled') {
+      stepIndex = TIMELINE_STEPS.indexOf(order.status) > 1 ? 1 : 0;
+    }
+    const isExpanded = isLatest || Boolean(expandedOlderIds[order.id]);
+    const isCancellableStatus = CANCELLABLE_STATUSES.includes(order.status);
+    const isEditableStatus =
+      (FULL_EDIT_STATUSES.includes(order.status) ||
+        CONTACT_EDIT_STATUSES.includes(order.status)) &&
+      order.cancelRequest?.status !== 'approved';
+    const isPostShipped = order.status === 'shipped' || order.status === 'delivered';
+    const cancelReq = order.cancelRequest;
+    const isCancelPending = cancelReq?.status === 'pending';
+    const isCancelRejected = cancelReq?.status === 'rejected';
+    const isCancelApproved =
+      order.status === 'cancelled' && cancelReq?.status === 'approved';
+    const unreadMatchedNotif = orderNotifications.find(
+      (n) => n.deepLinkId === order.id && !n.isRead
+    );
+    const { bankakSdg, codSdg } = getOrderPaymentBreakdown(order);
+    const itemsAndLensSubtotal =
+      order.itemsSubtotalSdg !== undefined
+        ? order.itemsSubtotalSdg + (order.lensOptionsTotalSdg || 0)
+        : order.subtotalSdg;
+
+    return (
+      <article
+        key={order.id}
+        className={`bg-white dark:bg-[#131C2E] border rounded-2xl overflow-hidden transition-colors ${
+          isLatest
+            ? 'border-[#D9B24C]/70 shadow-sm'
+            : 'border-slate-200 dark:border-slate-800'
+        }`}
+      >
+        {/* Clean Card Header */}
+        <div
+          className={`p-4 sm:p-5 flex flex-wrap items-center justify-between gap-3 ${
+            isExpanded ? 'border-b border-slate-100 dark:border-slate-800' : ''
           }`}
         >
-          <div className="flex items-center justify-between gap-2">
-            <div className="flex items-center gap-2 text-xs font-extrabold text-[#11223E] dark:text-[#E2BD5B]">
-              {unreadOrderNotifications.length > 0 ? (
-                <BellRing className="w-4 h-4 text-amber-600" />
-              ) : (
-                <Bell className="w-4 h-4" />
-              )}
-              <span>{t('آخر إشعارات طلباتك', 'Latest Updates on Your Orders')}</span>
-              {unreadOrderNotifications.length > 0 && (
-                <span className="px-2 py-0.5 rounded-full bg-rose-600 text-white text-[10px] font-extrabold tabular-nums">
-                  {unreadOrderNotifications.length} {t('جديد', 'new')}
+          <div className="space-y-1 min-w-0">
+            <div className="flex flex-wrap items-center gap-2 text-xs sm:text-sm font-extrabold">
+              {isLatest && (
+                <span className="text-[#B38B2D] dark:text-[#E2BD5B]">
+                  {t('آخر طلب', 'Latest Order')} ·
                 </span>
               )}
-            </div>
-          </div>
-
-          <div className="space-y-2">
-            {orderNotifications.slice(0, 3).map((notif) => (
-              <div
-                key={notif.id}
-                className={`p-3 rounded-xl border flex flex-wrap items-center justify-between gap-2 text-xs ${
-                  !notif.isRead
-                    ? 'bg-white dark:bg-[#131C2E] border-amber-300 dark:border-amber-700 shadow-xs'
-                    : 'bg-stone-50/80 dark:bg-zinc-900/70 border-stone-200 dark:border-zinc-800 opacity-85'
-                }`}
+              <span className="font-mono-num text-[#11223E] dark:text-white">{order.id}</span>
+              <span aria-hidden="true" className="text-slate-300 dark:text-slate-700">·</span>
+              <span
+                className={
+                  order.status === 'cancelled'
+                    ? 'text-rose-600 dark:text-rose-400'
+                    : order.status === 'delivered'
+                    ? 'text-emerald-700 dark:text-emerald-400'
+                    : 'text-[#B38B2D] dark:text-[#E2BD5B]'
+                }
               >
-                <div className="space-y-0.5 min-w-0 flex-1">
-                  <div className="font-extrabold flex items-center gap-1.5">
-                    {!notif.isRead && <span className="w-2 h-2 rounded-full bg-rose-600 shrink-0" />}
-                    <span>{locale === 'ar' ? notif.titleAr : notif.titleEn}</span>
-                    <span className="text-[10px] font-normal text-stone-400">
-                      · {formatShortDate(notif.createdAt, locale)}
-                    </span>
-                  </div>
-                  <p className="text-[11px] text-stone-600 dark:text-zinc-300 leading-relaxed">
-                    {locale === 'ar' ? notif.bodyAr : notif.bodyEn}
-                  </p>
-                </div>
-                {!notif.isRead && (
-                  <button
-                    type="button"
-                    onClick={() => markNotificationRead(notif.id)}
-                    className="min-h-[36px] px-3 py-1 rounded-lg bg-[#11223E] text-white text-[11px] font-bold inline-flex items-center gap-1 shrink-0"
-                  >
-                    <Check className="w-3.5 h-3.5" />
-                    <span>{t('تم الاطلاع', 'Dismiss')}</span>
-                  </button>
-                )}
-              </div>
-            ))}
+                {getOrderStatusLabel(order.status, locale)}
+              </span>
+            </div>
+            <p className="text-[11px] text-slate-500 dark:text-slate-400">
+              {formatShortDate(order.createdAt, locale)} · {getPaymentMethodLabel(order.paymentMethod, locale)}
+            </p>
           </div>
-        </section>
-      )}
 
-      <div className="space-y-5">
-        {orders.map((order) => {
-          const stateObj = settings.deliveryFees.find((s) => s.id === order.stateId);
-          const stepIndex = TIMELINE_STEPS.indexOf(order.status);
-          const isCancellableStatus = CANCELLABLE_STATUSES.includes(order.status);
-          const isEditableStatus =
-            (FULL_EDIT_STATUSES.includes(order.status) ||
-              CONTACT_EDIT_STATUSES.includes(order.status)) &&
-            order.cancelRequest?.status !== 'approved';
-          const isPostShipped = order.status === 'shipped' || order.status === 'delivered';
-          const cancelReq = order.cancelRequest;
-          const isCancelPending = cancelReq?.status === 'pending';
-          const isCancelRejected = cancelReq?.status === 'rejected';
-          const isCancelApproved =
-            order.status === 'cancelled' && cancelReq?.status === 'approved';
-          const matchedOrderNotifs = orderNotifications.filter((n) => n.deepLinkId === order.id);
-          const latestMatchedNotif = matchedOrderNotifs[0];
-          const unreadMatchedCount = matchedOrderNotifs.filter((n) => !n.isRead).length;
-
-          return (
-            <article
-              key={order.id}
-              className={`bg-white dark:bg-[#181B1E] border rounded-2xl p-5 space-y-4 transition-colors ${
-                unreadMatchedCount > 0
-                  ? 'border-amber-400 dark:border-amber-700 ring-1 ring-amber-300/60 dark:ring-amber-800/50'
-                  : 'border-stone-200 dark:border-zinc-800'
-              }`}
-            >
-              <div className="flex flex-wrap items-center justify-between gap-3 border-b border-stone-100 dark:border-zinc-800 pb-4">
-                <div>
-                  <div className="flex flex-wrap items-center gap-2 text-sm font-bold">
-                    <span className="font-mono-num">{order.id}</span>
-                    <span aria-hidden="true">·</span>
-                    <span className="text-[#B38B2D] dark:text-[#E2BD5B]">
-                      {getOrderStatusLabel(order.status, locale)}
-                    </span>
-                    {isCancelPending && (
-                      <span className="px-2.5 py-0.5 rounded-lg bg-amber-100 dark:bg-amber-950/40 border border-amber-300 dark:border-amber-800 text-amber-800 dark:text-amber-300 text-xs font-extrabold inline-flex items-center gap-1">
-                        <Clock className="w-3.5 h-3.5" />
-                        {t('طلب الإلغاء قيد المراجعة', 'Cancellation Under Review')}
-                      </span>
-                    )}
-                    {isCancelApproved && (
-                      <span className="px-2.5 py-0.5 rounded-lg bg-rose-100 dark:bg-rose-950/40 border border-rose-300 dark:border-rose-800 text-rose-700 dark:text-rose-300 text-xs font-extrabold inline-flex items-center gap-1">
-                        <CheckCircle2 className="w-3.5 h-3.5" />
-                        {t('تمت الموافقة على الإلغاء', 'Cancellation Approved')}
-                      </span>
-                    )}
-                    {order.lastEditedAt && (
-                      <span className="px-2 py-0.5 rounded-md bg-slate-100 dark:bg-zinc-800 text-slate-600 dark:text-slate-300 text-[11px] font-semibold">
-                        {t('مُعدّل', 'Edited')} · {formatShortDate(order.lastEditedAt, locale)}
-                      </span>
-                    )}
-                  </div>
-                  <p className="text-xs text-stone-500 dark:text-zinc-400 mt-1">
-                    {formatShortDate(order.createdAt, locale)} ·{' '}
-                    {locale === 'ar'
-                      ? stateObj?.nameAr || order.address?.stateNameAr
-                      : stateObj?.nameEn || order.address?.stateNameEn}{' '}
-                    — {order.city} ({order.area}) · {getPaymentMethodLabel(order.paymentMethod, locale)}
-                  </p>
-                </div>
-
-                <div className="text-end">
-                  <div className="font-mono-num text-lg font-extrabold tabular-nums">
-                    {formatSdg(order.totalSdg)}
-                  </div>
-                  <div className="flex flex-wrap items-center justify-end gap-2 mt-2">
-                    {isEditableStatus && (
-                      <button
-                        type="button"
-                        onClick={() => openEditDialog(order)}
-                        className="min-h-[44px] px-3.5 py-2 rounded-xl border border-[#11223E]/30 dark:border-[#E2BD5B]/40 bg-[#11223E]/5 dark:bg-[#E2BD5B]/10 text-[#11223E] dark:text-[#E2BD5B] text-xs font-extrabold hover:bg-[#11223E]/10 inline-flex items-center gap-1.5"
-                      >
-                        <Edit3 className="w-3.5 h-3.5" />
-                        {t('تعديل الطلب', 'Edit Order')}
-                      </button>
-                    )}
-
-                    <button
-                      type="button"
-                      onClick={() => reorder(order.id)}
-                      className="min-h-[44px] px-3.5 py-2 rounded-xl border border-stone-200 dark:border-zinc-700 text-xs font-semibold hover:bg-stone-50 dark:hover:bg-zinc-800 inline-flex items-center gap-1.5"
-                    >
-                      <RotateCcw className="w-3.5 h-3.5" />
-                      {t('إعادة الطلب', 'Reorder')}
-                    </button>
-
-                    {isCancellableStatus && (
-                      isCancelPending ? (
-                        <button
-                          type="button"
-                          disabled
-                          className="min-h-[44px] px-3.5 py-2 rounded-xl border border-amber-300 dark:border-amber-800 bg-amber-50 dark:bg-amber-950/25 text-amber-800 dark:text-amber-300 text-xs font-bold inline-flex items-center gap-1.5 opacity-80 cursor-not-allowed"
-                        >
-                          <Clock className="w-3.5 h-3.5" />
-                          {t('طلب الإلغاء قيد المراجعة', 'Cancellation Pending')}
-                        </button>
-                      ) : isCancelRejected ? (
-                        <button
-                          type="button"
-                          disabled
-                          className="min-h-[44px] px-3.5 py-2 rounded-xl border border-rose-200 dark:border-rose-900/50 bg-rose-50 dark:bg-rose-950/20 text-rose-700 dark:text-rose-300 text-xs font-bold inline-flex items-center gap-1.5 opacity-80 cursor-not-allowed"
-                        >
-                          <XCircle className="w-3.5 h-3.5" />
-                          {t('تم رفض طلب الإلغاء', 'Cancellation Rejected')}
-                        </button>
-                      ) : !cancelReq ? (
-                        <button
-                          type="button"
-                          onClick={() => openCancelDialog(order)}
-                          className="min-h-[44px] px-3.5 py-2 rounded-xl border border-rose-200 dark:border-rose-900/50 text-rose-700 dark:text-rose-400 text-xs font-bold hover:bg-rose-50 dark:hover:bg-rose-950/30 inline-flex items-center gap-1.5"
-                        >
-                          <XCircle className="w-3.5 h-3.5" />
-                          {t('طلب إلغاء الطلب', 'Request Cancellation')}
-                        </button>
-                      ) : null
-                    )}
-                  </div>
-                </div>
+          <div className="flex items-center gap-2.5 shrink-0">
+            <div className="text-end">
+              <div className="font-mono-num text-base sm:text-lg font-extrabold text-[#11223E] dark:text-white tabular-nums">
+                {formatSdg(order.totalSdg)}
               </div>
+              {order.paymentMethod === 'split' && (
+                <div className="text-[10px] font-bold text-emerald-700 dark:text-emerald-400">
+                  {t('المتبقي عند الاستلام:', 'COD:')} {formatSdg(codSdg)}
+                </div>
+              )}
+            </div>
 
-              {order.paymentMethod === 'split' && (() => {
-                const { bankakSdg, codSdg } = getOrderPaymentBreakdown(order);
-                return (
-                  <div className="grid sm:grid-cols-2 gap-2.5 p-3 rounded-xl bg-amber-50/70 dark:bg-amber-950/20 border border-amber-200 dark:border-amber-900/50 text-xs">
-                    <div className="flex items-center justify-between gap-2">
-                      <span className="font-bold text-slate-700 dark:text-slate-300">
-                        {t('عربون بنكك:', 'Bankak Deposit:')}
-                      </span>
-                      <span className="font-mono-num font-extrabold text-[#11223E] dark:text-[#E2BD5B]">
-                        {formatSdg(bankakSdg)}{' '}
-                        {order.bankTransferVerified ? t('(مؤكد ✓)', '(Verified ✓)') : ''}
-                      </span>
+            {!isLatest && (
+              <button
+                type="button"
+                onClick={() => toggleOlderOrder(order.id)}
+                className="min-h-[38px] px-3 rounded-xl border border-slate-200 dark:border-slate-700 text-xs font-bold inline-flex items-center gap-1 hover:border-[#D9B24C]"
+              >
+                <span>{isExpanded ? t('إخفاء', 'Hide') : t('التفاصيل', 'Details')}</span>
+                {isExpanded ? <ChevronUp className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />}
+              </button>
+            )}
+          </div>
+        </div>
+
+        {isExpanded && (
+          <div className="p-4 sm:p-5 space-y-4">
+            {/* Unread Status Update Alert (shown only when unread) */}
+            {unreadMatchedNotif && (
+              <div className="p-3 rounded-xl bg-amber-50 dark:bg-amber-950/30 border border-amber-300 dark:border-amber-700 flex flex-wrap items-center justify-between gap-2 text-xs">
+                <div className="flex items-start gap-2 min-w-0 flex-1">
+                  <BellRing className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
+                  <div className="min-w-0">
+                    <div className="font-extrabold text-[#11223E] dark:text-amber-100">
+                      {locale === 'ar' ? unreadMatchedNotif.titleAr : unreadMatchedNotif.titleEn}
                     </div>
-                    <div className="flex items-center justify-between gap-2">
-                      <span className="font-bold text-slate-700 dark:text-slate-300">
-                        {t('المتبقي عند الاستلام:', 'Remaining COD:')}
-                      </span>
-                      <span className="font-mono-num font-extrabold text-emerald-700 dark:text-emerald-400">
-                        {formatSdg(codSdg)}
-                      </span>
-                    </div>
+                    <p className="text-[11px] text-slate-700 dark:text-amber-200/80">
+                      {locale === 'ar' ? unreadMatchedNotif.bodyAr : unreadMatchedNotif.bodyEn}
+                    </p>
                   </div>
-                );
-              })()}
-
-              {/* Latest matched order notification inside card */}
-              {latestMatchedNotif && (
-                <div
-                  className={`p-3.5 rounded-xl border flex flex-wrap items-center justify-between gap-2 text-xs ${
-                    !latestMatchedNotif.isRead
-                      ? 'bg-amber-50 dark:bg-amber-950/30 border-amber-300 dark:border-amber-700 text-amber-950 dark:text-amber-100'
-                      : 'bg-slate-50 dark:bg-zinc-900 border-slate-200 dark:border-zinc-800 text-slate-700 dark:text-slate-300'
-                  }`}
+                </div>
+                <button
+                  type="button"
+                  onClick={() => markNotificationRead(unreadMatchedNotif.id)}
+                  className="min-h-[34px] px-3 rounded-lg bg-[#11223E] text-white text-[11px] font-bold inline-flex items-center gap-1 shrink-0"
                 >
-                  <div className="space-y-0.5 flex-1 min-w-0">
-                    <div className="font-extrabold flex items-center gap-1.5">
-                      <BellRing className="w-4 h-4 text-amber-600 shrink-0" />
-                      <span>{locale === 'ar' ? latestMatchedNotif.titleAr : latestMatchedNotif.titleEn}</span>
-                    </div>
-                    <p className="text-[11px] leading-relaxed">
-                      {locale === 'ar' ? latestMatchedNotif.bodyAr : latestMatchedNotif.bodyEn}
-                    </p>
-                  </div>
-                  {!latestMatchedNotif.isRead && (
-                    <button
-                      type="button"
-                      onClick={() => markNotificationRead(latestMatchedNotif.id)}
-                      className="min-h-[36px] px-3 py-1 rounded-lg bg-[#11223E] text-white text-[11px] font-bold inline-flex items-center gap-1 shrink-0"
-                    >
-                      <Check className="w-3.5 h-3.5" />
-                      <span>{t('تم الاطلاع', 'Mark Read')}</span>
-                    </button>
-                  )}
-                </div>
-              )}
-
-              {/* Clear Order Status Guidance */}
-              <div className="px-3.5 py-2.5 rounded-xl bg-stone-50 dark:bg-zinc-900 border border-stone-200 dark:border-zinc-800 text-[11px] text-slate-700 dark:text-slate-300 flex items-start gap-2">
-                <Info className="w-4 h-4 text-[#B38B2D] shrink-0 mt-0.5" />
-                <span>{getStatusGuidance(order.status, locale)}</span>
+                  <Check className="w-3.5 h-3.5" />
+                  <span>{t('تم', 'OK')}</span>
+                </button>
               </div>
+            )}
 
-              {/* Order Notes (Customer & Management) */}
-              {(order.customerNote || order.adminNote) && (
-                <div className="grid sm:grid-cols-2 gap-2.5 text-xs">
-                  {order.customerNote && (
-                    <div className="p-3 rounded-xl bg-stone-50 dark:bg-zinc-900 border border-stone-200 dark:border-zinc-800 space-y-0.5">
-                      <div className="font-bold text-[11px] text-slate-500 flex items-center gap-1">
-                        <FileText className="w-3.5 h-3.5" />
-                        <span>{t('ملاحظتك على الطلب:', 'Your Order Note:')}</span>
-                      </div>
-                      <p className="text-slate-800 dark:text-slate-200">{order.customerNote}</p>
-                    </div>
-                  )}
-                  {order.adminNote && (
-                    <div className="p-3 rounded-xl bg-sky-50 dark:bg-sky-950/25 border border-sky-200 dark:border-sky-900/50 space-y-0.5">
-                      <div className="font-bold text-[11px] text-sky-700 dark:text-sky-300">
-                        {t('ملاحظة المتجر على الطلب:', 'Store Note:')}
-                      </div>
-                      <p className="text-sky-950 dark:text-sky-100">{order.adminNote}</p>
-                    </div>
-                  )}
-                </div>
-              )}
-
-              {/* Post-shipped cancellation/edit guidance */}
-              {isPostShipped && (
-                <div className="p-3.5 rounded-xl bg-slate-50 dark:bg-zinc-900 border border-slate-200 dark:border-zinc-800 flex flex-wrap items-center justify-between gap-3 text-xs">
-                  <span className="font-bold text-slate-700 dark:text-slate-300">
-                    {t('للإلغاء أو التعديل بعد الشحن تواصل معنا', 'To cancel or edit after shipping, please contact us')}
+            {/* Simple Visual Order Tracking Stepper */}
+            {order.status !== 'cancelled' ? (
+              <div className="p-3.5 rounded-xl bg-slate-50 dark:bg-slate-900/70 border border-slate-200/70 dark:border-slate-800 space-y-3">
+                <div className="flex items-center justify-between gap-2 text-xs">
+                  <span className="font-extrabold text-[#11223E] dark:text-white inline-flex items-center gap-1.5">
+                    <Truck className="w-4 h-4 text-[#B38B2D]" />
+                    {t('تتبع حالة الطلب', 'Order Tracking')}
                   </span>
-                  {whatsappDigits && (
-                    <a
-                      href={`https://wa.me/${whatsappDigits}?text=${encodeURIComponent(
-                        t(
-                          `مرحباً، أود الاستفسار عن إلغاء/تعديل الطلب رقم ${order.id}`,
-                          `Hello, I would like to inquire about order ${order.id}`
-                        )
-                      )}`}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="min-h-[44px] px-4 py-2 rounded-xl bg-[#16A34A] hover:bg-[#15803D] text-white font-bold inline-flex items-center gap-1.5"
-                    >
-                      <MessageCircle className="w-4 h-4" />
-                      <span>{t('تواصل عبر واتساب', 'Contact via WhatsApp')}</span>
-                    </a>
-                  )}
+                  <span className="text-[11px] font-bold text-[#B38B2D] dark:text-[#E2BD5B]">
+                    {getOrderStatusLabel(order.status, locale)}
+                  </span>
                 </div>
-              )}
 
-              {/* Cancellation request status banners */}
-              {isCancelPending && cancelReq && (
-                <div className="p-3.5 rounded-xl bg-amber-50 dark:bg-amber-950/20 border border-amber-200 dark:border-amber-900/50 text-amber-900 dark:text-amber-200 text-xs space-y-1">
-                  <div className="font-extrabold flex items-center gap-1.5">
-                    <Clock className="w-4 h-4 shrink-0" />
-                    <span>{t('طلب الإلغاء قيد المراجعة', 'Cancellation Request Under Review')}</span>
-                  </div>
-                  <p>
-                    <strong>{t('السبب:', 'Reason:')}</strong> {cancelReq.reason}
-                    {cancelReq.note ? ` — ${cancelReq.note}` : ''}
-                  </p>
-                </div>
-              )}
-
-              {isCancelRejected && order.status !== 'cancelled' && cancelReq && (
-                <div className="p-3.5 rounded-xl bg-rose-50 dark:bg-rose-950/20 border border-rose-200 dark:border-rose-900/50 text-rose-800 dark:text-rose-200 text-xs space-y-1">
-                  <div className="font-extrabold">
-                    {t('تم رفض طلب الإلغاء', 'Cancellation Request Rejected')}
-                  </div>
-                  {cancelReq.adminNote && (
-                    <p>
-                      <strong>{t('سبب الرفض:', 'Reason:')}</strong> {cancelReq.adminNote}
-                    </p>
-                  )}
-                  <p className="text-[11px] opacity-85">
-                    {t('يستمر تجهيز طلبك بشكل طبيعي.', 'Your order continues processing normally.')}
-                  </p>
-                </div>
-              )}
-
-              {order.status !== 'cancelled' ? (
-                <div className="space-y-2 pt-1">
-                  <div className="h-1.5 rounded-full bg-slate-100 dark:bg-zinc-800 overflow-hidden">
-                    <div
-                      className="h-full rounded-full transition-all"
-                      style={{
-                        backgroundColor: appearance.secondaryColor,
-                        width: `${Math.max(15, ((stepIndex + 1) / TIMELINE_STEPS.length) * 100)}%`,
-                      }}
-                    />
-                  </div>
-                  <div className="flex flex-wrap items-center justify-between gap-2 text-[11px] text-slate-500 dark:text-zinc-400">
-                    {TIMELINE_STEPS.map((st, idx) => {
-                      const reached = idx <= stepIndex;
-                      const current = idx === stepIndex;
-                      return (
+                {/* 5-Step Progress Dots */}
+                <div className="grid grid-cols-5 gap-1">
+                  {trackingSteps.map((st, idx) => {
+                    const done = idx < stepIndex;
+                    const current = idx === stepIndex;
+                    return (
+                      <div key={st.status} className="flex flex-col items-center text-center gap-1.5">
+                        <div className="w-full flex items-center">
+                          <div
+                            className={`h-0.5 flex-1 ${
+                              idx === 0
+                                ? 'bg-transparent'
+                                : idx <= stepIndex
+                                ? 'bg-[#D9B24C]'
+                                : 'bg-slate-200 dark:bg-slate-700'
+                            }`}
+                          />
+                          <div
+                            className={`w-6 h-6 rounded-full flex items-center justify-center text-[10px] font-extrabold shrink-0 transition-colors ${
+                              done
+                                ? 'bg-[#D9B24C] text-[#11223E]'
+                                : current
+                                ? 'bg-[#11223E] text-white dark:bg-[#D9B24C] dark:text-[#11223E] ring-4 ring-[#D9B24C]/25'
+                                : 'bg-slate-200 dark:bg-slate-800 text-slate-400'
+                            }`}
+                          >
+                            {done ? <Check className="w-3.5 h-3.5" /> : idx + 1}
+                          </div>
+                          <div
+                            className={`h-0.5 flex-1 ${
+                              idx === trackingSteps.length - 1
+                                ? 'bg-transparent'
+                                : idx < stepIndex
+                                ? 'bg-[#D9B24C]'
+                                : 'bg-slate-200 dark:bg-slate-700'
+                            }`}
+                          />
+                        </div>
                         <span
-                          key={st}
-                          className={
+                          className={`text-[10px] leading-tight ${
                             current
                               ? 'font-extrabold text-[#11223E] dark:text-[#E2BD5B]'
-                              : reached
-                              ? 'font-semibold text-slate-700 dark:text-zinc-300'
-                              : ''
-                          }
+                              : done
+                              ? 'font-bold text-slate-700 dark:text-slate-300'
+                              : 'text-slate-400 dark:text-slate-500'
+                          }`}
                         >
-                          {getOrderStatusLabel(st, locale)}
+                          {locale === 'ar' ? st.ar : st.en}
                         </span>
-                      );
-                    })}
-                  </div>
+                      </div>
+                    );
+                  })}
                 </div>
-              ) : (
-                <div className="p-3.5 rounded-xl bg-rose-50 dark:bg-rose-950/20 border border-rose-200 dark:border-rose-900/50 text-rose-700 dark:text-rose-300 text-xs space-y-1">
-                  <div className="font-extrabold">
-                    {isCancelApproved
-                      ? t('تمت الموافقة على الإلغاء', 'Cancellation Approved')
-                      : t('تم إلغاء هذا الطلب', 'This order was cancelled')}
-                  </div>
-                  {cancelReq?.adminNote && (
-                    <p>
-                      <strong>{t('ملاحظة المتجر:', 'Store note:')}</strong> {cancelReq.adminNote}
-                    </p>
-                  )}
-                </div>
-              )}
 
-              <div className="space-y-2.5">
+                <p className="text-[11px] text-slate-600 dark:text-slate-300 text-center">
+                  {getShortStatusHint(order.status, locale)}
+                </p>
+              </div>
+            ) : (
+              <div className="p-3 rounded-xl bg-rose-50 dark:bg-rose-950/20 border border-rose-200 dark:border-rose-900/50 text-rose-700 dark:text-rose-300 text-xs space-y-1">
+                <div className="font-extrabold">
+                  {isCancelApproved
+                    ? t('تمت الموافقة على إلغاء الطلب', 'Order Cancellation Approved')
+                    : t('تم إلغاء هذا الطلب', 'This order was cancelled')}
+                </div>
+                {cancelReq?.adminNote && (
+                  <p className="text-[11px]">
+                    <strong>{t('ملاحظة المتجر:', 'Store note:')}</strong> {cancelReq.adminNote}
+                  </p>
+                )}
+              </div>
+            )}
+
+            {/* Simple Cancellation Review Notices */}
+            {isCancelPending && cancelReq && (
+              <div className="p-3 rounded-xl bg-amber-50 dark:bg-amber-950/20 border border-amber-200 dark:border-amber-900/50 text-amber-900 dark:text-amber-200 text-xs flex items-center gap-2">
+                <Clock className="w-4 h-4 shrink-0" />
+                <span>
+                  {t('طلب الإلغاء قيد المراجعة', 'Cancellation Under Review')} — {cancelReq.reason}
+                </span>
+              </div>
+            )}
+
+            {isCancelRejected && order.status !== 'cancelled' && cancelReq && (
+              <div className="p-3 rounded-xl bg-rose-50 dark:bg-rose-950/20 border border-rose-200 dark:border-rose-900/50 text-rose-800 dark:text-rose-200 text-xs">
+                <strong>{t('تم رفض طلب الإلغاء:', 'Cancellation Rejected:')}</strong>{' '}
+                {cancelReq.adminNote || t('يستمر تجهيز طلبك.', 'Order continues normally.')}
+              </div>
+            )}
+
+            {/* Simple Invoice Receipt Block */}
+            <div className="rounded-xl border border-slate-200/80 dark:border-slate-800 p-3.5 sm:p-4 space-y-3 text-xs">
+              <div className="flex flex-wrap items-center justify-between gap-2 pb-2 border-b border-slate-100 dark:border-slate-800">
+                <span className="font-extrabold text-[#11223E] dark:text-white inline-flex items-center gap-1.5">
+                  <Receipt className="w-4 h-4 text-[#B38B2D]" />
+                  {t('ملخص الفاتورة', 'Invoice Summary')}
+                </span>
+                <span className="text-[11px] text-slate-500 dark:text-slate-400">
+                  {order.customerName} ·{' '}
+                  {locale === 'ar'
+                    ? stateObj?.nameAr || order.address?.stateNameAr
+                    : stateObj?.nameEn || order.address?.stateNameEn}
+                  {order.city ? ` — ${order.city}` : ''}
+                </span>
+              </div>
+
+              {/* Clean Item Lines */}
+              <div className="space-y-2">
                 {order.items.map((item, idx) => {
                   const rx = item.prescription;
                   const syntheticRx =
@@ -896,60 +886,368 @@ export const OrdersView: React.FC = () => {
                   const hasCustomLens = hasCustomLensOrRx(syntheticRx);
                   const lensSummary = formatLensSummaryLine(syntheticRx, lensOptions, locale);
                   const extraPrice = item.lensExtraPriceSdg ?? rx?.lensExtraPriceSdg ?? 0;
-                  const pdText =
-                    rx?.pdMode === 'dual' && rx?.pdRight
-                      ? `PD OD ${rx.pdRight}/${rx.pdLeft}mm`
-                      : rx?.pd
-                      ? `PD ${rx.pd}mm`
-                      : '';
-                  const fittingText = rx?.fittingHeight
-                    ? ` · ${t('ارتفاع التركيب', 'FH')} ${rx.fittingHeight}mm`
-                    : '';
 
                   return (
-                    <div key={item.productId + idx} className="flex items-center gap-3 text-xs">
-                      <div className="w-14 h-12 rounded-lg overflow-hidden bg-stone-100 dark:bg-zinc-900 shrink-0">
+                    <div key={item.productId + idx} className="flex items-center gap-3">
+                      <div className="w-11 h-10 rounded-lg overflow-hidden bg-slate-100 dark:bg-slate-900 shrink-0">
                         <ResilientImage
                           src={item.image}
                           alt={locale === 'ar' ? item.titleAr : item.titleEn}
                           className="w-full h-full object-cover"
                         />
                       </div>
-                      <div className="flex-1 min-w-0 space-y-0.5">
-                        <p className="font-bold truncate">
+                      <div className="flex-1 min-w-0">
+                        <p className="font-bold truncate text-[#11223E] dark:text-slate-100">
                           {locale === 'ar' ? item.titleAr : item.titleEn} × {item.quantity}
                         </p>
-                        {hasCustomLens && (
-                          <p className="text-[11px] text-stone-500 dark:text-zinc-400">
-                            {lensSummary ? `${lensSummary} · ` : ''}
-                            {rx?.type === 'manual' && rx.values?.kind === 'contact_lenses'
-                              ? `OD ${rx.values.contactRight?.sph || '-'} BC ${rx.values.contactRight?.bc || '-'} DIA ${rx.values.contactRight?.dia || '-'} | OS ${rx.values.contactLeft?.sph || '-'}`
-                              : rx?.type === 'manual' && rx.rightEye
-                              ? `OD ${rx.rightEye.sph}/${rx.rightEye.cyl}×${rx.rightEye.axis}°${rx.rightEye.add ? ` ADD ${rx.rightEye.add}` : ''} | OS ${rx.leftEye?.sph}/${rx.leftEye?.cyl}×${rx.leftEye?.axis}°${rx.leftEye?.add ? ` ADD ${rx.leftEye.add}` : ''}${pdText ? ` · ${pdText}` : ''}${fittingText}`
-                              : rx?.type === 'image'
-                              ? t('صورة روشتة مرفقة', 'Prescription photo attached')
-                              : rx?.type === 'later'
-                              ? t('سيتم الإرسال عبر الواتساب', 'Send via WhatsApp later')
-                              : t('مواصفات العدسات مختارة', 'Lens options selected')}
+                        {(item.variantLabel || item.options?.size) && (
+                          <p className="text-[11px] text-slate-500 dark:text-slate-400 truncate">
+                            {[
+                              item.variantLabel,
+                              item.options?.size ? `${t('المقاس:', 'Size:')} ${item.options.size}` : '',
+                            ]
+                              .filter(Boolean)
+                              .join(' · ')}
+                          </p>
+                        )}
+                        {hasCustomLens && lensSummary && (
+                          <p className="text-[11px] text-slate-500 dark:text-slate-400 truncate">
+                            {lensSummary}
                           </p>
                         )}
                       </div>
-                      <span className="font-mono-num font-bold tabular-nums">
+                      <span className="font-mono-num font-bold tabular-nums shrink-0">
                         {formatSdg((item.unitPriceSdg + extraPrice) * item.quantity)}
                       </span>
                     </div>
                   );
                 })}
               </div>
-            </article>
-          );
-        })}
+
+              {/* Simple Totals Table */}
+              <div className="pt-2.5 border-t border-slate-100 dark:border-slate-800 space-y-1">
+                <div className="flex justify-between text-slate-600 dark:text-slate-400">
+                  <span>{t('المنتجات والعدسات', 'Items & Lenses')}</span>
+                  <span className="font-mono-num font-semibold">{formatSdg(itemsAndLensSubtotal)}</span>
+                </div>
+                {order.discountSdg > 0 && (
+                  <div className="flex justify-between text-emerald-700 dark:text-emerald-400">
+                    <span>{t('الخصم', 'Discount')}</span>
+                    <span className="font-mono-num font-semibold">− {formatSdg(order.discountSdg)}</span>
+                  </div>
+                )}
+                <div className="flex justify-between text-slate-600 dark:text-slate-400">
+                  <span>{t('رسوم التوصيل', 'Delivery Fee')}</span>
+                  <span className="font-mono-num font-semibold">{formatSdg(order.deliveryFeeSdg)}</span>
+                </div>
+                <div className="flex justify-between text-sm font-extrabold pt-1.5 border-t border-slate-100 dark:border-slate-800 text-[#11223E] dark:text-[#E2BD5B]">
+                  <span>{t('الإجمالي النهائي', 'Final Total')}</span>
+                  <span className="font-mono-num tabular-nums">{formatSdg(order.totalSdg)}</span>
+                </div>
+
+                {order.paymentMethod === 'split' && (
+                  <div className="mt-2 p-2.5 rounded-lg bg-[#D9B24C]/10 border border-[#D9B24C]/35 grid grid-cols-2 gap-2 text-[11px]">
+                    <div>
+                      <span className="text-slate-500 dark:text-slate-400 block">
+                        {t('عربون بنكك', 'Bankak Paid')}
+                        {order.bankTransferVerified ? ' ✓' : ''}
+                      </span>
+                      <span className="font-mono-num font-extrabold text-[#11223E] dark:text-[#E2BD5B]">
+                        {formatSdg(bankakSdg)}
+                      </span>
+                    </div>
+                    <div className="text-end">
+                      <span className="text-slate-500 dark:text-slate-400 block">
+                        {t('المتبقي عند الاستلام', 'Due on Delivery')}
+                      </span>
+                      <span className="font-mono-num font-extrabold text-emerald-700 dark:text-emerald-400">
+                        {formatSdg(codSdg)}
+                      </span>
+                    </div>
+                  </div>
+                )}
+              </div>
+
+              {(order.customerNote || order.adminNote) && (
+                <div className="pt-2 border-t border-slate-100 dark:border-slate-800 space-y-1 text-[11px]">
+                  {order.customerNote && (
+                    <p className="text-slate-600 dark:text-slate-300">
+                      <strong>{t('ملاحظتك:', 'Your note:')}</strong> {order.customerNote}
+                    </p>
+                  )}
+                  {order.adminNote && (
+                    <p className="text-sky-700 dark:text-sky-300">
+                      <strong>{t('ملاحظة المتجر:', 'Store note:')}</strong> {order.adminNote}
+                    </p>
+                  )}
+                </div>
+              )}
+            </div>
+
+            {/* Clean Action Row */}
+            <div className="flex flex-wrap items-center gap-2 pt-1">
+              <button
+                type="button"
+                onClick={() => setInvoiceOrder(order)}
+                className="min-h-[40px] px-3.5 py-2 rounded-xl bg-[#11223E] text-white dark:bg-[#D9B24C] dark:text-[#11223E] text-xs font-extrabold inline-flex items-center gap-1.5"
+              >
+                <FileText className="w-3.5 h-3.5" />
+                <span>{t('عرض / طباعة الفاتورة', 'View / Print Invoice')}</span>
+              </button>
+
+              {isEditableStatus && (
+                <button
+                  type="button"
+                  onClick={() => openEditDialog(order)}
+                  className="min-h-[40px] px-3.5 py-2 rounded-xl border border-slate-200 dark:border-slate-700 text-xs font-bold hover:border-[#D9B24C] inline-flex items-center gap-1.5"
+                >
+                  <Edit3 className="w-3.5 h-3.5" />
+                  <span>{t('تعديل', 'Edit')}</span>
+                </button>
+              )}
+
+              <button
+                type="button"
+                onClick={() => reorder(order.id)}
+                className="min-h-[40px] px-3.5 py-2 rounded-xl border border-slate-200 dark:border-slate-700 text-xs font-semibold hover:bg-slate-50 dark:hover:bg-slate-800 inline-flex items-center gap-1.5"
+              >
+                <RotateCcw className="w-3.5 h-3.5" />
+                <span>{t('إعادة الطلب', 'Reorder')}</span>
+              </button>
+
+              {isCancellableStatus && !cancelReq && (
+                <button
+                  type="button"
+                  onClick={() => openCancelDialog(order)}
+                  className="min-h-[40px] px-3.5 py-2 rounded-xl border border-rose-200 dark:border-rose-900/50 text-rose-700 dark:text-rose-400 text-xs font-bold hover:bg-rose-50 dark:hover:bg-rose-950/30 inline-flex items-center gap-1.5"
+                >
+                  <XCircle className="w-3.5 h-3.5" />
+                  <span>{t('إلغاء الطلب', 'Cancel')}</span>
+                </button>
+              )}
+
+              {isPostShipped && whatsappDigits && (
+                <a
+                  href={`https://wa.me/${whatsappDigits}?text=${encodeURIComponent(
+                    t(
+                      `مرحباً، أود الاستفسار عن الطلب رقم ${order.id}`,
+                      `Hello, I would like to inquire about order ${order.id}`
+                    )
+                  )}`}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="min-h-[40px] px-3.5 py-2 rounded-xl bg-[#16A34A] hover:bg-[#15803D] text-white text-xs font-bold inline-flex items-center gap-1.5"
+                >
+                  <MessageCircle className="w-3.5 h-3.5" />
+                  <span>{t('واتساب', 'WhatsApp')}</span>
+                </a>
+              )}
+            </div>
+          </div>
+        )}
+      </article>
+    );
+  };
+
+  return (
+    <div className="max-w-4xl mx-auto px-4 sm:px-6 pt-5 pb-8 space-y-6">
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div>
+          <h1 className="text-xl sm:text-2xl font-extrabold text-[#11223E] dark:text-white">
+            {t('طلباتي وفواتيري', 'My Orders & Invoices')}
+          </h1>
+          <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
+            {t('تتبع حالة طلبك وعرض الفاتورة النهائية بسهولة', 'Track your order progress and view simplified invoices')}
+          </p>
+        </div>
+
+        {unreadOrderNotifications.length > 0 && (
+          <button
+            type="button"
+            onClick={markAllNotificationsRead}
+            className="min-h-[40px] px-3.5 py-1.5 rounded-xl border border-amber-300 dark:border-amber-700 bg-amber-50 dark:bg-amber-950/30 text-amber-900 dark:text-amber-200 text-xs font-bold inline-flex items-center gap-1.5"
+          >
+            <Check className="w-3.5 h-3.5" />
+            <span>
+              {t(`تحديثات جديدة (${unreadOrderNotifications.length})`, `Mark updates read (${unreadOrderNotifications.length})`)}
+            </span>
+          </button>
+        )}
       </div>
+
+      {/* Latest Order Highlight */}
+      {latestOrder && renderOrderCard(latestOrder, true)}
+
+      {/* Previous Orders */}
+      {previousOrders.length > 0 && (
+        <section className="space-y-3">
+          <h2 className="text-sm font-extrabold text-slate-600 dark:text-slate-300">
+            {t(`الطلبات السابقة (${previousOrders.length})`, `Previous Orders (${previousOrders.length})`)}
+          </h2>
+          <div className="space-y-3">{previousOrders.map((ord) => renderOrderCard(ord, false))}</div>
+        </section>
+      )}
+
+      {/* Simple Printable / Screenshot-Ready Invoice Modal */}
+      {invoiceOrder && (() => {
+        const invState = settings.deliveryFees.find((s) => s.id === invoiceOrder.stateId);
+        const invBreakdown = getOrderPaymentBreakdown(invoiceOrder);
+        const invItemsSubtotal =
+          invoiceOrder.itemsSubtotalSdg !== undefined
+            ? invoiceOrder.itemsSubtotalSdg + (invoiceOrder.lensOptionsTotalSdg || 0)
+            : invoiceOrder.subtotalSdg;
+        return (
+          <div className="fixed inset-0 z-[75] bg-black/60 backdrop-blur-xs flex items-center justify-center p-4 overflow-y-auto">
+            <div className="bg-white dark:bg-[#131C2E] border border-slate-200 dark:border-slate-800 rounded-2xl max-w-md w-full p-5 sm:p-6 space-y-4 shadow-2xl text-xs">
+              <div className="flex items-start justify-between gap-3 border-b border-slate-200 dark:border-slate-800 pb-3">
+                <div>
+                  <div className="font-extrabold text-base text-[#11223E] dark:text-white">
+                    {locale === 'ar' ? settings.storeNameAr : settings.storeNameEn}
+                  </div>
+                  <div className="text-[11px] text-slate-500 dark:text-slate-400">
+                    {t('فاتورة طلب العميل', 'Customer Order Invoice')}
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setInvoiceOrder(null)}
+                  aria-label={t('إغلاق', 'Close')}
+                  className="min-h-[38px] min-w-[38px] flex items-center justify-center rounded-xl hover:bg-slate-100 dark:hover:bg-slate-800 print:hidden"
+                >
+                  <X className="w-5 h-5" />
+                </button>
+              </div>
+
+              <div className="grid grid-cols-2 gap-2 p-3 rounded-xl bg-slate-50 dark:bg-slate-900/70">
+                <div>
+                  <span className="text-slate-500 block">{t('رقم الفاتورة', 'Invoice #')}</span>
+                  <span className="font-mono-num font-extrabold">{invoiceOrder.id}</span>
+                </div>
+                <div className="text-end">
+                  <span className="text-slate-500 block">{t('التاريخ', 'Date')}</span>
+                  <span className="font-bold">{formatShortDate(invoiceOrder.createdAt, locale)}</span>
+                </div>
+                <div>
+                  <span className="text-slate-500 block">{t('العميل', 'Customer')}</span>
+                  <span className="font-bold">{invoiceOrder.customerName}</span>
+                </div>
+                <div className="text-end">
+                  <span className="text-slate-500 block">{t('الهاتف', 'Phone')}</span>
+                  <span dir="ltr" className="font-mono-num font-bold">{invoiceOrder.customerPhone}</span>
+                </div>
+                <div className="col-span-2 pt-1 border-t border-slate-200/70 dark:border-slate-800">
+                  <span className="text-slate-500">{t('العنوان:', 'Address:')} </span>
+                  <span className="font-semibold">
+                    {locale === 'ar'
+                      ? invState?.nameAr || invoiceOrder.address?.stateNameAr
+                      : invState?.nameEn || invoiceOrder.address?.stateNameEn}
+                    {invoiceOrder.city ? ` — ${invoiceOrder.city}` : ''}
+                    {invoiceOrder.area ? `، ${invoiceOrder.area}` : ''}
+                  </span>
+                </div>
+              </div>
+
+              <div className="divide-y divide-slate-100 dark:divide-slate-800">
+                {invoiceOrder.items.map((it, idx) => {
+                  const extra = it.lensExtraPriceSdg ?? it.prescription?.lensExtraPriceSdg ?? 0;
+                  return (
+                    <div key={`${it.productId}_${idx}`} className="py-2 flex items-center justify-between gap-2">
+                      <div className="min-w-0">
+                        <span className="font-bold truncate block">
+                          {locale === 'ar' ? it.titleAr : it.titleEn} × {it.quantity}
+                        </span>
+                        {(it.variantLabel || it.options?.size) && (
+                          <span className="text-[11px] text-slate-500 dark:text-slate-400 block truncate">
+                            {[
+                              it.variantLabel,
+                              it.options?.size ? `${t('المقاس:', 'Size:')} ${it.options.size}` : '',
+                            ]
+                              .filter(Boolean)
+                              .join(' · ')}
+                          </span>
+                        )}
+                      </div>
+                      <span className="font-mono-num font-bold shrink-0">
+                        {formatSdg((it.unitPriceSdg + extra) * it.quantity)}
+                      </span>
+                    </div>
+                  );
+                })}
+              </div>
+
+              <div className="p-3 rounded-xl bg-[#D9B24C]/10 border border-[#D9B24C]/40 space-y-1">
+                <div className="flex justify-between">
+                  <span>{t('المنتجات والعدسات', 'Items & Lenses')}</span>
+                  <span className="font-mono-num font-bold">{formatSdg(invItemsSubtotal)}</span>
+                </div>
+                {invoiceOrder.discountSdg > 0 && (
+                  <div className="flex justify-between text-emerald-700 dark:text-emerald-400">
+                    <span>{t('الخصم', 'Discount')}</span>
+                    <span className="font-mono-num font-bold">− {formatSdg(invoiceOrder.discountSdg)}</span>
+                  </div>
+                )}
+                <div className="flex justify-between">
+                  <span>{t('رسوم التوصيل', 'Delivery Fee')}</span>
+                  <span className="font-mono-num font-bold">{formatSdg(invoiceOrder.deliveryFeeSdg)}</span>
+                </div>
+                <div className="flex justify-between text-sm font-extrabold pt-1.5 border-t border-[#D9B24C]/40">
+                  <span>{t('الإجمالي النهائي', 'Final Total')}</span>
+                  <span className="font-mono-num text-[#11223E] dark:text-[#E2BD5B]">
+                    {formatSdg(invoiceOrder.totalSdg)}
+                  </span>
+                </div>
+                {invoiceOrder.paymentMethod === 'split' && (
+                  <div className="pt-1.5 border-t border-[#D9B24C]/30 space-y-1 text-[11px]">
+                    <div className="flex justify-between font-bold">
+                      <span>{t('عربون بنكك:', 'Bankak Paid:')}</span>
+                      <span className="font-mono-num">{formatSdg(invBreakdown.bankakSdg)}</span>
+                    </div>
+                    <div className="flex justify-between font-bold text-emerald-700 dark:text-emerald-400">
+                      <span>{t('المتبقي عند الاستلام:', 'Due on Delivery:')}</span>
+                      <span className="font-mono-num">{formatSdg(invBreakdown.codSdg)}</span>
+                    </div>
+                  </div>
+                )}
+              </div>
+
+              <div className="flex items-center justify-between text-[11px] text-slate-500">
+                <span>
+                  {t('الدفع:', 'Payment:')} {getPaymentMethodLabel(invoiceOrder.paymentMethod, locale)}
+                </span>
+                <span className="font-bold text-[#B38B2D]">
+                  {getOrderStatusLabel(invoiceOrder.status, locale)}
+                </span>
+              </div>
+
+              <div className="flex items-center gap-2 pt-2 border-t border-slate-100 dark:border-slate-800 print:hidden">
+                <button
+                  type="button"
+                  onClick={() => copyInvoiceSummary(invoiceOrder)}
+                  className="flex-1 min-h-[42px] px-3 rounded-xl border border-slate-200 dark:border-slate-700 font-bold inline-flex items-center justify-center gap-1.5"
+                >
+                  <Copy className="w-3.5 h-3.5" />
+                  <span>{t('نسخ الفاتورة', 'Copy Invoice')}</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => window.print()}
+                  className="flex-1 min-h-[42px] px-3 rounded-xl bg-[#11223E] text-white dark:bg-[#D9B24C] dark:text-[#11223E] font-extrabold inline-flex items-center justify-center gap-1.5"
+                >
+                  <Printer className="w-3.5 h-3.5" />
+                  <span>{t('طباعة', 'Print')}</span>
+                </button>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
 
       {/* Customer Post-Order Edit Modal */}
       {editTargetOrder && (
         <div className="fixed inset-0 z-[70] bg-black/60 backdrop-blur-xs flex items-center justify-center p-3 sm:p-4 overflow-y-auto">
           <form
+            ref={editOrderModalRef}
+            noValidate
             onSubmit={handleSubmitEditOrder}
             className="bg-white dark:bg-[#181B1E] border border-stone-200 dark:border-zinc-800 rounded-2xl max-w-2xl w-full max-h-[92vh] overflow-y-auto p-5 sm:p-6 space-y-5 shadow-2xl text-xs"
           >
@@ -971,6 +1269,12 @@ export const OrdersView: React.FC = () => {
                 <X className="w-5 h-5" />
               </button>
             </div>
+
+            <ValidationSummaryBanner
+              errors={editVal.errors}
+              onSelectField={editVal.focusField}
+              mode="form"
+            />
 
             <div className="p-3 rounded-xl bg-sky-50 dark:bg-sky-950/25 border border-sky-200 dark:border-sky-900/50 text-sky-900 dark:text-sky-200 text-[11px] leading-relaxed">
               {isFullEditMode
@@ -1007,26 +1311,40 @@ export const OrdersView: React.FC = () => {
 
             {/* Contact & Address Fields */}
             <div className="grid sm:grid-cols-2 gap-3">
-              <div className="space-y-1">
+              <div {...editVal.getFieldWrapperProps('name')} className="space-y-1">
                 <label className="block font-bold">{t('اسم المستلم *', 'Recipient Name *')}</label>
                 <input
-                  required
                   maxLength={120}
                   value={editName}
                   onChange={(e) => setEditName(e.target.value)}
-                  className="w-full min-h-[44px] px-3 py-2 rounded-xl border border-stone-200 dark:border-zinc-700 bg-stone-50 dark:bg-zinc-900 text-sm"
+                  {...editVal.getInputA11yProps('name')}
+                  className={`w-full min-h-[44px] px-3 py-2 rounded-xl text-sm ${editVal.getControlClasses(
+                    'name',
+                    'border border-stone-200 dark:border-zinc-700 bg-stone-50 dark:bg-zinc-900'
+                  )}`}
+                />
+                <FieldError
+                  id={editVal.getErrorId('name')}
+                  message={editVal.getError('name')}
                 />
               </div>
 
-              <div className="space-y-1">
+              <div {...editVal.getFieldWrapperProps('phone')} className="space-y-1">
                 <label className="block font-bold">{t('رقم الهاتف *', 'Phone *')}</label>
                 <input
-                  required
                   dir="ltr"
                   maxLength={32}
                   value={editPhone}
                   onChange={(e) => setEditPhone(e.target.value)}
-                  className="w-full min-h-[44px] px-3 py-2 rounded-xl border border-stone-200 dark:border-zinc-700 bg-stone-50 dark:bg-zinc-900 text-sm font-mono-num"
+                  {...editVal.getInputA11yProps('phone')}
+                  className={`w-full min-h-[44px] px-3 py-2 rounded-xl text-sm font-mono-num ${editVal.getControlClasses(
+                    'phone',
+                    'border border-stone-200 dark:border-zinc-700 bg-stone-50 dark:bg-zinc-900'
+                  )}`}
+                />
+                <FieldError
+                  id={editVal.getErrorId('phone')}
+                  message={editVal.getError('phone')}
                 />
               </div>
 
@@ -1046,44 +1364,76 @@ export const OrdersView: React.FC = () => {
                 </select>
               </div>
 
-              <div className="space-y-1">
+              <div {...editVal.getFieldWrapperProps('city')} className="space-y-1">
                 <label className="block font-bold">{t('المدينة *', 'City *')}</label>
                 <input
-                  required
                   maxLength={80}
                   value={editCity}
                   onChange={(e) => setEditCity(e.target.value)}
-                  className="w-full min-h-[44px] px-3 py-2 rounded-xl border border-stone-200 dark:border-zinc-700 bg-stone-50 dark:bg-zinc-900 text-sm"
+                  {...editVal.getInputA11yProps('city')}
+                  className={`w-full min-h-[44px] px-3 py-2 rounded-xl text-sm ${editVal.getControlClasses(
+                    'city',
+                    'border border-stone-200 dark:border-zinc-700 bg-stone-50 dark:bg-zinc-900'
+                  )}`}
+                />
+                <FieldError
+                  id={editVal.getErrorId('city')}
+                  message={editVal.getError('city')}
                 />
               </div>
 
-              <div className="space-y-1">
+              <div {...editVal.getFieldWrapperProps('area')} className="space-y-1">
                 <label className="block font-bold">{t('المنطقة / الحي *', 'Area / District *')}</label>
                 <input
-                  required
                   maxLength={120}
                   value={editArea}
                   onChange={(e) => setEditArea(e.target.value)}
-                  className="w-full min-h-[44px] px-3 py-2 rounded-xl border border-stone-200 dark:border-zinc-700 bg-stone-50 dark:bg-zinc-900 text-sm"
+                  {...editVal.getInputA11yProps('area')}
+                  className={`w-full min-h-[44px] px-3 py-2 rounded-xl text-sm ${editVal.getControlClasses(
+                    'area',
+                    'border border-stone-200 dark:border-zinc-700 bg-stone-50 dark:bg-zinc-900'
+                  )}`}
+                />
+                <FieldError
+                  id={editVal.getErrorId('area')}
+                  message={editVal.getError('area')}
                 />
               </div>
 
-              <div className="space-y-1 sm:col-span-2">
+              <div {...editVal.getFieldWrapperProps('details')} className="space-y-1 sm:col-span-2">
                 <label className="block font-bold">{t('تفاصيل الشارع وأقرب معلم *', 'Street & Landmark *')}</label>
                 <input
-                  required
                   maxLength={400}
                   value={editDetails}
                   onChange={(e) => setEditDetails(e.target.value)}
-                  className="w-full min-h-[44px] px-3 py-2 rounded-xl border border-stone-200 dark:border-zinc-700 bg-stone-50 dark:bg-zinc-900 text-sm"
+                  {...editVal.getInputA11yProps('details')}
+                  className={`w-full min-h-[44px] px-3 py-2 rounded-xl text-sm ${editVal.getControlClasses(
+                    'details',
+                    'border border-stone-200 dark:border-zinc-700 bg-stone-50 dark:bg-zinc-900'
+                  )}`}
+                />
+                <FieldError
+                  id={editVal.getErrorId('details')}
+                  message={editVal.getError('details')}
                 />
               </div>
             </div>
 
             {/* Editable Items & Rx (Pre-Confirmation Only) */}
             {isFullEditMode && (
-              <div className="space-y-3 pt-2 border-t border-stone-100 dark:border-zinc-800">
+              <div
+                {...editVal.getFieldWrapperProps('items')}
+                className={`space-y-3 pt-2 border-t border-stone-100 dark:border-zinc-800 rounded-xl ${
+                  editVal.hasError('items')
+                    ? 'p-3 border-2 border-[#DC2626] dark:border-rose-500 bg-[#FEF2F2] dark:bg-rose-950/30'
+                    : ''
+                }`}
+              >
                 <h3 className="font-extrabold text-sm">{t('المنتجات والعدسات', 'Items & Prescriptions')}</h3>
+                <FieldError
+                  id={editVal.getErrorId('items')}
+                  message={editVal.getError('items')}
+                />
                 <div className="space-y-2.5">
                   {editItems.map((it, idx) => {
                     const catalogProduct = products.find((p) => p.id === it.productId);
@@ -1118,8 +1468,9 @@ export const OrdersView: React.FC = () => {
                             <button
                               type="button"
                               onClick={() => setRxEditIndex(idx)}
-                              className="min-h-[36px] px-2.5 py-1 rounded-lg border border-stone-300 dark:border-zinc-700 bg-white dark:bg-[#181B1E] font-bold text-[11px]"
+                              className="min-h-[40px] px-3.5 py-1.5 rounded-xl bg-[#D9B24C] hover:bg-[#c9a13c] text-[#11223E] border border-[#b38b2d] shadow-xs font-extrabold text-xs inline-flex items-center gap-1.5 transition-colors"
                             >
+                              <Eye className="w-3.5 h-3.5 shrink-0" />
                               {it.prescription
                                 ? t('تعديل المقاس/العدسات', 'Edit Rx/Lens')
                                 : t('إضافة مقاس', 'Add Rx')}
@@ -1305,8 +1656,10 @@ export const OrdersView: React.FC = () => {
       {cancelTargetOrder && (
         <div className="fixed inset-0 z-[70] bg-black/55 backdrop-blur-xs flex items-center justify-center p-4">
           <form
+            ref={cancelModalRef}
+            noValidate
             onSubmit={handleSubmitCancelRequest}
-            className="bg-white dark:bg-[#181B1E] border border-stone-200 dark:border-zinc-800 rounded-2xl max-w-md w-full p-5 sm:p-6 space-y-4 shadow-2xl text-xs"
+            className="bg-white dark:bg-[#181B1E] border border-stone-200 dark:border-zinc-800 rounded-2xl max-w-md w-full max-h-[90vh] overflow-y-auto p-5 sm:p-6 space-y-4 shadow-2xl text-xs"
           >
             <div className="flex items-center justify-between border-b border-stone-100 dark:border-zinc-800 pb-3">
               <div>
@@ -1327,6 +1680,12 @@ export const OrdersView: React.FC = () => {
               </button>
             </div>
 
+            <ValidationSummaryBanner
+              errors={cancelVal.errors}
+              onSelectField={cancelVal.focusField}
+              mode="form"
+            />
+
             <div className="p-3 rounded-xl bg-amber-50 dark:bg-amber-950/25 border border-amber-200 dark:border-amber-900/50 text-amber-900 dark:text-amber-200 text-[11px] leading-relaxed">
               {t(
                 'تنبيه: إرسال هذا النموذج يرفع طلب إلغاء للإدارة فقط، ويظل الطلب فعالاً حتى تتم مراجعته والموافقة عليه من إدارة المتجر (يمكن تقديم طلب إلغاء واحد فقط لكل طلب).',
@@ -1334,20 +1693,23 @@ export const OrdersView: React.FC = () => {
               )}
             </div>
 
-            <div className="space-y-1.5">
+            <div {...cancelVal.getFieldWrapperProps('reason')} className="space-y-1.5">
               <label className="block font-bold">
                 {t('سبب طلب الإلغاء *', 'Cancellation Reason *')}
               </label>
               <select
-                required
                 value={selectedReason}
                 onChange={(e) => {
                   setSelectedReason(e.target.value);
                   setCancelError(null);
                 }}
-                className="w-full min-h-[44px] px-3 py-2 rounded-xl border border-stone-200 dark:border-zinc-700 bg-stone-50 dark:bg-zinc-900 text-sm"
+                {...cancelVal.getInputA11yProps('reason')}
+                className={`w-full min-h-[44px] px-3 py-2 rounded-xl text-sm ${cancelVal.getControlClasses(
+                  'reason',
+                  'border border-stone-200 dark:border-zinc-700 bg-stone-50 dark:bg-zinc-900'
+                )}`}
               >
-                <option value="" disabled>
+                <option value="">
                   {t('— اختر سبب طلب الإلغاء —', '— Select cancellation reason —')}
                 </option>
                 {CANCEL_REASONS.map((r) => (
@@ -1356,6 +1718,10 @@ export const OrdersView: React.FC = () => {
                   </option>
                 ))}
               </select>
+              <FieldError
+                id={cancelVal.getErrorId('reason')}
+                message={cancelVal.getError('reason')}
+              />
             </div>
 
             <div className="space-y-1.5">
@@ -1375,26 +1741,41 @@ export const OrdersView: React.FC = () => {
               />
             </div>
 
-            <label className="flex items-start gap-2.5 p-3 rounded-xl border border-stone-200 dark:border-zinc-700 bg-stone-50/70 dark:bg-zinc-900/70 cursor-pointer">
-              <input
-                type="checkbox"
-                checked={confirmCancelAck}
-                onChange={(e) => {
-                  setConfirmCancelAck(e.target.checked);
-                  setCancelError(null);
-                }}
-                className="w-4 h-4 mt-0.5 accent-[#11223E] shrink-0"
+            <div {...cancelVal.getFieldWrapperProps('confirmAck')}>
+              <label
+                className={`flex items-start gap-2.5 p-3 rounded-xl cursor-pointer ${cancelVal.getControlClasses(
+                  'confirmAck',
+                  'border border-stone-200 dark:border-zinc-700 bg-stone-50/70 dark:bg-zinc-900/70'
+                )}`}
+              >
+                <input
+                  type="checkbox"
+                  checked={confirmCancelAck}
+                  onChange={(e) => {
+                    setConfirmCancelAck(e.target.checked);
+                    setCancelError(null);
+                  }}
+                  {...cancelVal.getInputA11yProps('confirmAck')}
+                  className="w-4 h-4 mt-0.5 accent-[#11223E] shrink-0"
+                />
+                <span className="text-[11px] font-bold text-slate-700 dark:text-slate-200 leading-relaxed">
+                  {t(
+                    'أعلم أن هذا الطلب سيُعرض على الإدارة للموافقة أو الرفض ولا يُلغى الطلب تلقائياً.',
+                    'I understand this request will be reviewed by management for approval or rejection and does not cancel the order automatically.'
+                  )}
+                </span>
+              </label>
+              <FieldError
+                id={cancelVal.getErrorId('confirmAck')}
+                message={cancelVal.getError('confirmAck')}
               />
-              <span className="text-[11px] font-bold text-slate-700 dark:text-slate-200 leading-relaxed">
-                {t(
-                  'أعلم أن هذا الطلب سيُعرض على الإدارة للموافقة أو الرفض ولا يُلغى الطلب تلقائياً.',
-                  'I understand this request will be reviewed by management for approval or rejection and does not cancel the order automatically.'
-                )}
-              </span>
-            </label>
+            </div>
 
             {cancelError && (
-              <div className="p-2.5 rounded-xl bg-rose-50 dark:bg-rose-950/30 border border-rose-200 dark:border-rose-800 text-rose-700 dark:text-rose-300 font-bold">
+              <div
+                role="alert"
+                className="p-2.5 rounded-xl bg-rose-50 dark:bg-rose-950/30 border border-rose-200 dark:border-rose-800 text-rose-700 dark:text-rose-300 font-bold"
+              >
                 {cancelError}
               </div>
             )}
@@ -1410,7 +1791,7 @@ export const OrdersView: React.FC = () => {
               </button>
               <button
                 type="submit"
-                disabled={submittingCancel || !selectedReason.trim() || !confirmCancelAck}
+                disabled={submittingCancel}
                 className="min-h-[44px] px-5 py-2 rounded-xl bg-rose-600 hover:bg-rose-700 text-white font-extrabold disabled:opacity-50"
               >
                 {submittingCancel

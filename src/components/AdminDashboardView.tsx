@@ -39,6 +39,7 @@ import {
   getMirrorColorLabel,
   getVisionTypeLabel,
   hasCustomLensOrRx,
+  isPdfPrescriptionUrl,
   resolveExtraOptions,
   resolveVisionType,
 } from '../utils/prescription';
@@ -608,11 +609,23 @@ export const AdminDashboardView: React.FC = () => {
                           </div>
                           <div className="text-[11px] text-stone-500 flex flex-wrap gap-2 mt-0.5">
                             {it.variantLabel && <span>{it.variantLabel}</span>}
-                            {optEntries.map(([k, v]) => (
-                              <span key={k}>
-                                {k}: {String(v)}
-                              </span>
-                            ))}
+                            {optEntries
+                              .filter(([k]) => !(k === 'color' && String(it.options?.color) === it.variantLabel))
+                              .map(([k, v]) => {
+                                const label =
+                                  k === 'size'
+                                    ? t('المقاس', 'Size')
+                                    : k === 'color'
+                                    ? t('اللون', 'Color')
+                                    : k === 'quantityPerBox'
+                                    ? t('عدد/علبة', 'Qty/Box')
+                                    : k;
+                                return (
+                                  <span key={k} className="font-semibold">
+                                    {label}: {String(v)}
+                                  </span>
+                                );
+                              })}
                             <span>
                               {t('سعر الوحدة:', 'Unit:')} {formatSdg(it.unitPriceSdg)}
                             </span>
@@ -684,9 +697,8 @@ export const AdminDashboardView: React.FC = () => {
                                   <th className="p-1 border border-stone-300">SPH</th>
                                   <th className="p-1 border border-stone-300">CYL</th>
                                   <th className="p-1 border border-stone-300">AXIS</th>
-                                  <th className="p-1 border border-stone-300">BC</th>
-                                  <th className="p-1 border border-stone-300">DIA</th>
-                                  <th className="p-1 border border-stone-300">{t('العلب', 'Boxes')}</th>
+                                  <th className="p-1 border border-stone-300">ADD</th>
+                                  <th className="p-1 border border-stone-300">PD</th>
                                 </tr>
                               </thead>
                               <tbody>
@@ -695,18 +707,20 @@ export const AdminDashboardView: React.FC = () => {
                                   <td className="p-1 border border-stone-300">{rx.values.contactRight?.sph || '-'}</td>
                                   <td className="p-1 border border-stone-300">{rx.values.contactRight?.cyl || '-'}</td>
                                   <td className="p-1 border border-stone-300">{rx.values.contactRight?.axis || '-'}</td>
-                                  <td className="p-1 border border-stone-300">{rx.values.contactRight?.bc || '-'}</td>
-                                  <td className="p-1 border border-stone-300">{rx.values.contactRight?.dia || '-'}</td>
-                                  <td className="p-1 border border-stone-300">{rx.values.contactRight?.boxes ?? '-'}</td>
+                                  <td className="p-1 border border-stone-300">{rx.values.contactRight?.add || '-'}</td>
+                                  <td className="p-1 border border-stone-300">
+                                    {pdMode === 'dual' ? pdRight || '-' : pdSingle || '-'}
+                                  </td>
                                 </tr>
                                 <tr>
                                   <td className="p-1 border border-stone-300 font-bold">OS (L)</td>
                                   <td className="p-1 border border-stone-300">{rx.values.contactLeft?.sph || '-'}</td>
                                   <td className="p-1 border border-stone-300">{rx.values.contactLeft?.cyl || '-'}</td>
                                   <td className="p-1 border border-stone-300">{rx.values.contactLeft?.axis || '-'}</td>
-                                  <td className="p-1 border border-stone-300">{rx.values.contactLeft?.bc || '-'}</td>
-                                  <td className="p-1 border border-stone-300">{rx.values.contactLeft?.dia || '-'}</td>
-                                  <td className="p-1 border border-stone-300">{rx.values.contactLeft?.boxes ?? '-'}</td>
+                                  <td className="p-1 border border-stone-300">{rx.values.contactLeft?.add || '-'}</td>
+                                  <td className="p-1 border border-stone-300">
+                                    {pdMode === 'dual' ? pdLeft || '-' : pdSingle || '-'}
+                                  </td>
                                 </tr>
                               </tbody>
                             </table>
@@ -764,14 +778,22 @@ export const AdminDashboardView: React.FC = () => {
 
                       {rx && rx.type === 'image' && rx.imageUrl && (
                         <div className="p-2 rounded-lg bg-stone-50 border border-stone-200 flex items-center gap-3">
-                          <img
-                            src={rx.imageUrl}
-                            alt={t('صورة الروشتة', 'Prescription image')}
-                            className="w-16 h-16 object-cover rounded border border-stone-300"
-                          />
+                          {isPdfPrescriptionUrl(rx.imageUrl, rx.fileType) ? (
+                            <div className="w-14 h-14 rounded border border-stone-300 bg-rose-50 text-rose-600 flex items-center justify-center shrink-0">
+                              <FileText className="w-6 h-6" />
+                            </div>
+                          ) : (
+                            <img
+                              src={rx.imageUrl}
+                              alt={t('صورة الروشتة', 'Prescription image')}
+                              className="w-16 h-16 object-cover rounded border border-stone-300"
+                            />
+                          )}
                           <div className="text-[11px] space-y-0.5">
                             <div className="font-bold text-[#11223E]">
-                              {t('صورة الروشتة الطبية مرفقة', 'Prescription photo attached')}
+                              {isPdfPrescriptionUrl(rx.imageUrl, rx.fileType)
+                                ? rx.fileName || t('ملف الوصفة الطبية (PDF) مرفق', 'Prescription PDF attached')
+                                : t('صورة الروشتة الطبية مرفقة', 'Prescription photo attached')}
                             </div>
                             {lensLine && <div>{lensLine}</div>}
                             {rx.notes && <div className="text-stone-600">{rx.notes}</div>}

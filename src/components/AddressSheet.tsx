@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
   CheckCircle2,
   Edit3,
@@ -12,6 +12,9 @@ import {
 import { useStore } from '../store/StoreContext';
 import { SavedAddress } from '../types';
 import { formatSdg, isValidSudanPhone, normalizeSudanPhone } from '../utils/format';
+import { FieldValidationRule, useFormValidation } from '../hooks/useFormValidation';
+import { FieldError, ValidationSummaryBanner } from './FormValidationUI';
+import { VALIDATION_MESSAGES, pickMsg } from '../utils/validationMessages';
 
 interface AddressSheetProps {
   open: boolean;
@@ -54,11 +57,62 @@ export const AddressSheet: React.FC<AddressSheetProps> = ({
   const [details, setDetails] = useState('');
   const [mapUrl, setMapUrl] = useState('');
   const [isDefault, setIsDefault] = useState(true);
-  const [formError, setFormError] = useState<string | null>(null);
+
+  const sheetBodyRef = useRef<HTMLDivElement>(null);
+  const v = useFormValidation({ containerRef: sheetBodyRef, formId: 'address-sheet' });
+
+  const buildRules = useCallback((): FieldValidationRule[] => {
+    const cleanPhone = phone.trim();
+    const cleanMap = mapUrl.trim();
+    return [
+      {
+        field: 'recipientName',
+        label: t('اسم المستلم', 'Recipient Name'),
+        error: !recipientName.trim() ? pickMsg(VALIDATION_MESSAGES.recipientNameRequired, locale) : null,
+      },
+      {
+        field: 'phone',
+        label: t('رقم الهاتف', 'Phone Number'),
+        error: !cleanPhone
+          ? pickMsg(VALIDATION_MESSAGES.phoneRequired, locale)
+          : !isValidSudanPhone(cleanPhone)
+          ? pickMsg(VALIDATION_MESSAGES.phoneInvalidSudan, locale)
+          : null,
+      },
+      {
+        field: 'stateId',
+        label: t('الولاية', 'Sudan State'),
+        error: !stateId ? pickMsg(VALIDATION_MESSAGES.deliveryStateRequired, locale) : null,
+      },
+      {
+        field: 'city',
+        label: t('المدينة / المحلية', 'City / Locality'),
+        error: !city.trim() ? pickMsg(VALIDATION_MESSAGES.cityRequired, locale) : null,
+      },
+      {
+        field: 'area',
+        label: t('الحي / المنطقة', 'Area / Neighborhood'),
+        error: !area.trim() ? pickMsg(VALIDATION_MESSAGES.areaRequired, locale) : null,
+      },
+      {
+        field: 'details',
+        label: t('الشارع وأقرب معلم', 'Street & Landmark'),
+        error: !details.trim() ? pickMsg(VALIDATION_MESSAGES.streetDetailsRequired, locale) : null,
+      },
+      {
+        field: 'mapUrl',
+        label: t('رابط الخريطة', 'Map Link'),
+        error:
+          cleanMap && !/^https?:\/\//i.test(cleanMap)
+            ? pickMsg(VALIDATION_MESSAGES.mapUrlInvalid, locale)
+            : null,
+      },
+    ];
+  }, [recipientName, phone, stateId, city, area, details, mapUrl, locale, t]);
 
   useEffect(() => {
     if (!open) return;
-    setFormError(null);
+    v.reset();
     if (initialEditAddress) {
       setMode('form');
       setEditingId(initialEditAddress.id);
@@ -90,10 +144,17 @@ export const AddressSheet: React.FC<AddressSheetProps> = ({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, initialEditAddress]);
 
+  useEffect(() => {
+    if (v.submitted && mode === 'form') {
+      v.revalidate(buildRules());
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [v.submitted, mode, buildRules]);
+
   if (!open) return null;
 
   const startNewForm = () => {
-    setFormError(null);
+    v.reset();
     setEditingId(null);
     setLabel(t('المنزل', 'Home'));
     setRecipientName(isGuest ? '' : user.name || '');
@@ -108,7 +169,7 @@ export const AddressSheet: React.FC<AddressSheetProps> = ({
   };
 
   const startEditForm = (addr: SavedAddress) => {
-    setFormError(null);
+    v.reset();
     setEditingId(addr.id);
     setLabel(addr.label || '');
     setRecipientName(addr.recipientName || user.name || '');
@@ -124,31 +185,7 @@ export const AddressSheet: React.FC<AddressSheetProps> = ({
 
   const handleSaveForm = (e: React.FormEvent) => {
     e.preventDefault();
-    setFormError(null);
-
-    if (!recipientName.trim()) {
-      setFormError(t('يرجى إدخال اسم المستلم', 'Recipient name is required'));
-      return;
-    }
-    if (!isValidSudanPhone(phone)) {
-      setFormError(
-        t(
-          'يرجى إدخال رقم هاتف سوداني صحيح (مثل 0912345678 أو +249912345678)',
-          'Enter a valid Sudan phone (e.g. 0912345678 or +249912345678)'
-        )
-      );
-      return;
-    }
-    if (!stateId) {
-      setFormError(t('يرجى اختيار الولاية', 'Please select a Sudan state'));
-      return;
-    }
-    if (!city.trim() || !area.trim() || !details.trim()) {
-      setFormError(
-        t('يرجى إكمال المدينة والحي والشارع/أقرب معلم', 'Complete city, area, and street/landmark')
-      );
-      return;
-    }
+    if (!v.validateAll(buildRules())) return;
 
     const normalizedPhone = normalizeSudanPhone(phone);
     if (editingId) {
@@ -214,8 +251,8 @@ export const AddressSheet: React.FC<AddressSheetProps> = ({
           </button>
         </div>
 
-        {/* Body */}
-        <div className="flex-1 overflow-y-auto p-4 sm:p-6 space-y-4 text-xs">
+        {/* Body (Inner Modal Scroll Container) */}
+        <div ref={sheetBodyRef} className="flex-1 overflow-y-auto p-4 sm:p-6 space-y-4 text-xs">
           {isGuest ? (
             <div className="p-5 rounded-2xl bg-amber-50 dark:bg-amber-950/25 border border-amber-200 dark:border-amber-900/50 text-center space-y-2">
               <h3 className="text-sm sm:text-base font-extrabold text-[#11223E] dark:text-amber-200">
@@ -304,14 +341,14 @@ export const AddressSheet: React.FC<AddressSheetProps> = ({
                               onClose();
                             }}
                             style={{ backgroundColor: appearance.primaryColor }}
-                            className="min-h-[38px] px-3 rounded-lg text-white font-bold"
+                            className="min-h-[44px] px-3 rounded-lg text-white font-bold"
                           >
                             {t('توصيل لهذا العنوان', 'Deliver Here')}
                           </button>
                           <button
                             type="button"
                             onClick={() => startEditForm(addr)}
-                            className="min-h-[38px] px-3 rounded-lg border border-slate-200 dark:border-slate-700 font-bold inline-flex items-center gap-1"
+                            className="min-h-[44px] px-3 rounded-lg border border-slate-200 dark:border-slate-700 font-bold inline-flex items-center gap-1"
                           >
                             <Edit3 className="w-3.5 h-3.5" />
                             {t('تعديل', 'Edit')}
@@ -320,7 +357,7 @@ export const AddressSheet: React.FC<AddressSheetProps> = ({
                             <button
                               type="button"
                               onClick={() => setDefaultAddress(addr.id)}
-                              className="min-h-[38px] px-3 rounded-lg border border-slate-200 dark:border-slate-700 font-bold"
+                              className="min-h-[44px] px-3 rounded-lg border border-slate-200 dark:border-slate-700 font-bold"
                             >
                               {t('تعيين كافتراضي', 'Set Default')}
                             </button>
@@ -330,7 +367,7 @@ export const AddressSheet: React.FC<AddressSheetProps> = ({
                               href={addr.mapUrl}
                               target="_blank"
                               rel="noopener noreferrer"
-                              className="min-h-[38px] px-2.5 rounded-lg border border-slate-200 dark:border-slate-700 inline-flex items-center gap-1 text-[#B38B2D]"
+                              className="min-h-[44px] px-2.5 rounded-lg border border-slate-200 dark:border-slate-700 inline-flex items-center gap-1 text-[#B38B2D]"
                             >
                               <ExternalLink className="w-3.5 h-3.5" />
                               {t('الخريطة', 'Map')}
@@ -343,7 +380,7 @@ export const AddressSheet: React.FC<AddressSheetProps> = ({
                               showToast(t('تم حذف العنوان', 'Address deleted'));
                             }}
                             aria-label={t('حذف', 'Delete')}
-                            className="min-h-[38px] px-2.5 rounded-lg text-rose-600 hover:bg-rose-50 dark:hover:bg-rose-950/30 ms-auto"
+                            className="min-h-[44px] min-w-[44px] flex items-center justify-center rounded-lg text-rose-600 hover:bg-rose-50 dark:hover:bg-rose-950/30 ms-auto"
                           >
                             <Trash2 className="w-4 h-4" />
                           </button>
@@ -355,29 +392,38 @@ export const AddressSheet: React.FC<AddressSheetProps> = ({
               )}
             </div>
           ) : (
-            <form id="vp-address-form" onSubmit={handleSaveForm} className="space-y-3">
+            <form noValidate id="vp-address-form" onSubmit={handleSaveForm} className="space-y-3">
               {user.addresses.length > 0 && (
                 <button
                   type="button"
-                  onClick={() => setMode('list')}
-                  className="text-[#B38B2D] font-bold hover:underline"
+                  onClick={() => {
+                    v.reset();
+                    setMode('list');
+                  }}
+                  className="min-h-[36px] text-[#B38B2D] font-bold hover:underline"
                 >
                   {t('← العودة للعناوين المحفوظة', '← Back to saved addresses')}
                 </button>
               )}
 
+              <ValidationSummaryBanner errors={v.errors} onSelectField={v.focusField} />
+
               <div className="grid sm:grid-cols-2 gap-3">
-                <div>
+                <div {...v.getFieldWrapperProps('recipientName')}>
                   <label className="block font-bold mb-1">
                     {t('اسم المستلم *', 'Recipient Name *')}
                   </label>
                   <input
-                    required
                     value={recipientName}
                     onChange={(e) => setRecipientName(e.target.value)}
                     placeholder={t('الاسم الكامل للمستلم', 'Recipient full name')}
-                    className="w-full min-h-[44px] px-3 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-900 text-base"
+                    {...v.getInputA11yProps('recipientName')}
+                    className={`w-full min-h-[44px] px-3 rounded-xl text-base ${v.getControlClasses(
+                      'recipientName',
+                      'border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-900'
+                    )}`}
                   />
+                  <FieldError id={v.getErrorId('recipientName')} message={v.getError('recipientName')} />
                 </div>
                 <div>
                   <label className="block font-bold mb-1">
@@ -393,25 +439,33 @@ export const AddressSheet: React.FC<AddressSheetProps> = ({
               </div>
 
               <div className="grid sm:grid-cols-2 gap-3">
-                <div>
+                <div {...v.getFieldWrapperProps('phone')}>
                   <label className="block font-bold mb-1">
                     {t('رقم الهاتف السوداني *', 'Sudan Phone *')}
                   </label>
                   <input
-                    required
                     dir="ltr"
                     value={phone}
                     onChange={(e) => setPhone(e.target.value)}
                     placeholder="0912345678 / +249912345678"
-                    className="w-full min-h-[44px] px-3 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-900 font-mono-num text-base"
+                    {...v.getInputA11yProps('phone')}
+                    className={`w-full min-h-[44px] px-3 rounded-xl font-mono-num text-base ${v.getControlClasses(
+                      'phone',
+                      'border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-900'
+                    )}`}
                   />
+                  <FieldError id={v.getErrorId('phone')} message={v.getError('phone')} />
                 </div>
-                <div>
+                <div {...v.getFieldWrapperProps('stateId')}>
                   <label className="block font-bold mb-1">{t('الولاية *', 'Sudan State *')}</label>
                   <select
                     value={stateId}
                     onChange={(e) => setStateId(e.target.value)}
-                    className="w-full min-h-[44px] px-3 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-900 text-base"
+                    {...v.getInputA11yProps('stateId')}
+                    className={`w-full min-h-[44px] px-3 rounded-xl text-base ${v.getControlClasses(
+                      'stateId',
+                      'border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-900'
+                    )}`}
                   >
                     {settings.deliveryFees.map((st) => (
                       <option key={st.id} value={st.id}>
@@ -419,50 +473,63 @@ export const AddressSheet: React.FC<AddressSheetProps> = ({
                       </option>
                     ))}
                   </select>
+                  <FieldError id={v.getErrorId('stateId')} message={v.getError('stateId')} />
                 </div>
               </div>
 
               <div className="grid sm:grid-cols-2 gap-3">
-                <div>
+                <div {...v.getFieldWrapperProps('city')}>
                   <label className="block font-bold mb-1">
                     {t('المدينة / المحلية *', 'City / Locality *')}
                   </label>
                   <input
-                    required
                     value={city}
                     onChange={(e) => setCity(e.target.value)}
                     placeholder={t('الخرطوم، بحري، أم درمان، مدني...', 'City')}
-                    className="w-full min-h-[44px] px-3 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-900 text-base"
+                    {...v.getInputA11yProps('city')}
+                    className={`w-full min-h-[44px] px-3 rounded-xl text-base ${v.getControlClasses(
+                      'city',
+                      'border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-900'
+                    )}`}
                   />
+                  <FieldError id={v.getErrorId('city')} message={v.getError('city')} />
                 </div>
-                <div>
+                <div {...v.getFieldWrapperProps('area')}>
                   <label className="block font-bold mb-1">
                     {t('الحي / المنطقة *', 'Neighborhood / Area *')}
                   </label>
                   <input
-                    required
                     value={area}
                     onChange={(e) => setArea(e.target.value)}
                     placeholder={t('العمارات، الرياض، الطائف...', 'Area')}
-                    className="w-full min-h-[44px] px-3 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-900 text-base"
+                    {...v.getInputA11yProps('area')}
+                    className={`w-full min-h-[44px] px-3 rounded-xl text-base ${v.getControlClasses(
+                      'area',
+                      'border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-900'
+                    )}`}
                   />
+                  <FieldError id={v.getErrorId('area')} message={v.getError('area')} />
                 </div>
               </div>
 
-              <div>
+              <div {...v.getFieldWrapperProps('details')}>
                 <label className="block font-bold mb-1">
                   {t('الشارع وأقرب معلم بارز *', 'Street & Nearest Landmark *')}
                 </label>
                 <input
-                  required
                   value={details}
                   onChange={(e) => setDetails(e.target.value)}
                   placeholder={t('مثال: شارع 15، بجوار صيدلية النيل', 'Street and nearest landmark')}
-                  className="w-full min-h-[44px] px-3 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-900 text-base"
+                  {...v.getInputA11yProps('details')}
+                  className={`w-full min-h-[44px] px-3 rounded-xl text-base ${v.getControlClasses(
+                    'details',
+                    'border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-900'
+                  )}`}
                 />
+                <FieldError id={v.getErrorId('details')} message={v.getError('details')} />
               </div>
 
-              <div>
+              <div {...v.getFieldWrapperProps('mapUrl')}>
                 <label className="block font-bold mb-1">
                   {t('رابط الموقع على الخريطة (اختياري)', 'Google Maps Link (Optional)')}
                 </label>
@@ -472,11 +539,16 @@ export const AddressSheet: React.FC<AddressSheetProps> = ({
                   value={mapUrl}
                   onChange={(e) => setMapUrl(e.target.value)}
                   placeholder="https://maps.google.com/..."
-                  className="w-full min-h-[44px] px-3 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-900 text-base"
+                  {...v.getInputA11yProps('mapUrl')}
+                  className={`w-full min-h-[44px] px-3 rounded-xl text-base ${v.getControlClasses(
+                    'mapUrl',
+                    'border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-900'
+                  )}`}
                 />
+                <FieldError id={v.getErrorId('mapUrl')} message={v.getError('mapUrl')} />
               </div>
 
-              <label className="flex items-center gap-2 cursor-pointer font-bold pt-1">
+              <label className="min-h-[44px] flex items-center gap-2 cursor-pointer font-bold pt-1">
                 <input
                   type="checkbox"
                   checked={isDefault}
@@ -485,12 +557,6 @@ export const AddressSheet: React.FC<AddressSheetProps> = ({
                 />
                 <span>{t('اجعله العنوان الافتراضي', 'Set as default address')}</span>
               </label>
-
-              {formError && (
-                <div className="p-3 rounded-xl bg-rose-50 dark:bg-rose-950/30 border border-rose-200 dark:border-rose-900 text-rose-700 dark:text-rose-300 font-bold">
-                  {formError}
-                </div>
-              )}
             </form>
           )}
         </div>

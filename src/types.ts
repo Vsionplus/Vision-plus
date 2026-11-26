@@ -114,6 +114,8 @@ export interface Product {
   isOutOfStock?: boolean;
   isDeleted?: boolean;
   requiresPrescriptionOption?: boolean;
+  showSizeOptions?: boolean;
+  sizeOptions?: string[];
   rating: number;
   reviews: ProductReview[];
 }
@@ -157,9 +159,10 @@ export interface ContactLensEyePrescription {
   sph: string;
   cyl: string;
   axis: string;
-  bc: string;
-  dia: string;
-  boxes: number;
+  add?: string;
+  bc?: string;
+  dia?: string;
+  boxes?: number;
 }
 
 export interface PrescriptionManualValues {
@@ -195,6 +198,8 @@ export interface PrescriptionData {
   fittingHeight?: string;
   imageUrl?: string;
   storagePath?: string;
+  fileName?: string;
+  fileType?: 'image' | 'pdf';
   lensOption: LensOptionType;
   lensExtraPriceSdg: number;
   notes?: string;

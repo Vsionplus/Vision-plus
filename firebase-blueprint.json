@@ -123,6 +123,8 @@
         "titleEn": { "type": "string", "maxLength": 200 },
         "priceSdg": { "type": "number" },
         "stock": { "type": "number" },
+        "showSizeOptions": { "type": "boolean" },
+        "sizeOptions": { "type": "array" },
         "visible": { "type": "boolean" }
       },
       "required": ["id", "titleAr", "titleEn", "priceSdg", "stock", "visible"]

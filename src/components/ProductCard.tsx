@@ -3,6 +3,7 @@ import { Heart, Plus, Minus, Trash2 } from 'lucide-react';
 import { Product } from '../types';
 import { useStore } from '../store/StoreContext';
 import { formatSdg } from '../utils/format';
+import { getEffectiveProductSizeOptions } from '../utils/prescription';
 import { ResilientImage } from './ResilientImage';
 
 interface ProductCardProps {
@@ -14,6 +15,7 @@ export const ProductCard: React.FC<ProductCardProps> = ({ product }) => {
     locale,
     t,
     visibleBrands,
+    categories,
     appTexts,
     appearance,
     user,
@@ -39,22 +41,37 @@ export const ProductCard: React.FC<ProductCardProps> = ({ product }) => {
   const primaryCartItem = cartMatches[0];
   const qtyInCart = cartMatches.reduce((sum, c) => sum + c.quantity, 0);
 
+  const availableSizes = getEffectiveProductSizeOptions(product, categories);
+  const requiresSizeChoice = availableSizes.length > 1;
+
   const handleDirectAdd = (e?: React.MouseEvent) => {
     e?.stopPropagation();
     if (isUnavailable) return;
 
+    if (requiresSizeChoice) {
+      openProduct(product.id);
+      return;
+    }
+
     const defaultVariant = product.variants[0];
+    const singleSize = availableSizes.length === 1 ? availableSizes[0] : undefined;
+    const colorName = defaultVariant
+      ? locale === 'ar'
+        ? defaultVariant.colorNameAr
+        : defaultVariant.colorNameEn
+      : undefined;
+
     addToCart({
       productId: product.id,
       variantId: defaultVariant?.id,
-      variantLabel: defaultVariant
-        ? locale === 'ar'
-          ? defaultVariant.colorNameAr
-          : defaultVariant.colorNameEn
-        : undefined,
-      selectedOptions: defaultVariant
-        ? { color: locale === 'ar' ? defaultVariant.colorNameAr : defaultVariant.colorNameEn }
-        : undefined,
+      variantLabel: colorName,
+      selectedOptions:
+        colorName || singleSize
+          ? {
+              ...(colorName ? { color: colorName } : {}),
+              ...(singleSize ? { size: singleSize } : {}),
+            }
+          : undefined,
       quantity: 1,
       unitPriceSdg: product.priceSdg,
     });
@@ -170,7 +187,11 @@ export const ProductCard: React.FC<ProductCardProps> = ({ product }) => {
               style={{ backgroundColor: appearance.primaryColor }}
               className="min-h-[42px] px-4 rounded-xl text-white text-xs font-bold hover:opacity-90 transition-opacity whitespace-nowrap shrink-0"
             >
-              {locale === 'ar' ? appTexts.btnAddToCartAr : appTexts.btnAddToCartEn}
+              {requiresSizeChoice
+                ? t('اختر المقاس', 'Choose Size')
+                : locale === 'ar'
+                ? appTexts.btnAddToCartAr
+                : appTexts.btnAddToCartEn}
             </button>
           )}
         </div>

@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
   ArrowUp,
   ArrowDown,
@@ -20,6 +20,9 @@ import { EXTRA_OPTION_IDS, VISION_TYPE_IDS } from '../../utils/prescription';
 import { ResilientImage } from '../ResilientImage';
 import { useAdminSecurity } from './AdminGuard';
 import { formatSdg } from '../../utils/format';
+import { FieldValidationRule, useFormValidation } from '../../hooks/useFormValidation';
+import { FieldError, ValidationSummaryBanner } from '../FormValidationUI';
+import { VALIDATION_MESSAGES, pickMsg } from '../../utils/validationMessages';
 
 export const AdminHomeBuilderModule: React.FC = () => {
   const { locale, t, homeSections, updateHomeSections } = useStore();
@@ -131,6 +134,41 @@ export const AdminBannersModule: React.FC = () => {
   const [startDate, setStartDate] = useState('2026-01-01');
   const [endDate, setEndDate] = useState('2027-12-31');
   const [order, setOrder] = useState('1');
+  const bannerVal = useFormValidation({ formId: 'admin-banner' });
+
+  const buildBannerRules = useCallback((): FieldValidationRule[] => [
+    {
+      field: 'titleAr',
+      label: t('عنوان البانر (عربي)', 'Banner Title (AR)'),
+      error: !titleAr.trim() ? pickMsg(VALIDATION_MESSAGES.bannerTitleArRequired, locale) : null,
+    },
+    {
+      field: 'targetValue',
+      label: t('وجهة البانر / الرابط', 'Banner Target'),
+      error:
+        targetType !== 'consult' && !targetValue.trim()
+          ? pickMsg(VALIDATION_MESSAGES.bannerTargetRequired, locale)
+          : null,
+    },
+    {
+      field: 'endDate',
+      label: t('فترة عرض البانر', 'Banner Date Range'),
+      error:
+        startDate && endDate && endDate < startDate
+          ? pickMsg(VALIDATION_MESSAGES.bannerDateRangeInvalid, locale)
+          : null,
+    },
+    {
+      field: 'image',
+      label: t('صورة البانر', 'Banner Image'),
+      error: !image.trim() ? pickMsg(VALIDATION_MESSAGES.bannerImageRequired, locale) : null,
+    },
+  ], [titleAr, targetType, targetValue, startDate, endDate, image, locale, t]);
+
+  useEffect(() => {
+    if (bannerVal.submitted) bannerVal.revalidate(buildBannerRules());
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [bannerVal.submitted, buildBannerRules]);
 
   const resetForm = () => {
     setEditingBannerId(null);
@@ -145,11 +183,12 @@ export const AdminBannersModule: React.FC = () => {
     setStartDate('2026-01-01');
     setEndDate('2027-12-31');
     setOrder('1');
+    bannerVal.reset();
   };
 
   const handleSave = (e: React.FormEvent) => {
     e.preventDefault();
-    if (!titleAr.trim()) return;
+    if (!bannerVal.validateAll(buildBannerRules())) return;
     const existing = banners.find((b) => b.id === editingBannerId);
     upsertBanner({
       id: existing ? existing.id : `b_${Date.now()}`,
@@ -173,7 +212,7 @@ export const AdminBannersModule: React.FC = () => {
 
   return (
     <div className="grid lg:grid-cols-12 gap-6 items-start text-xs">
-      <form onSubmit={handleSave} className="lg:col-span-6 bg-white dark:bg-[#181B1E] border border-stone-200 dark:border-zinc-800 rounded-xl p-5 space-y-3">
+      <form noValidate onSubmit={handleSave} className="lg:col-span-6 bg-white dark:bg-[#181B1E] border border-stone-200 dark:border-zinc-800 rounded-xl p-5 space-y-3">
         <div className="flex items-center justify-between gap-2">
           <h2 className="text-base font-bold flex items-center gap-2">
             <ImageIcon className="w-4 h-4 text-[#D9B24C]" />
@@ -187,6 +226,12 @@ export const AdminBannersModule: React.FC = () => {
             </button>
           )}
         </div>
+
+        <ValidationSummaryBanner
+          errors={bannerVal.errors}
+          onSelectField={bannerVal.focusField}
+          mode="form"
+        />
 
         {/* Live Banner Preview */}
         <div className="relative h-36 rounded-2xl overflow-hidden bg-[#11223E]">
@@ -203,40 +248,101 @@ export const AdminBannersModule: React.FC = () => {
         </div>
 
         <div className="grid sm:grid-cols-2 gap-2">
-          <input required value={titleAr} onChange={(e) => setTitleAr(e.target.value)} placeholder={t('العنوان (عربي)*', 'Title (AR)*')} className="px-3 py-2 rounded-lg border bg-stone-50 dark:bg-zinc-900" />
-          <input value={titleEn} onChange={(e) => setTitleEn(e.target.value)} placeholder={t('العنوان (إنجليزي)', 'Title (EN)')} className="px-3 py-2 rounded-lg border bg-stone-50 dark:bg-zinc-900" />
-          <input value={subAr} onChange={(e) => setSubAr(e.target.value)} placeholder={t('الوصف الفرعي', 'Subtitle')} className="px-3 py-2 rounded-lg border bg-stone-50 dark:bg-zinc-900" />
-          <input value={ctaAr} onChange={(e) => setCtaAr(e.target.value)} placeholder={t('نص الزر', 'CTA Button Label')} className="px-3 py-2 rounded-lg border bg-stone-50 dark:bg-zinc-900" />
+          <div {...bannerVal.getFieldWrapperProps('titleAr')}>
+            <input
+              value={titleAr}
+              onChange={(e) => setTitleAr(e.target.value)}
+              placeholder={t('العنوان (عربي)*', 'Title (AR)*')}
+              {...bannerVal.getInputA11yProps('titleAr')}
+              className={`w-full min-h-[44px] px-3 py-2 rounded-lg ${bannerVal.getControlClasses(
+                'titleAr',
+                'border border-stone-200 dark:border-zinc-700 bg-stone-50 dark:bg-zinc-900'
+              )}`}
+            />
+            <FieldError
+              id={bannerVal.getErrorId('titleAr')}
+              message={bannerVal.getError('titleAr')}
+            />
+          </div>
+          <input value={titleEn} onChange={(e) => setTitleEn(e.target.value)} placeholder={t('العنوان (إنجليزي)', 'Title (EN)')} className="min-h-[44px] px-3 py-2 rounded-lg border bg-stone-50 dark:bg-zinc-900 self-start" />
+          <input value={subAr} onChange={(e) => setSubAr(e.target.value)} placeholder={t('الوصف الفرعي', 'Subtitle')} className="min-h-[44px] px-3 py-2 rounded-lg border bg-stone-50 dark:bg-zinc-900" />
+          <input value={ctaAr} onChange={(e) => setCtaAr(e.target.value)} placeholder={t('نص الزر', 'CTA Button Label')} className="min-h-[44px] px-3 py-2 rounded-lg border bg-stone-50 dark:bg-zinc-900" />
         </div>
 
         <div className="grid sm:grid-cols-3 gap-2">
-          <select value={placement} onChange={(e) => setPlacement(e.target.value as typeof placement)} className="px-2.5 py-2 rounded-lg border bg-stone-50 dark:bg-zinc-900">
+          <select value={placement} onChange={(e) => setPlacement(e.target.value as typeof placement)} className="min-h-[44px] px-2.5 py-2 rounded-lg border bg-stone-50 dark:bg-zinc-900 self-start">
             <option value="home_top">{t('بانر أعلى الرئيسية', 'Top Hero Carousel')}</option>
             <option value="home_middle">{t('بانر منتصف الصفحة', 'Mid-Page Slot')}</option>
           </select>
-          <select value={targetType} onChange={(e) => setTargetType(e.target.value as BannerAd['targetType'])} className="px-2.5 py-2 rounded-lg border bg-stone-50 dark:bg-zinc-900">
+          <select value={targetType} onChange={(e) => setTargetType(e.target.value as BannerAd['targetType'])} className="min-h-[44px] px-2.5 py-2 rounded-lg border bg-stone-50 dark:bg-zinc-900 self-start">
             <option value="category">{t('يفتح تصنيف', 'Open Category')}</option>
             <option value="product">{t('يفتح منتج', 'Open Product')}</option>
             <option value="consult">{t('يفتح الاستشارات', 'Open Consult')}</option>
             <option value="url">{t('رابط خارجي', 'External URL')}</option>
           </select>
-          {targetType === 'category' ? (
-            <select value={targetValue} onChange={(e) => setTargetValue(e.target.value)} className="px-2.5 py-2 rounded-lg border bg-stone-50 dark:bg-zinc-900">
-              {categories.map((c) => <option key={c.id} value={c.id}>{locale === 'ar' ? c.nameAr : c.nameEn}</option>)}
-            </select>
-          ) : targetType === 'product' ? (
-            <select value={targetValue} onChange={(e) => setTargetValue(e.target.value)} className="px-2.5 py-2 rounded-lg border bg-stone-50 dark:bg-zinc-900">
-              {products.map((p) => <option key={p.id} value={p.id}>{locale === 'ar' ? p.titleAr : p.titleEn}</option>)}
-            </select>
-          ) : (
-            <input value={targetValue} onChange={(e) => setTargetValue(e.target.value)} placeholder="https://..." className="px-2.5 py-2 rounded-lg border bg-stone-50 dark:bg-zinc-900" />
-          )}
+          <div {...bannerVal.getFieldWrapperProps('targetValue')}>
+            {targetType === 'category' ? (
+              <select
+                value={targetValue}
+                onChange={(e) => setTargetValue(e.target.value)}
+                {...bannerVal.getInputA11yProps('targetValue')}
+                className={`w-full min-h-[44px] px-2.5 py-2 rounded-lg ${bannerVal.getControlClasses(
+                  'targetValue',
+                  'border border-stone-200 dark:border-zinc-700 bg-stone-50 dark:bg-zinc-900'
+                )}`}
+              >
+                {categories.map((c) => <option key={c.id} value={c.id}>{locale === 'ar' ? c.nameAr : c.nameEn}</option>)}
+              </select>
+            ) : targetType === 'product' ? (
+              <select
+                value={targetValue}
+                onChange={(e) => setTargetValue(e.target.value)}
+                {...bannerVal.getInputA11yProps('targetValue')}
+                className={`w-full min-h-[44px] px-2.5 py-2 rounded-lg ${bannerVal.getControlClasses(
+                  'targetValue',
+                  'border border-stone-200 dark:border-zinc-700 bg-stone-50 dark:bg-zinc-900'
+                )}`}
+              >
+                {products.map((p) => <option key={p.id} value={p.id}>{locale === 'ar' ? p.titleAr : p.titleEn}</option>)}
+              </select>
+            ) : (
+              <input
+                value={targetValue}
+                onChange={(e) => setTargetValue(e.target.value)}
+                placeholder="https://..."
+                {...bannerVal.getInputA11yProps('targetValue')}
+                className={`w-full min-h-[44px] px-2.5 py-2 rounded-lg ${bannerVal.getControlClasses(
+                  'targetValue',
+                  'border border-stone-200 dark:border-zinc-700 bg-stone-50 dark:bg-zinc-900'
+                )}`}
+              />
+            )}
+            <FieldError
+              id={bannerVal.getErrorId('targetValue')}
+              message={bannerVal.getError('targetValue')}
+            />
+          </div>
         </div>
 
         <div className="grid sm:grid-cols-3 gap-2">
-          <input type="date" value={startDate} onChange={(e) => setStartDate(e.target.value)} className="px-2.5 py-2 rounded-lg border bg-stone-50 dark:bg-zinc-900 font-mono-num" />
-          <input type="date" value={endDate} onChange={(e) => setEndDate(e.target.value)} className="px-2.5 py-2 rounded-lg border bg-stone-50 dark:bg-zinc-900 font-mono-num" />
-          <input type="number" value={order} onChange={(e) => setOrder(e.target.value)} placeholder={t('الترتيب', 'Order')} className="px-2.5 py-2 rounded-lg border bg-stone-50 dark:bg-zinc-900 font-mono-num" />
+          <input type="date" value={startDate} onChange={(e) => setStartDate(e.target.value)} className="min-h-[44px] px-2.5 py-2 rounded-lg border bg-stone-50 dark:bg-zinc-900 font-mono-num self-start" />
+          <div {...bannerVal.getFieldWrapperProps('endDate')}>
+            <input
+              type="date"
+              value={endDate}
+              onChange={(e) => setEndDate(e.target.value)}
+              {...bannerVal.getInputA11yProps('endDate')}
+              className={`w-full min-h-[44px] px-2.5 py-2 rounded-lg font-mono-num ${bannerVal.getControlClasses(
+                'endDate',
+                'border border-stone-200 dark:border-zinc-700 bg-stone-50 dark:bg-zinc-900'
+              )}`}
+            />
+            <FieldError
+              id={bannerVal.getErrorId('endDate')}
+              message={bannerVal.getError('endDate')}
+            />
+          </div>
+          <input type="number" value={order} onChange={(e) => setOrder(e.target.value)} placeholder={t('الترتيب', 'Order')} className="min-h-[44px] px-2.5 py-2 rounded-lg border bg-stone-50 dark:bg-zinc-900 font-mono-num self-start" />
         </div>
 
         {uploadPct !== null && (
@@ -245,25 +351,43 @@ export const AdminBannersModule: React.FC = () => {
           </div>
         )}
 
-        <div className="flex items-center justify-between pt-2">
-          <label className="min-h-[44px] px-3 py-2 rounded-lg border font-bold cursor-pointer inline-flex items-center gap-1.5">
-            <Upload className="w-3.5 h-3.5" />
-            {t('رفع صورة البانر', 'Upload Banner Image')}
-            <input
-              type="file"
-              accept="image/*"
-              className="hidden"
-              onChange={async (e) => {
-                const f = e.target.files?.[0];
-                if (!f) return;
-                setUploadPct(10);
-                const url = await uploadAdminImage('banners', f, (pct) => setUploadPct(Math.max(10, pct)));
-                setImage(url);
-                window.setTimeout(() => setUploadPct(null), 500);
-                showToast(t('تم رفع صورة البانر', 'Banner image uploaded'));
+        <div className="flex flex-wrap items-center justify-between gap-2 pt-2">
+          <div {...bannerVal.getFieldWrapperProps('image')} className="space-y-1">
+            <label
+              tabIndex={0}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter' || e.key === ' ') {
+                  e.preventDefault();
+                  e.currentTarget.querySelector('input')?.click();
+                }
               }}
+              className={`min-h-[44px] px-3 py-2 rounded-lg font-bold cursor-pointer inline-flex items-center gap-1.5 ${bannerVal.getControlClasses(
+                'image',
+                'border border-stone-200 dark:border-zinc-700'
+              )}`}
+            >
+              <Upload className="w-3.5 h-3.5" />
+              {t('رفع صورة البانر', 'Upload Banner Image')}
+              <input
+                type="file"
+                accept="image/*"
+                className="sr-only"
+                onChange={async (e) => {
+                  const f = e.target.files?.[0];
+                  if (!f) return;
+                  setUploadPct(10);
+                  const url = await uploadAdminImage('banners', f, (pct) => setUploadPct(Math.max(10, pct)));
+                  setImage(url);
+                  window.setTimeout(() => setUploadPct(null), 500);
+                  showToast(t('تم رفع صورة البانر', 'Banner image uploaded'));
+                }}
+              />
+            </label>
+            <FieldError
+              id={bannerVal.getErrorId('image')}
+              message={bannerVal.getError('image')}
             />
-          </label>
+          </div>
           <button type="submit" className="min-h-[44px] px-5 py-2 rounded-xl bg-[#D9B24C] text-[#11223E] font-extrabold">
             {editingBannerId ? t('تحديث البانر', 'Update Banner') : t('حفظ البانر', 'Save Banner')}
           </button>
@@ -720,6 +844,54 @@ export const AdminStoreSettingsModule: React.FC = () => {
   const [lensDraft, setLensDraft] = useState(lensOptions);
   const [brandMigrated, setBrandMigrated] = useState(false);
   const migrationRanRef = useRef(false);
+  const settingsVal = useFormValidation({ formId: 'admin-settings' });
+
+  const buildSettingsRules = useCallback((): FieldValidationRule[] => {
+    const cleanEmail = draft.email.trim();
+    return [
+      {
+        field: 'email',
+        label: t('البريد الإلكتروني', 'Email'),
+        error:
+          cleanEmail && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(cleanEmail)
+            ? pickMsg(VALIDATION_MESSAGES.emailInvalid, locale)
+            : null,
+      },
+      {
+        field: 'storeNameAr',
+        label: t('اسم المتجر (عربي)', 'Store Name (AR)'),
+        error: !draft.storeNameAr.trim()
+          ? pickMsg(VALIDATION_MESSAGES.storeNameRequired, locale)
+          : null,
+      },
+      {
+        field: 'bankakAccountName',
+        label: t('اسم صاحب حساب بنكك', 'Bankak Account Name'),
+        error: !draft.bankakAccountName.trim()
+          ? pickMsg(VALIDATION_MESSAGES.bankakAccountNameRequired, locale)
+          : null,
+      },
+      {
+        field: 'bankakAccountNumber',
+        label: t('رقم حساب بنكك', 'Bankak Account Number'),
+        error: !draft.bankakAccountNumber.trim()
+          ? pickMsg(VALIDATION_MESSAGES.bankakAccountNumberRequired, locale)
+          : null,
+      },
+    ];
+  }, [
+    draft.email,
+    draft.storeNameAr,
+    draft.bankakAccountName,
+    draft.bankakAccountNumber,
+    locale,
+    t,
+  ]);
+
+  useEffect(() => {
+    if (settingsVal.submitted) settingsVal.revalidate(buildSettingsRules());
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [settingsVal.submitted, buildSettingsRules]);
 
   useEffect(() => {
     setDraft(settings);
@@ -791,8 +963,10 @@ export const AdminStoreSettingsModule: React.FC = () => {
 
   return (
     <form
+      noValidate
       onSubmit={(e) => {
         e.preventDefault();
+        if (!settingsVal.validateAll(buildSettingsRules())) return;
         const bankDetailsChanged =
           draft.bankakAccountName !== settings.bankakAccountName ||
           draft.bankakAccountNumber !== settings.bankakAccountNumber ||
@@ -802,6 +976,7 @@ export const AdminStoreSettingsModule: React.FC = () => {
         const commitSettings = () => {
           updateSettings(draft);
           updateLensOptions(lensDraft);
+          settingsVal.reset();
         };
 
         if (bankDetailsChanged) {
@@ -815,6 +990,11 @@ export const AdminStoreSettingsModule: React.FC = () => {
       }}
       className="bg-white dark:bg-[#181B1E] border border-stone-200 dark:border-zinc-800 rounded-xl p-5 space-y-6 text-xs"
     >
+      <ValidationSummaryBanner
+        errors={settingsVal.errors}
+        onSelectField={settingsVal.focusField}
+        mode="form"
+      />
       {brandMigrated && (
         <div className="p-3 rounded-xl bg-emerald-50 dark:bg-emerald-950/30 border border-emerald-200 dark:border-emerald-900/50 text-emerald-800 dark:text-emerald-200 font-bold">
           {t(
@@ -917,7 +1097,10 @@ export const AdminStoreSettingsModule: React.FC = () => {
           </div>
 
           {/* Email */}
-          <div className="p-2.5 rounded-lg bg-white dark:bg-[#181B1E] border border-stone-200 dark:border-zinc-800 space-y-1.5">
+          <div
+            {...settingsVal.getFieldWrapperProps('email')}
+            className="p-2.5 rounded-lg bg-white dark:bg-[#181B1E] border border-stone-200 dark:border-zinc-800 space-y-1.5"
+          >
             <div className="flex items-center justify-between">
               <span className="font-bold">{t('البريد الإلكتروني', 'Email')}</span>
               <button
@@ -930,7 +1113,21 @@ export const AdminStoreSettingsModule: React.FC = () => {
                 {draft.contactVisibility.email ? t('ظاهر', 'Visible') : t('مخفي', 'Hidden')}
               </button>
             </div>
-            <input dir="ltr" type="email" value={draft.email} onChange={(e) => setDraft({ ...draft, email: e.target.value })} className="w-full px-2.5 py-1.5 rounded border bg-stone-50 dark:bg-zinc-900" />
+            <input
+              dir="ltr"
+              type="email"
+              value={draft.email}
+              onChange={(e) => setDraft({ ...draft, email: e.target.value })}
+              {...settingsVal.getInputA11yProps('email')}
+              className={`w-full min-h-[40px] px-2.5 py-1.5 rounded ${settingsVal.getControlClasses(
+                'email',
+                'border border-stone-200 dark:border-zinc-700 bg-stone-50 dark:bg-zinc-900'
+              )}`}
+            />
+            <FieldError
+              id={settingsVal.getErrorId('email')}
+              message={settingsVal.getError('email')}
+            />
           </div>
 
           {/* Address & Map */}
@@ -976,25 +1173,61 @@ export const AdminStoreSettingsModule: React.FC = () => {
 
       {/* Store Name, Bankak & Minimum Order */}
       <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-3">
-        <div>
-          <label className="block font-semibold mb-1">{t('اسم المتجر (عربي)', 'Store Name (AR)')}</label>
-          <input value={draft.storeNameAr} onChange={(e) => setDraft({ ...draft, storeNameAr: e.target.value })} className="w-full px-3 py-2 rounded-lg border bg-stone-50 dark:bg-zinc-900" />
+        <div {...settingsVal.getFieldWrapperProps('storeNameAr')}>
+          <label className="block font-semibold mb-1">{t('اسم المتجر (عربي) *', 'Store Name (AR) *')}</label>
+          <input
+            value={draft.storeNameAr}
+            onChange={(e) => setDraft({ ...draft, storeNameAr: e.target.value })}
+            {...settingsVal.getInputA11yProps('storeNameAr')}
+            className={`w-full min-h-[44px] px-3 py-2 rounded-lg ${settingsVal.getControlClasses(
+              'storeNameAr',
+              'border border-stone-200 dark:border-zinc-700 bg-stone-50 dark:bg-zinc-900'
+            )}`}
+          />
+          <FieldError
+            id={settingsVal.getErrorId('storeNameAr')}
+            message={settingsVal.getError('storeNameAr')}
+          />
         </div>
         <div>
           <label className="block font-semibold mb-1">{t('اسم المتجر (إنجليزي)', 'Store Name (EN)')}</label>
-          <input value={draft.storeNameEn} onChange={(e) => setDraft({ ...draft, storeNameEn: e.target.value })} className="w-full px-3 py-2 rounded-lg border bg-stone-50 dark:bg-zinc-900" />
+          <input value={draft.storeNameEn} onChange={(e) => setDraft({ ...draft, storeNameEn: e.target.value })} className="w-full min-h-[44px] px-3 py-2 rounded-lg border bg-stone-50 dark:bg-zinc-900" />
         </div>
         <div>
           <label className="block font-semibold mb-1">{t('الحد الأدنى للطلب (ج.س)', 'Minimum Order (SDG)')}</label>
-          <input type="number" value={draft.minimumOrderSdg} onChange={(e) => setDraft({ ...draft, minimumOrderSdg: Number(e.target.value) || 0 })} className="w-full px-3 py-2 rounded-lg border bg-stone-50 dark:bg-zinc-900 font-mono-num" />
+          <input type="number" value={draft.minimumOrderSdg} onChange={(e) => setDraft({ ...draft, minimumOrderSdg: Number(e.target.value) || 0 })} className="w-full min-h-[44px] px-3 py-2 rounded-lg border bg-stone-50 dark:bg-zinc-900 font-mono-num" />
         </div>
-        <div>
-          <label className="block font-semibold mb-1">{t('اسم صاحب حساب بنكك', 'Bankak Account Name')}</label>
-          <input value={draft.bankakAccountName} onChange={(e) => setDraft({ ...draft, bankakAccountName: e.target.value })} className="w-full px-3 py-2 rounded-lg border bg-stone-50 dark:bg-zinc-900" />
+        <div {...settingsVal.getFieldWrapperProps('bankakAccountName')}>
+          <label className="block font-semibold mb-1">{t('اسم صاحب حساب بنكك *', 'Bankak Account Name *')}</label>
+          <input
+            value={draft.bankakAccountName}
+            onChange={(e) => setDraft({ ...draft, bankakAccountName: e.target.value })}
+            {...settingsVal.getInputA11yProps('bankakAccountName')}
+            className={`w-full min-h-[44px] px-3 py-2 rounded-lg ${settingsVal.getControlClasses(
+              'bankakAccountName',
+              'border border-stone-200 dark:border-zinc-700 bg-stone-50 dark:bg-zinc-900'
+            )}`}
+          />
+          <FieldError
+            id={settingsVal.getErrorId('bankakAccountName')}
+            message={settingsVal.getError('bankakAccountName')}
+          />
         </div>
-        <div>
-          <label className="block font-semibold mb-1">{t('رقم حساب بنكك', 'Bankak Account Number')}</label>
-          <input value={draft.bankakAccountNumber} onChange={(e) => setDraft({ ...draft, bankakAccountNumber: e.target.value })} className="w-full px-3 py-2 rounded-lg border bg-stone-50 dark:bg-zinc-900 font-mono-num" />
+        <div {...settingsVal.getFieldWrapperProps('bankakAccountNumber')}>
+          <label className="block font-semibold mb-1">{t('رقم حساب بنكك *', 'Bankak Account Number *')}</label>
+          <input
+            value={draft.bankakAccountNumber}
+            onChange={(e) => setDraft({ ...draft, bankakAccountNumber: e.target.value })}
+            {...settingsVal.getInputA11yProps('bankakAccountNumber')}
+            className={`w-full min-h-[44px] px-3 py-2 rounded-lg font-mono-num ${settingsVal.getControlClasses(
+              'bankakAccountNumber',
+              'border border-stone-200 dark:border-zinc-700 bg-stone-50 dark:bg-zinc-900'
+            )}`}
+          />
+          <FieldError
+            id={settingsVal.getErrorId('bankakAccountNumber')}
+            message={settingsVal.getError('bankakAccountNumber')}
+          />
         </div>
         <div>
           <label className="block font-semibold mb-1">{t('فرع بنكك', 'Bankak Branch')}</label>

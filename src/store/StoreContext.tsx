@@ -187,6 +187,7 @@ interface StoreState {
   locale: Locale;
   theme: ThemeMode;
   activeTab: AppTab;
+  tabHistory: AppTab[];
   adminRoute: AdminRouteMode;
   catalogCategory: CategoryId | 'all';
   catalogSearch: string;
@@ -298,6 +299,7 @@ interface StoreContextValue extends StoreState {
   setLocale: (l: Locale) => void;
   setTheme: (m: ThemeMode) => void;
   setActiveTab: (tab: AppTab) => void;
+  goBack: () => void;
   navigateToAdminPanel: (module?: StaffPermission) => void;
   navigateToHome: () => void;
   openCatalog: (category?: CategoryId | 'all', search?: string) => void;
@@ -308,6 +310,7 @@ interface StoreContextValue extends StoreState {
   closeVerifyEmailScreen: () => void;
   openAuthModal: (view?: 'choice' | 'login' | 'register' | 'reset', checkoutNotice?: boolean) => void;
   closeAuthModal: () => void;
+  goToAccountSignIn: (fromCheckout?: boolean) => void;
   continueAsGuest: () => Promise<void>;
   loginWithEmail: (email: string, password: string) => Promise<void>;
   loginAdminWithEmail: (email: string, password: string) => Promise<void>;
@@ -386,10 +389,13 @@ interface StoreContextValue extends StoreState {
   ) => Promise<{ ok: boolean; error?: string }>;
   removeAdminRole: (uid: string) => Promise<void>;
   showToast: (msg: string) => void;
+  seedDefaultProducts: () => Promise<number>;
   resetDemoData: () => void;
 }
 
 const STORAGE_KEY = 'vision_plus_sudan_v2';
+const CATALOG_SEED_VERSION_KEY = 'vp_catalog_seed_version';
+const CATALOG_SEED_VERSION = '2026-11-26-24items';
 
 const LEGACY_AR_WORD = '\u0627\u0644\u0646\u0648\u0631';
 const LEGACY_AR_FULL = `${LEGACY_AR_WORD} \u0644\u0644\u0628\u0635\u0631\u064a\u0627\u062a`;
@@ -727,6 +733,7 @@ function getInitialState(): StoreState {
         locale: parsed.locale || 'ar',
         theme: parsed.theme || parsed.appearance?.defaultTheme || baseAppearance.defaultTheme,
         activeTab: initialTab,
+        tabHistory: [],
         adminRoute: initialAdminRoute,
         catalogCategory: 'all',
         catalogSearch: '',
@@ -744,7 +751,41 @@ function getInitialState(): StoreState {
             : [],
         },
         directoryUsers: parsed.directoryUsers || CUSTOMERS_AND_STAFF_SEED,
-        products: normalizeProductList(parsed.products || PRODUCTS_SEED),
+        products: (() => {
+          const cached: Product[] = Array.isArray(parsed.products)
+            ? normalizeProductList(parsed.products)
+            : PRODUCTS_SEED;
+          let storedSeedVer = '';
+          try {
+            storedSeedVer = localStorage.getItem(CATALOG_SEED_VERSION_KEY) || '';
+          } catch {
+            storedSeedVer = '';
+          }
+          if (storedSeedVer !== CATALOG_SEED_VERSION) {
+            const existingIds = new Set(cached.map((p) => p.id));
+            const seedById = new Map(PRODUCTS_SEED.map((p) => [p.id, p]));
+            const upgradedExisting = cached.map((p) => {
+              const seedMatch = seedById.get(p.id);
+              if (!seedMatch) return p;
+              // Refresh default catalog photos & stock if matching seed entry
+              return {
+                ...p,
+                images: seedMatch.images,
+                variants: seedMatch.variants.length > p.variants.length ? seedMatch.variants : p.variants,
+                isFeatured: p.isFeatured || seedMatch.isFeatured,
+                isNewArrival: p.isNewArrival || seedMatch.isNewArrival,
+              };
+            });
+            const missingDefaults = PRODUCTS_SEED.filter((p) => !existingIds.has(p.id));
+            try {
+              localStorage.setItem(CATALOG_SEED_VERSION_KEY, CATALOG_SEED_VERSION);
+            } catch {
+              // Ignore quota error
+            }
+            return [...upgradedExisting, ...missingDefaults];
+          }
+          return cached;
+        })(),
         categories: parsed.categories || CATEGORIES_SEED,
         brands: normalizeBrandList(parsed.brands || BRANDS_SEED),
         banners: parsed.banners || BANNERS_SEED,
@@ -770,6 +811,7 @@ function getInitialState(): StoreState {
     locale: 'ar',
     theme: baseAppearance.defaultTheme,
     activeTab: initialTab,
+    tabHistory: [],
     adminRoute: initialAdminRoute,
     catalogCategory: 'all',
     catalogSearch: '',
@@ -1018,16 +1060,16 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         if (adminLoginInProgressRef.current) {
           return;
         }
-        const keepGuest = enteringGuestRef.current || readGuestSessionFlag();
+        const hasGuestFlag = readGuestSessionFlag();
         setState((prev) => ({
           ...prev,
           authReady: true,
           firebaseUser: null,
-          guestSession: keepGuest,
-          authScreenMode: keepGuest ? 'none' : 'entry',
+          guestSession: hasGuestFlag,
+          authScreenMode: hasGuestFlag ? 'none' : 'entry',
           user: {
             ...createEmptyUser(),
-            favoriteProductIds: keepGuest ? prev.user.favoriteProductIds : [],
+            favoriteProductIds: prev.user.favoriteProductIds,
           },
           orders: [],
           consults: [],
@@ -1290,11 +1332,20 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     const productsQ = isVerifiedAdmin
       ? collection(db, 'products')
       : query(collection(db, 'products'), where('visible', '==', true));
+    let adminAutoSeededProducts = false;
     unsubs.push(
       onSnapshot(
         productsQ,
         (snap) => {
-          if (snap.empty) return;
+          if (snap.empty) {
+            if (isVerifiedAdmin && !adminAutoSeededProducts) {
+              adminAutoSeededProducts = true;
+              PRODUCTS_SEED.forEach((p) => {
+                void setDoc(doc(db, 'products', p.id), stripUndefined(p)).catch(() => undefined);
+              });
+            }
+            return;
+          }
           const items = normalizeProductList(snap.docs.map((d) => d.data() as Product));
           setState((prev) => ({ ...prev, products: items }));
         },
@@ -2136,6 +2187,7 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       pendingCheckoutReturn: false,
       adminRoute: 'store',
       activeTab: 'home',
+      tabHistory: [],
     }));
     showToast(t('تم تسجيل الخروج', 'Signed out'));
   }, [showToast, t]);
@@ -2163,6 +2215,7 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       ...prev,
       adminRoute: 'store',
       activeTab: 'home',
+      tabHistory: [],
       selectedProductId: null,
     }));
   }, []);
@@ -2234,7 +2287,49 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       if (stateRef.current.adminRoute !== 'store' && typeof window !== 'undefined') {
         window.history.replaceState(null, '', `/${hashForTab(activeTab)}`);
       }
-      setState((prev) => ({ ...prev, adminRoute: 'store', activeTab, selectedProductId: null }));
+      setState((prev) => {
+        const nextHistory =
+          activeTab === 'home'
+            ? []
+            : prev.activeTab !== activeTab &&
+              prev.tabHistory[prev.tabHistory.length - 1] !== prev.activeTab
+            ? [...prev.tabHistory.slice(-11), prev.activeTab]
+            : prev.tabHistory;
+        return {
+          ...prev,
+          adminRoute: 'store',
+          activeTab,
+          tabHistory: nextHistory,
+          selectedProductId: null,
+        };
+      });
+    },
+    goBack: () => {
+      window.scrollTo({ top: 0, behavior: 'smooth' });
+      setState((prev) => {
+        if (prev.selectedProductId) {
+          return { ...prev, selectedProductId: null };
+        }
+        const hist = [...prev.tabHistory];
+        let target: AppTab = 'home';
+        while (hist.length > 0) {
+          const candidate = hist.pop()!;
+          if (candidate !== prev.activeTab) {
+            target = candidate;
+            break;
+          }
+        }
+        if (typeof window !== 'undefined') {
+          window.history.replaceState(null, '', `/${hashForTab(target)}`);
+        }
+        return {
+          ...prev,
+          adminRoute: 'store',
+          activeTab: target,
+          tabHistory: target === 'home' ? [] : hist,
+          selectedProductId: null,
+        };
+      });
     },
     navigateToAdminPanel,
     navigateToHome,
@@ -2243,14 +2338,22 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       if (stateRef.current.adminRoute !== 'store' && typeof window !== 'undefined') {
         window.history.replaceState(null, '', '/#/categories');
       }
-      setState((prev) => ({
-        ...prev,
-        adminRoute: 'store',
-        activeTab: 'catalog',
-        catalogCategory: category,
-        catalogSearch: search,
-        selectedProductId: null,
-      }));
+      setState((prev) => {
+        const nextHistory =
+          prev.activeTab !== 'catalog' &&
+          prev.tabHistory[prev.tabHistory.length - 1] !== prev.activeTab
+            ? [...prev.tabHistory.slice(-11), prev.activeTab]
+            : prev.tabHistory;
+        return {
+          ...prev,
+          adminRoute: 'store',
+          activeTab: 'catalog',
+          tabHistory: nextHistory,
+          catalogCategory: category,
+          catalogSearch: search,
+          selectedProductId: null,
+        };
+      });
     },
     setCatalogSearch: (catalogSearch) => setState((prev) => ({ ...prev, catalogSearch })),
     openProduct: (selectedProductId) => setState((prev) => ({ ...prev, selectedProductId })),
@@ -2274,6 +2377,33 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         ...prev,
         authModal: { ...prev.authModal, open: false },
       })),
+    goToAccountSignIn: (fromCheckout = false) => {
+      window.scrollTo({ top: 0, behavior: 'smooth' });
+      setState((prev) => {
+        const nextHistory =
+          prev.activeTab !== 'profile' &&
+          prev.tabHistory[prev.tabHistory.length - 1] !== prev.activeTab
+            ? [...prev.tabHistory.slice(-11), prev.activeTab]
+            : prev.tabHistory;
+        return {
+          ...prev,
+          adminRoute: 'store',
+          activeTab: 'profile',
+          tabHistory: nextHistory,
+          selectedProductId: null,
+          pendingCheckoutReturn:
+            fromCheckout || prev.activeTab === 'cart' ? true : prev.pendingCheckoutReturn,
+        };
+      });
+      if (fromCheckout) {
+        showToast(
+          t(
+            'يرجى تسجيل الدخول من صفحة حسابي لإتمام الطلب',
+            'Please sign in from My Account to complete your order'
+          )
+        );
+      }
+    },
     continueAsGuest,
     loginWithEmail,
     loginAdminWithEmail,
@@ -2600,6 +2730,7 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         pendingCheckoutReturn: false,
         notifications: [notif, ...prev.notifications],
         activeTab: 'orders',
+        tabHistory: ['home'],
       }));
       showToast(t(`تم إنشاء الطلب #${orderId} بنجاح`, `Order #${orderId} placed`));
       return newOrder;
@@ -4280,8 +4411,67 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       showToast(t('تمت إزالة صلاحية الإدارة', 'Admin role removed'));
     },
     showToast,
+    seedDefaultProducts: async () => {
+      const existingIds = new Set(stateRef.current.products.map((p) => p.id));
+      const missingProducts = PRODUCTS_SEED.filter((p) => !existingIds.has(p.id));
+      const existingCatIds = new Set(stateRef.current.categories.map((c) => c.id));
+      const missingCats = CATEGORIES_SEED.filter((c) => !existingCatIds.has(c.id));
+      const existingBrandIds = new Set(stateRef.current.brands.map((b) => b.id));
+      const missingBrands = BRANDS_SEED.filter((b) => !existingBrandIds.has(b.id));
+
+      if (missingProducts.length === 0 && missingCats.length === 0 && missingBrands.length === 0) {
+        showToast(t('جميع المنتجات الافتراضية مضافة بالفعل', 'All default products are already present'));
+        return 0;
+      }
+
+      setState((prev) => ({
+        ...prev,
+        categories: [...prev.categories, ...missingCats],
+        brands: [...prev.brands, ...missingBrands],
+        products: [...prev.products, ...missingProducts],
+      }));
+
+      const isAdminSession =
+        Boolean(auth.currentUser && !auth.currentUser.isAnonymous) &&
+        stateRef.current.user.role === 'admin';
+
+      if (isAdminSession) {
+        await Promise.all([
+          ...missingCats.map((c) =>
+            setDoc(doc(db, 'categories', c.id), stripUndefined(c)).catch((err) =>
+              handleFirestoreError(err, OperationType.WRITE, `categories/${c.id}`)
+            )
+          ),
+          ...missingBrands.map((b) =>
+            setDoc(doc(db, 'brands', b.id), stripUndefined(b)).catch((err) =>
+              handleFirestoreError(err, OperationType.WRITE, `brands/${b.id}`)
+            )
+          ),
+          ...missingProducts.map((p) =>
+            setDoc(doc(db, 'products', p.id), stripUndefined(p)).catch((err) =>
+              handleFirestoreError(err, OperationType.WRITE, `products/${p.id}`)
+            )
+          ),
+        ]);
+      }
+
+      try {
+        localStorage.setItem(CATALOG_SEED_VERSION_KEY, CATALOG_SEED_VERSION);
+      } catch {
+        // Ignore quota error
+      }
+
+      showToast(
+        t(
+          `تمت إضافة ${missingProducts.length} منتج افتراضي إلى المتجر`,
+          `Added ${missingProducts.length} default products to the catalog`
+        )
+      );
+      return missingProducts.length;
+    },
     resetDemoData: () => {
       localStorage.removeItem(STORAGE_KEY);
+      localStorage.removeItem(CATALOG_SEED_VERSION_KEY);
       window.location.reload();
     },
   };

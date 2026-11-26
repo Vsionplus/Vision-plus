@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   Plus,
   Trash2,
@@ -13,14 +13,18 @@ import {
   AlertTriangle,
   Star,
   Image as ImageIcon,
+  Sparkles,
 } from 'lucide-react';
 import { useStore } from '../../store/StoreContext';
 import { Brand, Category, CategoryId, Product, ProductVariant } from '../../types';
 import { formatSdg } from '../../utils/format';
-import { IMG_FRAME } from '../../data/seedData';
+import { IMG_FRAME, PRODUCTS_SEED } from '../../data/seedData';
 import { ResilientImage } from '../ResilientImage';
 import { useAdminSecurity } from './AdminGuard';
 import { uploadAdminImage } from '../../lib/firebase';
+import { FieldValidationRule, useFormValidation } from '../../hooks/useFormValidation';
+import { FieldError, ValidationSummaryBanner } from '../FormValidationUI';
+import { VALIDATION_MESSAGES, pickMsg } from '../../utils/validationMessages';
 
 export const AdminProductsModule: React.FC = () => {
   const {
@@ -34,9 +38,16 @@ export const AdminProductsModule: React.FC = () => {
     duplicateProduct,
     deleteProduct,
     bulkUpdateProducts,
+    seedDefaultProducts,
     showToast,
   } = useStore();
   const { requireSensitiveReauth } = useAdminSecurity();
+  const [seedingDefaults, setSeedingDefaults] = useState(false);
+
+  const missingDefaultCount = useMemo(() => {
+    const existingIds = new Set(products.map((p) => p.id));
+    return PRODUCTS_SEED.filter((p) => !existingIds.has(p.id)).length;
+  }, [products]);
 
   const [search, setSearch] = useState('');
   const [catFilter, setCatFilter] = useState('all');
@@ -81,6 +92,53 @@ export const AdminProductsModule: React.FC = () => {
   const [isOnOffer, setIsOnOffer] = useState(false);
   const [isOutOfStock, setIsOutOfStock] = useState(false);
   const [requiresRx, setRequiresRx] = useState(true);
+  const productVal = useFormValidation({ formId: 'admin-product' });
+
+  const buildProductRules = useCallback((): FieldValidationRule[] => {
+    const numPrice = Number(priceSdg);
+    const numStock = Number(stock);
+    return [
+      {
+        field: 'titleAr',
+        label: t('اسم المنتج (عربي)', 'Product Name (AR)'),
+        error: !titleAr.trim() ? pickMsg(VALIDATION_MESSAGES.productTitleArRequired, locale) : null,
+      },
+      {
+        field: 'categoryId',
+        label: t('التصنيف', 'Category'),
+        error: !categoryId ? pickMsg(VALIDATION_MESSAGES.productCategoryRequired, locale) : null,
+      },
+      {
+        field: 'priceSdg',
+        label: t('السعر (ج.س)', 'Price (SDG)'),
+        error:
+          !priceSdg.trim() || !Number.isFinite(numPrice) || numPrice <= 0
+            ? pickMsg(VALIDATION_MESSAGES.productPriceInvalid, locale)
+            : null,
+      },
+      {
+        field: 'stock',
+        label: t('المخزون', 'Stock'),
+        error:
+          stock.trim() === '' || !Number.isFinite(numStock) || numStock < 0
+            ? pickMsg(VALIDATION_MESSAGES.productStockInvalid, locale)
+            : null,
+      },
+      {
+        field: 'images',
+        label: t('صور المنتج', 'Product Images'),
+        error:
+          images.length === 0 ? pickMsg(VALIDATION_MESSAGES.productImageRequired, locale) : null,
+      },
+    ];
+  }, [titleAr, categoryId, priceSdg, stock, images, locale, t]);
+
+  useEffect(() => {
+    if (formOpen && productVal.submitted) {
+      productVal.revalidate(buildProductRules());
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [formOpen, productVal.submitted, buildProductRules]);
 
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
@@ -134,6 +192,7 @@ export const AdminProductsModule: React.FC = () => {
     setIsOnOffer(false);
     setIsOutOfStock(false);
     setRequiresRx(true);
+    productVal.reset();
     setFormOpen(true);
   };
 
@@ -170,6 +229,7 @@ export const AdminProductsModule: React.FC = () => {
     setIsOnOffer(Boolean(p.isOnOffer));
     setIsOutOfStock(Boolean(p.isOutOfStock));
     setRequiresRx(Boolean(p.requiresPrescriptionOption));
+    productVal.reset();
     setFormOpen(true);
   };
 
@@ -200,7 +260,7 @@ export const AdminProductsModule: React.FC = () => {
 
   const handleSave = (e: React.FormEvent) => {
     e.preventDefault();
-    if (!titleAr.trim()) return;
+    if (!productVal.validateAll(buildProductRules())) return;
     const existing = products.find((p) => p.id === editingId);
     const next: Product = {
       id: existing ? existing.id : `p_${Date.now()}`,
@@ -211,7 +271,7 @@ export const AdminProductsModule: React.FC = () => {
       descriptionEn: descEn.trim() || 'Authentic optical item covered by Vision Plus warranty.',
       categoryId,
       brandId,
-      priceSdg: Math.max(100, Number(priceSdg) || 10000),
+      priceSdg: Math.max(1, Number(priceSdg) || 10000),
       oldPriceSdg: oldPriceSdg ? Number(oldPriceSdg) : undefined,
       stock: Math.max(0, Number(stock) || 0),
       images: images.length > 0 ? images : [IMG_FRAME],
@@ -252,6 +312,7 @@ export const AdminProductsModule: React.FC = () => {
       reviews: existing?.reviews ?? [],
     };
     upsertProduct(next);
+    productVal.reset();
     setFormOpen(false);
     setEditingId(null);
   };
@@ -293,15 +354,40 @@ export const AdminProductsModule: React.FC = () => {
           </select>
         </div>
 
-        <button
-          type="button"
-          onClick={openNewForm}
-          style={{ backgroundColor: appearance.secondaryColor, color: appearance.primaryColor }}
-          className="px-4 py-2 rounded-xl font-extrabold inline-flex items-center gap-1.5"
-        >
-          <Plus className="w-4 h-4" />
-          {t('إضافة منتج جديد', 'Add Product')}
-        </button>
+        <div className="flex flex-wrap items-center gap-2">
+          {missingDefaultCount > 0 && (
+            <button
+              type="button"
+              disabled={seedingDefaults}
+              onClick={async () => {
+                setSeedingDefaults(true);
+                try {
+                  await seedDefaultProducts();
+                } finally {
+                  setSeedingDefaults(false);
+                }
+              }}
+              className="min-h-[40px] px-3.5 py-2 rounded-xl border border-[#D9B24C] bg-[#D9B24C]/15 text-[#11223E] dark:text-[#E2BD5B] font-extrabold inline-flex items-center gap-1.5 hover:bg-[#D9B24C]/25 disabled:opacity-60"
+            >
+              <Sparkles className="w-4 h-4" />
+              {seedingDefaults
+                ? t('جاري الإضافة...', 'Adding...')
+                : t(
+                    `إضافة المنتجات الافتراضية (+${missingDefaultCount})`,
+                    `Add Default Products (+${missingDefaultCount})`
+                  )}
+            </button>
+          )}
+          <button
+            type="button"
+            onClick={openNewForm}
+            style={{ backgroundColor: appearance.secondaryColor, color: appearance.primaryColor }}
+            className="min-h-[40px] px-4 py-2 rounded-xl font-extrabold inline-flex items-center gap-1.5"
+          >
+            <Plus className="w-4 h-4" />
+            {t('إضافة منتج جديد', 'Add Product')}
+          </button>
+        </div>
       </div>
 
       {/* Bulk Action Bar */}
@@ -359,62 +445,118 @@ export const AdminProductsModule: React.FC = () => {
 
       {/* Full Add/Edit Product Modal/Panel */}
       {formOpen && (
-        <form onSubmit={handleSave} className="bg-white dark:bg-[#181B1E] border-2 border-[var(--vp-secondary)] rounded-2xl p-5 space-y-5">
+        <form noValidate onSubmit={handleSave} className="bg-white dark:bg-[#181B1E] border-2 border-[var(--vp-secondary)] rounded-2xl p-5 space-y-5">
           <div className="flex items-center justify-between border-b border-stone-200 dark:border-zinc-800 pb-3">
             <h2 className="text-base font-extrabold">
               {editingId ? t('تعديل تفاصيل المنتج', 'Edit Product') : t('إضافة منتج جديد', 'Create Product')}
             </h2>
-            <button type="button" onClick={() => setFormOpen(false)} className="text-slate-500 hover:text-rose-600 font-bold">
+            <button type="button" onClick={() => setFormOpen(false)} className="min-h-[44px] px-2 text-slate-500 hover:text-rose-600 font-bold">
               {t('إغلاق ✕', 'Close ✕')}
             </button>
           </div>
 
+          <ValidationSummaryBanner
+            errors={productVal.errors}
+            onSelectField={productVal.focusField}
+            mode="form"
+          />
+
           <div className="grid sm:grid-cols-2 lg:grid-cols-4 gap-3">
-            <div>
+            <div {...productVal.getFieldWrapperProps('titleAr')}>
               <label className="block font-semibold mb-1">{t('الاسم (عربي)*', 'Name (AR)*')}</label>
-              <input required value={titleAr} onChange={(e) => setTitleAr(e.target.value)} className="w-full px-3 py-2 rounded-lg border border-stone-200 dark:border-zinc-700 bg-stone-50 dark:bg-zinc-900" />
+              <input
+                value={titleAr}
+                onChange={(e) => setTitleAr(e.target.value)}
+                {...productVal.getInputA11yProps('titleAr')}
+                className={`w-full min-h-[44px] px-3 py-2 rounded-lg ${productVal.getControlClasses(
+                  'titleAr',
+                  'border border-stone-200 dark:border-zinc-700 bg-stone-50 dark:bg-zinc-900'
+                )}`}
+              />
+              <FieldError
+                id={productVal.getErrorId('titleAr')}
+                message={productVal.getError('titleAr')}
+              />
             </div>
             <div>
               <label className="block font-semibold mb-1">{t('الاسم (إنجليزي)', 'Name (EN)')}</label>
-              <input value={titleEn} onChange={(e) => setTitleEn(e.target.value)} className="w-full px-3 py-2 rounded-lg border border-stone-200 dark:border-zinc-700 bg-stone-50 dark:bg-zinc-900" />
+              <input value={titleEn} onChange={(e) => setTitleEn(e.target.value)} className="w-full min-h-[44px] px-3 py-2 rounded-lg border border-stone-200 dark:border-zinc-700 bg-stone-50 dark:bg-zinc-900" />
             </div>
             <div>
               <label className="block font-semibold mb-1">SKU</label>
-              <input value={sku} onChange={(e) => setSku(e.target.value)} className="w-full px-3 py-2 rounded-lg border border-stone-200 dark:border-zinc-700 bg-stone-50 dark:bg-zinc-900 font-mono-num" />
+              <input value={sku} onChange={(e) => setSku(e.target.value)} className="w-full min-h-[44px] px-3 py-2 rounded-lg border border-stone-200 dark:border-zinc-700 bg-stone-50 dark:bg-zinc-900 font-mono-num" />
             </div>
             <div>
               <label className="block font-semibold mb-1">{t('الوسوم (مفصولة بفاصلة)', 'Tags (comma-separated)')}</label>
-              <input value={tagsText} onChange={(e) => setTagsText(e.target.value)} className="w-full px-3 py-2 rounded-lg border border-stone-200 dark:border-zinc-700 bg-stone-50 dark:bg-zinc-900" />
+              <input value={tagsText} onChange={(e) => setTagsText(e.target.value)} className="w-full min-h-[44px] px-3 py-2 rounded-lg border border-stone-200 dark:border-zinc-700 bg-stone-50 dark:bg-zinc-900" />
             </div>
 
-            <div>
-              <label className="block font-semibold mb-1">{t('التصنيف', 'Category')}</label>
-              <select value={categoryId} onChange={(e) => setCategoryId(e.target.value)} className="w-full px-3 py-2 rounded-lg border border-stone-200 dark:border-zinc-700 bg-stone-50 dark:bg-zinc-900">
+            <div {...productVal.getFieldWrapperProps('categoryId')}>
+              <label className="block font-semibold mb-1">{t('التصنيف *', 'Category *')}</label>
+              <select
+                value={categoryId}
+                onChange={(e) => setCategoryId(e.target.value)}
+                {...productVal.getInputA11yProps('categoryId')}
+                className={`w-full min-h-[44px] px-3 py-2 rounded-lg ${productVal.getControlClasses(
+                  'categoryId',
+                  'border border-stone-200 dark:border-zinc-700 bg-stone-50 dark:bg-zinc-900'
+                )}`}
+              >
                 {categories.map((c) => (
                   <option key={c.id} value={c.id}>{locale === 'ar' ? c.nameAr : c.nameEn}</option>
                 ))}
               </select>
+              <FieldError
+                id={productVal.getErrorId('categoryId')}
+                message={productVal.getError('categoryId')}
+              />
             </div>
             <div>
               <label className="block font-semibold mb-1">{t('الماركة', 'Brand')}</label>
-              <select value={brandId} onChange={(e) => setBrandId(e.target.value)} className="w-full px-3 py-2 rounded-lg border border-stone-200 dark:border-zinc-700 bg-stone-50 dark:bg-zinc-900">
+              <select value={brandId} onChange={(e) => setBrandId(e.target.value)} className="w-full min-h-[44px] px-3 py-2 rounded-lg border border-stone-200 dark:border-zinc-700 bg-stone-50 dark:bg-zinc-900">
                 {brands.map((b) => (
                   <option key={b.id} value={b.id}>{locale === 'ar' ? b.nameAr : b.nameEn}</option>
                 ))}
               </select>
             </div>
-            <div>
+            <div {...productVal.getFieldWrapperProps('priceSdg')}>
               <label className="block font-semibold mb-1">{t('السعر (ج.س)*', 'Price (SDG)*')}</label>
-              <input required type="number" value={priceSdg} onChange={(e) => setPriceSdg(e.target.value)} className="w-full px-3 py-2 rounded-lg border border-stone-200 dark:border-zinc-700 bg-stone-50 dark:bg-zinc-900 font-mono-num" />
+              <input
+                type="number"
+                value={priceSdg}
+                onChange={(e) => setPriceSdg(e.target.value)}
+                {...productVal.getInputA11yProps('priceSdg')}
+                className={`w-full min-h-[44px] px-3 py-2 rounded-lg font-mono-num ${productVal.getControlClasses(
+                  'priceSdg',
+                  'border border-stone-200 dark:border-zinc-700 bg-stone-50 dark:bg-zinc-900'
+                )}`}
+              />
+              <FieldError
+                id={productVal.getErrorId('priceSdg')}
+                message={productVal.getError('priceSdg')}
+              />
             </div>
             <div className="grid grid-cols-2 gap-2">
               <div>
                 <label className="block font-semibold mb-1">{t('السعر القديم', 'Old Price')}</label>
-                <input type="number" value={oldPriceSdg} onChange={(e) => setOldPriceSdg(e.target.value)} className="w-full px-2.5 py-2 rounded-lg border border-stone-200 dark:border-zinc-700 bg-stone-50 dark:bg-zinc-900 font-mono-num" />
+                <input type="number" value={oldPriceSdg} onChange={(e) => setOldPriceSdg(e.target.value)} className="w-full min-h-[44px] px-2.5 py-2 rounded-lg border border-stone-200 dark:border-zinc-700 bg-stone-50 dark:bg-zinc-900 font-mono-num" />
               </div>
-              <div>
-                <label className="block font-semibold mb-1">{t('المخزون', 'Stock')}</label>
-                <input required type="number" value={stock} onChange={(e) => setStock(e.target.value)} className="w-full px-2.5 py-2 rounded-lg border border-stone-200 dark:border-zinc-700 bg-stone-50 dark:bg-zinc-900 font-mono-num" />
+              <div {...productVal.getFieldWrapperProps('stock')}>
+                <label className="block font-semibold mb-1">{t('المخزون *', 'Stock *')}</label>
+                <input
+                  type="number"
+                  value={stock}
+                  onChange={(e) => setStock(e.target.value)}
+                  {...productVal.getInputA11yProps('stock')}
+                  className={`w-full min-h-[44px] px-2.5 py-2 rounded-lg font-mono-num ${productVal.getControlClasses(
+                    'stock',
+                    'border border-stone-200 dark:border-zinc-700 bg-stone-50 dark:bg-zinc-900'
+                  )}`}
+                />
+                <FieldError
+                  id={productVal.getErrorId('stock')}
+                  message={productVal.getError('stock')}
+                />
               </div>
             </div>
 
@@ -492,18 +634,38 @@ export const AdminProductsModule: React.FC = () => {
           )}
 
           {/* Product Images Multi-Upload + Compress + Reorder + Main Badge + Preview */}
-          <div className="p-4 rounded-xl bg-stone-50 dark:bg-zinc-900 border border-stone-200 dark:border-zinc-800 space-y-3">
+          <div
+            {...productVal.getFieldWrapperProps('images')}
+            className={productVal.getControlClasses(
+              'images',
+              'p-4 rounded-xl bg-stone-50 dark:bg-zinc-900 border border-stone-200 dark:border-zinc-800 space-y-3',
+              'p-4 rounded-xl space-y-3'
+            )}
+          >
             <div className="flex flex-wrap items-center justify-between gap-2">
               <span className="font-bold flex items-center gap-1.5">
                 <ImageIcon className="w-4 h-4 text-[#D9B24C]" />
-                {t('صور المنتج (اسحب/رتّب — الأولى هي الرئيسية)', 'Product Images (compress, reorder, set main)')}
+                {t('صور المنتج (اسحب/رتّب — الأولى هي الرئيسية) *', 'Product Images (compress, reorder, set main) *')}
               </span>
-              <label className="px-3 py-1.5 rounded-lg bg-[#11223E] text-white font-bold cursor-pointer inline-flex items-center gap-1.5">
+              <label
+                tabIndex={0}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter' || e.key === ' ') {
+                    e.preventDefault();
+                    e.currentTarget.querySelector('input')?.click();
+                  }
+                }}
+                className="min-h-[44px] px-3 py-1.5 rounded-lg bg-[#11223E] text-white font-bold cursor-pointer inline-flex items-center gap-1.5"
+              >
                 <Upload className="w-3.5 h-3.5" />
                 {t('اختيار عدة صور (مع ضغط تلقائي)', 'Upload Multiple Images')}
-                <input type="file" multiple accept="image/*" onChange={handleUploadMultipleImages} className="hidden" />
+                <input type="file" multiple accept="image/*" onChange={handleUploadMultipleImages} className="sr-only" />
               </label>
             </div>
+            <FieldError
+              id={productVal.getErrorId('images')}
+              message={productVal.getError('images')}
+            />
 
             {uploadPct !== null && (
               <div className="w-full h-2 rounded-full bg-slate-200 overflow-hidden">
@@ -767,9 +929,43 @@ export const AdminCategoriesBrandsModule: React.FC = () => {
   const [brandNameEn, setBrandNameEn] = useState('');
   const [brandCountry, setBrandCountry] = useState('');
 
+  const catVal = useFormValidation({ formId: 'admin-category' });
+  const brandVal = useFormValidation({ formId: 'admin-brand' });
+
+  const buildCatRules = useCallback((): FieldValidationRule[] => [
+    {
+      field: 'catNameAr',
+      label: t('اسم التصنيف (عربي)', 'Category Name (AR)'),
+      error: !catNameAr.trim() ? pickMsg(VALIDATION_MESSAGES.categoryNameArRequired, locale) : null,
+    },
+    {
+      field: 'catImage',
+      label: t('صورة التصنيف', 'Category Image'),
+      error: !catImage.trim() ? pickMsg(VALIDATION_MESSAGES.categoryImageRequired, locale) : null,
+    },
+  ], [catNameAr, catImage, locale, t]);
+
+  const buildBrandRules = useCallback((): FieldValidationRule[] => [
+    {
+      field: 'brandNameAr',
+      label: t('اسم العلامة التجارية (عربي)', 'Brand Name (AR)'),
+      error: !brandNameAr.trim() ? pickMsg(VALIDATION_MESSAGES.brandNameArRequired, locale) : null,
+    },
+  ], [brandNameAr, locale, t]);
+
+  useEffect(() => {
+    if (catVal.submitted) catVal.revalidate(buildCatRules());
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [catVal.submitted, buildCatRules]);
+
+  useEffect(() => {
+    if (brandVal.submitted) brandVal.revalidate(buildBrandRules());
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [brandVal.submitted, buildBrandRules]);
+
   const handleSaveCategory = (e: React.FormEvent) => {
     e.preventDefault();
-    if (!catNameAr.trim()) return;
+    if (!catVal.validateAll(buildCatRules())) return;
     upsertCategory({
       id: editingCat ? editingCat.id : `cat_${Date.now()}`,
       nameAr: catNameAr.trim(),
@@ -784,6 +980,7 @@ export const AdminCategoriesBrandsModule: React.FC = () => {
     setEditingCat(null);
     setCatNameAr('');
     setCatNameEn('');
+    catVal.reset();
   };
 
   const tryDeleteCategory = (catId: string) => {
@@ -800,30 +997,68 @@ export const AdminCategoriesBrandsModule: React.FC = () => {
     <div className="grid lg:grid-cols-12 gap-6 items-start text-xs">
       {/* Categories & Subcategories */}
       <div className="lg:col-span-7 space-y-4">
-        <form onSubmit={handleSaveCategory} className="bg-white dark:bg-[#181B1E] border border-stone-200 dark:border-zinc-800 rounded-xl p-4 space-y-3">
+        <form noValidate onSubmit={handleSaveCategory} className="bg-white dark:bg-[#181B1E] border border-stone-200 dark:border-zinc-800 rounded-xl p-4 space-y-3">
           <h2 className="text-base font-bold">
             {editingCat ? t('تعديل التصنيف', 'Edit Category') : t('إضافة تصنيف جديد', 'Add Category')}
           </h2>
+          <ValidationSummaryBanner
+            errors={catVal.errors}
+            onSelectField={catVal.focusField}
+            mode="form"
+          />
           <div className="grid sm:grid-cols-3 gap-2">
-            <input required value={catNameAr} onChange={(e) => setCatNameAr(e.target.value)} placeholder={t('الاسم بالعربية', 'Name (AR)')} className="px-3 py-2 rounded-lg border bg-stone-50 dark:bg-zinc-900" />
-            <input value={catNameEn} onChange={(e) => setCatNameEn(e.target.value)} placeholder={t('الاسم بالإنجليزية', 'Name (EN)')} className="px-3 py-2 rounded-lg border bg-stone-50 dark:bg-zinc-900" />
-            <input type="number" value={catOrder} onChange={(e) => setCatOrder(e.target.value)} placeholder={t('الترتيب', 'Order')} className="px-3 py-2 rounded-lg border bg-stone-50 dark:bg-zinc-900 font-mono-num" />
+            <div {...catVal.getFieldWrapperProps('catNameAr')}>
+              <input
+                value={catNameAr}
+                onChange={(e) => setCatNameAr(e.target.value)}
+                placeholder={t('الاسم بالعربية *', 'Name (AR) *')}
+                {...catVal.getInputA11yProps('catNameAr')}
+                className={`w-full min-h-[44px] px-3 py-2 rounded-lg ${catVal.getControlClasses(
+                  'catNameAr',
+                  'border border-stone-200 dark:border-zinc-700 bg-stone-50 dark:bg-zinc-900'
+                )}`}
+              />
+              <FieldError
+                id={catVal.getErrorId('catNameAr')}
+                message={catVal.getError('catNameAr')}
+              />
+            </div>
+            <input value={catNameEn} onChange={(e) => setCatNameEn(e.target.value)} placeholder={t('الاسم بالإنجليزية', 'Name (EN)')} className="min-h-[44px] px-3 py-2 rounded-lg border bg-stone-50 dark:bg-zinc-900 self-start" />
+            <input type="number" value={catOrder} onChange={(e) => setCatOrder(e.target.value)} placeholder={t('الترتيب', 'Order')} className="min-h-[44px] px-3 py-2 rounded-lg border bg-stone-50 dark:bg-zinc-900 font-mono-num self-start" />
           </div>
           <div className="flex flex-wrap items-center gap-3">
-            <label className="px-3 py-1.5 rounded-lg border cursor-pointer font-semibold inline-flex items-center gap-1.5">
-              <Upload className="w-3.5 h-3.5" />
-              {t('رفع صورة التصنيف', 'Upload Image')}
-              <input
-                type="file"
-                accept="image/*"
-                className="hidden"
-                onChange={async (e) => {
-                  const f = e.target.files?.[0];
-                  if (f) setCatImage(await uploadAdminImage('categories', f));
+            <div {...catVal.getFieldWrapperProps('catImage')} className="space-y-1">
+              <label
+                tabIndex={0}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter' || e.key === ' ') {
+                    e.preventDefault();
+                    e.currentTarget.querySelector('input')?.click();
+                  }
                 }}
+                className={`min-h-[44px] px-3 py-1.5 rounded-lg cursor-pointer font-semibold inline-flex items-center gap-1.5 ${catVal.getControlClasses(
+                  'catImage',
+                  'border border-stone-200 dark:border-zinc-700'
+                )}`}
+              >
+                <Upload className="w-3.5 h-3.5" />
+                {t('رفع صورة التصنيف', 'Upload Image')}
+                <input
+                  type="file"
+                  accept="image/*"
+                  className="sr-only"
+                  onChange={async (e) => {
+                    const f = e.target.files?.[0];
+                    if (f) setCatImage(await uploadAdminImage('categories', f));
+                  }}
+                />
+              </label>
+              <FieldError
+                id={catVal.getErrorId('catImage')}
+                message={catVal.getError('catImage')}
               />
-            </label>
-            <button type="submit" style={{ backgroundColor: appearance.primaryColor }} className="px-4 py-1.5 rounded-lg text-white font-bold">
+            </div>
+            <button type="submit" style={{ backgroundColor: appearance.primaryColor }} className="min-h-[44px] px-4 py-1.5 rounded-lg text-white font-bold">
               {editingCat ? t('تحديث', 'Update') : t('إضافة', 'Add')}
             </button>
           </div>
@@ -930,9 +1165,10 @@ export const AdminCategoriesBrandsModule: React.FC = () => {
       {/* Brands Manager */}
       <div className="lg:col-span-5 space-y-4">
         <form
+          noValidate
           onSubmit={(e) => {
             e.preventDefault();
-            if (!brandNameAr.trim()) return;
+            if (!brandVal.validateAll(buildBrandRules())) return;
             upsertBrand({
               id: `br_${Date.now()}`,
               nameAr: brandNameAr.trim(),
@@ -943,16 +1179,37 @@ export const AdminCategoriesBrandsModule: React.FC = () => {
             setBrandNameAr('');
             setBrandNameEn('');
             setBrandCountry('');
+            brandVal.reset();
           }}
           className="bg-white dark:bg-[#181B1E] border border-stone-200 dark:border-zinc-800 rounded-xl p-4 space-y-3"
         >
           <h2 className="text-base font-bold">{t('إدارة العلامات التجارية', 'Brands Management')}</h2>
-          <input required value={brandNameAr} onChange={(e) => setBrandNameAr(e.target.value)} placeholder={t('اسم الماركة (عربي)', 'Brand Name (AR)')} className="w-full px-3 py-2 rounded-lg border bg-stone-50 dark:bg-zinc-900" />
-          <div className="grid grid-cols-2 gap-2">
-            <input value={brandNameEn} onChange={(e) => setBrandNameEn(e.target.value)} placeholder={t('الاسم (إنجليزي)', 'Name (EN)')} className="px-3 py-2 rounded-lg border bg-stone-50 dark:bg-zinc-900" />
-            <input value={brandCountry} onChange={(e) => setBrandCountry(e.target.value)} placeholder={t('بلد المنشأ', 'Country')} className="px-3 py-2 rounded-lg border bg-stone-50 dark:bg-zinc-900" />
+          <ValidationSummaryBanner
+            errors={brandVal.errors}
+            onSelectField={brandVal.focusField}
+            mode="form"
+          />
+          <div {...brandVal.getFieldWrapperProps('brandNameAr')}>
+            <input
+              value={brandNameAr}
+              onChange={(e) => setBrandNameAr(e.target.value)}
+              placeholder={t('اسم الماركة (عربي) *', 'Brand Name (AR) *')}
+              {...brandVal.getInputA11yProps('brandNameAr')}
+              className={`w-full min-h-[44px] px-3 py-2 rounded-lg ${brandVal.getControlClasses(
+                'brandNameAr',
+                'border border-stone-200 dark:border-zinc-700 bg-stone-50 dark:bg-zinc-900'
+              )}`}
+            />
+            <FieldError
+              id={brandVal.getErrorId('brandNameAr')}
+              message={brandVal.getError('brandNameAr')}
+            />
           </div>
-          <button type="submit" style={{ backgroundColor: appearance.primaryColor }} className="w-full py-2 rounded-lg text-white font-bold">
+          <div className="grid grid-cols-2 gap-2">
+            <input value={brandNameEn} onChange={(e) => setBrandNameEn(e.target.value)} placeholder={t('الاسم (إنجليزي)', 'Name (EN)')} className="min-h-[44px] px-3 py-2 rounded-lg border bg-stone-50 dark:bg-zinc-900" />
+            <input value={brandCountry} onChange={(e) => setBrandCountry(e.target.value)} placeholder={t('بلد المنشأ', 'Country')} className="min-h-[44px] px-3 py-2 rounded-lg border bg-stone-50 dark:bg-zinc-900" />
+          </div>
+          <button type="submit" style={{ backgroundColor: appearance.primaryColor }} className="w-full min-h-[44px] py-2 rounded-lg text-white font-bold">
             {t('إضافة علامة تجارية', 'Add Brand')}
           </button>
         </form>

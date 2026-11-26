@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Check,
   X,
@@ -22,11 +22,15 @@ import {
   ChevronDown,
   ChevronUp,
   Clock,
+  FileText,
   RotateCcw,
 } from 'lucide-react';
 import { useStore } from '../../store/StoreContext';
 import { Order, OrderItem, OrderStatus, PaymentMethod } from '../../types';
 import { useAdminSecurity } from './AdminGuard';
+import { FieldValidationRule, useFormValidation } from '../../hooks/useFormValidation';
+import { FieldError, ValidationSummaryBanner } from '../FormValidationUI';
+import { VALIDATION_MESSAGES, pickMsg } from '../../utils/validationMessages';
 import {
   calculateSplitAmounts,
   formatSdg,
@@ -43,6 +47,7 @@ import {
   getMirrorColorLabel,
   getVisionTypeLabel,
   hasCustomLensOrRx,
+  isPdfPrescriptionUrl,
   resolveExtraOptions,
   resolveVisionType,
 } from '../../utils/prescription';
@@ -109,6 +114,17 @@ export const AdminOrdersModule: React.FC<{
   const [adminEditError, setAdminEditError] = useState<string | null>(null);
   const [savingAdminEdit, setSavingAdminEdit] = useState(false);
 
+  const cancelFormRef = useRef<HTMLFormElement | null>(null);
+  const cancelVal = useFormValidation({
+    containerRef: cancelFormRef,
+    formId: 'admin-cancel-review',
+  });
+  const editOrderModalRef = useRef<HTMLFormElement | null>(null);
+  const editOrderVal = useFormValidation({
+    containerRef: editOrderModalRef,
+    formId: 'admin-edit-order',
+  });
+
   useEffect(() => {
     setStatusFilter(initialStatusFilter);
   }, [initialStatusFilter]);
@@ -139,6 +155,7 @@ export const AdminOrdersModule: React.FC<{
     setCancelReviewModal({ order, action });
     setCancelAdminNote('');
     setCancelReviewError(null);
+    cancelVal.reset();
   };
 
   const openAdminEditModal = (order: Order) => {
@@ -162,7 +179,96 @@ export const AdminOrdersModule: React.FC<{
     setAdminEditNote(order.adminNote || '');
     setAddProductId('');
     setAdminEditError(null);
+    editOrderVal.reset();
   };
+
+  const buildCancelRules = useCallback((): FieldValidationRule[] => {
+    if (!cancelReviewModal || cancelReviewModal.action !== 'reject') return [];
+    return [
+      {
+        field: 'cancelNote',
+        label: t('سبب الرفض', 'Rejection Reason'),
+        error: !cancelAdminNote.trim()
+          ? pickMsg(VALIDATION_MESSAGES.adminRejectNoteRequired, locale)
+          : null,
+      },
+    ];
+  }, [cancelReviewModal, cancelAdminNote, locale, t]);
+
+  useEffect(() => {
+    if (cancelReviewModal && cancelVal.submitted) {
+      cancelVal.revalidate(buildCancelRules());
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [cancelReviewModal, cancelVal.submitted, buildCancelRules]);
+
+  const buildEditOrderRules = useCallback((): FieldValidationRule[] => {
+    if (!editOrder) return [];
+    return [
+      {
+        field: 'name',
+        label: t('اسم المستلم', 'Customer Name'),
+        error: !adminEditName.trim()
+          ? pickMsg(VALIDATION_MESSAGES.recipientNameRequired, locale)
+          : null,
+      },
+      {
+        field: 'phone',
+        label: t('رقم الهاتف', 'Phone'),
+        error: !adminEditPhone.trim()
+          ? pickMsg(VALIDATION_MESSAGES.phoneRequired, locale)
+          : !isValidSudanPhone(adminEditPhone)
+          ? pickMsg(VALIDATION_MESSAGES.phoneInvalidSudan, locale)
+          : null,
+      },
+      {
+        field: 'city',
+        label: t('المدينة', 'City'),
+        error: !adminEditCity.trim()
+          ? pickMsg(VALIDATION_MESSAGES.cityRequired, locale)
+          : null,
+      },
+      {
+        field: 'area',
+        label: t('المنطقة', 'Area'),
+        error: !adminEditArea.trim()
+          ? pickMsg(VALIDATION_MESSAGES.areaRequired, locale)
+          : null,
+      },
+      {
+        field: 'details',
+        label: t('العنوان التفصيلي', 'Street Details'),
+        error: !adminEditDetails.trim()
+          ? pickMsg(VALIDATION_MESSAGES.streetDetailsRequired, locale)
+          : null,
+      },
+      {
+        field: 'items',
+        label: t('منتجات الطلب', 'Order Items'),
+        error:
+          adminEditItems.length === 0
+            ? t('يجب وجود منتج واحد على الأقل في الطلب.', 'Order must contain at least one item.')
+            : null,
+      },
+    ];
+  }, [
+    editOrder,
+    adminEditName,
+    adminEditPhone,
+    adminEditCity,
+    adminEditArea,
+    adminEditDetails,
+    adminEditItems.length,
+    locale,
+    t,
+  ]);
+
+  useEffect(() => {
+    if (editOrder && editOrderVal.submitted) {
+      editOrderVal.revalidate(buildEditOrderRules());
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [editOrder, editOrderVal.submitted, buildEditOrderRules]);
 
   const adminEditPricing = useMemo(() => {
     const itemsSubtotal = adminEditItems.reduce((s, it) => s + it.unitPriceSdg * it.quantity, 0);
@@ -204,20 +310,7 @@ export const AdminOrdersModule: React.FC<{
   const handleConfirmAdminEdit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!editOrder || savingAdminEdit) return;
-    if (!adminEditName.trim()) {
-      setAdminEditError(t('يرجى إدخال اسم المستلم.', 'Recipient name is required.'));
-      return;
-    }
-    if (!isValidSudanPhone(adminEditPhone)) {
-      setAdminEditError(t('رقم الهاتف غير صالح.', 'Valid Sudan phone number required.'));
-      return;
-    }
-    if (!adminEditCity.trim() || !adminEditArea.trim() || !adminEditDetails.trim()) {
-      setAdminEditError(t('يرجى إكمال بيانات العنوان.', 'City, area, and street details are required.'));
-      return;
-    }
-    if (adminEditItems.length === 0) {
-      setAdminEditError(t('يجب وجود منتج واحد على الأقل في الطلب.', 'Order must contain at least one item.'));
+    if (!editOrderVal.validateAll(buildEditOrderRules())) {
       return;
     }
     const normalizedPhone = normalizeSudanPhone(adminEditPhone);
@@ -258,6 +351,7 @@ export const AdminOrdersModule: React.FC<{
             : undefined,
         adminNote: adminEditNote.trim() || undefined,
       });
+      editOrderVal.reset();
       setEditOrder(null);
     } catch {
       setAdminEditError(t('تعذر حفظ تعديلات الطلب.', 'Failed to save order updates.'));
@@ -269,8 +363,7 @@ export const AdminOrdersModule: React.FC<{
   const handleConfirmCancelReview = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!cancelReviewModal || submittingCancelReview) return;
-    if (cancelReviewModal.action === 'reject' && !cancelAdminNote.trim()) {
-      setCancelReviewError(t('يرجى كتابة سبب الرفض للعميل.', 'Please enter a rejection reason.'));
+    if (!cancelVal.validateAll(buildCancelRules())) {
       return;
     }
     setCancelReviewError(null);
@@ -284,6 +377,7 @@ export const AdminOrdersModule: React.FC<{
       } else {
         await rejectOrderCancellation(cancelReviewModal.order.id, cancelAdminNote.trim());
       }
+      cancelVal.reset();
       setCancelReviewModal(null);
       setCancelAdminNote('');
     } catch {
@@ -855,14 +949,21 @@ export const AdminOrdersModule: React.FC<{
                           className="p-3 rounded-lg bg-stone-50 dark:bg-zinc-900 border border-stone-200 dark:border-zinc-800 space-y-2"
                         >
                           <div className="flex flex-wrap items-center justify-between gap-2">
-                            <div className="font-bold">
-                              {locale === 'ar' ? it.titleAr : it.titleEn}
+                            <div className="font-bold flex flex-wrap items-center gap-1.5">
+                              <span>{locale === 'ar' ? it.titleAr : it.titleEn}</span>
                               {(it.options?.color || it.variantLabel) && (
-                                <span className="text-stone-500 font-normal ms-1.5">
+                                <span className="text-stone-500 font-normal">
                                   ({it.options?.color || it.variantLabel})
                                 </span>
-                              )}{' '}
-                              × <span className="font-mono-num">{it.quantity}</span>
+                              )}
+                              {it.options?.size && (
+                                <span className="px-1.5 py-0.5 rounded bg-amber-50 dark:bg-amber-950/30 border border-[#D9B24C]/50 text-[11px] font-mono-num font-bold text-[#11223E] dark:text-[#E2BD5B]">
+                                  {t('المقاس:', 'Size:')} {it.options.size}
+                                </span>
+                              )}
+                              <span>
+                                × <span className="font-mono-num">{it.quantity}</span>
+                              </span>
                             </div>
                             <div className="font-mono-num font-bold text-[#11223E] dark:text-[#E2BD5B]">
                               {formatSdg((it.unitPriceSdg + lensExtra) * it.quantity)}
@@ -907,7 +1008,7 @@ export const AdminOrdersModule: React.FC<{
                               )}
 
                               {hasRxValues && rx && rx.type === 'manual' && rx.values?.kind === 'contact_lenses' && (
-                                <div className="overflow-x-auto">
+                                <div className="space-y-1 overflow-x-auto">
                                   <table className="w-full text-[11px] font-mono-num border border-stone-200 dark:border-zinc-700 bg-white dark:bg-[#181B1E]">
                                     <thead className="bg-stone-100 dark:bg-zinc-800 font-bold">
                                       <tr>
@@ -915,9 +1016,7 @@ export const AdminOrdersModule: React.FC<{
                                         <th className="p-1.5">SPH</th>
                                         <th className="p-1.5">CYL</th>
                                         <th className="p-1.5">AXIS</th>
-                                        <th className="p-1.5">BC</th>
-                                        <th className="p-1.5">DIA</th>
-                                        <th className="p-1.5">{t('العلب', 'Boxes')}</th>
+                                        <th className="p-1.5">ADD</th>
                                       </tr>
                                     </thead>
                                     <tbody className="divide-y divide-stone-100 dark:divide-zinc-800">
@@ -927,9 +1026,7 @@ export const AdminOrdersModule: React.FC<{
                                           <td className="p-1.5 text-center">{rx.values.contactRight.sph}</td>
                                           <td className="p-1.5 text-center">{rx.values.contactRight.cyl}</td>
                                           <td className="p-1.5 text-center">{rx.values.contactRight.axis}°</td>
-                                          <td className="p-1.5 text-center">{rx.values.contactRight.bc}</td>
-                                          <td className="p-1.5 text-center">{rx.values.contactRight.dia}</td>
-                                          <td className="p-1.5 text-center">{rx.values.contactRight.boxes}</td>
+                                          <td className="p-1.5 text-center">{rx.values.contactRight.add || '—'}</td>
                                         </tr>
                                       )}
                                       {rx.values.contactLeft && (
@@ -938,13 +1035,21 @@ export const AdminOrdersModule: React.FC<{
                                           <td className="p-1.5 text-center">{rx.values.contactLeft.sph}</td>
                                           <td className="p-1.5 text-center">{rx.values.contactLeft.cyl}</td>
                                           <td className="p-1.5 text-center">{rx.values.contactLeft.axis}°</td>
-                                          <td className="p-1.5 text-center">{rx.values.contactLeft.bc}</td>
-                                          <td className="p-1.5 text-center">{rx.values.contactLeft.dia}</td>
-                                          <td className="p-1.5 text-center">{rx.values.contactLeft.boxes}</td>
+                                          <td className="p-1.5 text-center">{rx.values.contactLeft.add || '—'}</td>
                                         </tr>
                                       )}
                                     </tbody>
                                   </table>
+                                  {(pdSingle || pdRight) && (
+                                    <div className="font-mono-num text-[11px]">
+                                      PD:{' '}
+                                      <strong>
+                                        {pdMode === 'dual' && pdRight
+                                          ? `OD ${pdRight} mm / OS ${pdLeft} mm`
+                                          : `${pdSingle} mm`}
+                                      </strong>
+                                    </div>
+                                  )}
                                 </div>
                               )}
 
@@ -999,38 +1104,57 @@ export const AdminOrdersModule: React.FC<{
                               )}
 
                               {hasRxValues && rx && rx.type === 'image' && rx.imageUrl && (
-                                <div className="flex flex-wrap items-center gap-3">
-                                  <button
-                                    type="button"
-                                    onClick={() => setLightboxImage(rx.imageUrl || null)}
-                                    className="rounded-lg overflow-hidden border border-stone-200 dark:border-zinc-700"
-                                  >
-                                    <img
-                                      src={rx.imageUrl}
-                                      alt="Rx"
-                                      className="h-20 w-28 object-cover"
-                                    />
-                                  </button>
-                                  <div className="flex flex-wrap gap-2">
-                                    <button
-                                      type="button"
-                                      onClick={() => setLightboxImage(rx.imageUrl || null)}
-                                      className="px-2.5 py-1.5 rounded-lg border border-stone-200 dark:border-zinc-700 bg-white dark:bg-[#181B1E] font-bold"
-                                    >
-                                      {t('تكبير الروشتة', 'Enlarge Rx')}
-                                    </button>
+                                isPdfPrescriptionUrl(rx.imageUrl, rx.fileType) ? (
+                                  <div className="p-2.5 rounded-xl bg-white dark:bg-[#181B1E] border border-stone-200 dark:border-zinc-700 flex flex-wrap items-center justify-between gap-2">
+                                    <div className="flex items-center gap-2 min-w-0">
+                                      <FileText className="w-5 h-5 text-rose-600 shrink-0" />
+                                      <span className="font-bold text-xs truncate">
+                                        {rx.fileName || t('ملف الوصفة الطبية (PDF)', 'Prescription PDF')}
+                                      </span>
+                                    </div>
                                     <a
                                       href={rx.imageUrl}
-                                      download={`rx-${order.id}.jpg`}
-                                      target="_blank"
-                                      rel="noopener noreferrer"
+                                      download={rx.fileName || `rx-${order.id}.pdf`}
                                       className="px-2.5 py-1.5 rounded-lg bg-[#11223E] text-white font-bold inline-flex items-center gap-1"
                                     >
                                       <Download className="w-3.5 h-3.5" />
-                                      {t('تحميل الصورة', 'Download')}
+                                      {t('تحميل PDF', 'Download PDF')}
                                     </a>
                                   </div>
-                                </div>
+                                ) : (
+                                  <div className="flex flex-wrap items-center gap-3">
+                                    <button
+                                      type="button"
+                                      onClick={() => setLightboxImage(rx.imageUrl || null)}
+                                      className="rounded-lg overflow-hidden border border-stone-200 dark:border-zinc-700"
+                                    >
+                                      <img
+                                        src={rx.imageUrl}
+                                        alt="Rx"
+                                        className="h-20 w-28 object-cover"
+                                      />
+                                    </button>
+                                    <div className="flex flex-wrap gap-2">
+                                      <button
+                                        type="button"
+                                        onClick={() => setLightboxImage(rx.imageUrl || null)}
+                                        className="px-2.5 py-1.5 rounded-lg border border-stone-200 dark:border-zinc-700 bg-white dark:bg-[#181B1E] font-bold"
+                                      >
+                                        {t('تكبير الروشتة', 'Enlarge Rx')}
+                                      </button>
+                                      <a
+                                        href={rx.imageUrl}
+                                        download={`rx-${order.id}.jpg`}
+                                        target="_blank"
+                                        rel="noopener noreferrer"
+                                        className="px-2.5 py-1.5 rounded-lg bg-[#11223E] text-white font-bold inline-flex items-center gap-1"
+                                      >
+                                        <Download className="w-3.5 h-3.5" />
+                                        {t('تحميل الصورة', 'Download')}
+                                      </a>
+                                    </div>
+                                  </div>
+                                )
                               )}
 
                               {hasRxValues && rx && rx.type === 'later' && (
@@ -1147,8 +1271,10 @@ export const AdminOrdersModule: React.FC<{
       {cancelReviewModal && (
         <div className="fixed inset-0 z-50 bg-black/55 flex items-center justify-center p-4">
           <form
+            ref={cancelFormRef}
+            noValidate
             onSubmit={handleConfirmCancelReview}
-            className="bg-white dark:bg-[#181B1E] rounded-2xl max-w-md w-full p-5 space-y-4 border border-stone-200 dark:border-zinc-800 shadow-2xl"
+            className="bg-white dark:bg-[#181B1E] rounded-2xl max-w-md w-full max-h-[90vh] overflow-y-auto p-5 space-y-4 border border-stone-200 dark:border-zinc-800 shadow-2xl"
           >
             <div className="flex items-center gap-2 font-extrabold text-sm">
               <AlertTriangle
@@ -1162,6 +1288,12 @@ export const AdminOrdersModule: React.FC<{
                   : t('تأكيد رفض طلب الإلغاء', 'Confirm Reject Cancellation')}
               </span>
             </div>
+
+            <ValidationSummaryBanner
+              errors={cancelVal.errors}
+              onSelectField={cancelVal.focusField}
+              mode="form"
+            />
 
             <div className="p-3 rounded-xl bg-stone-50 dark:bg-zinc-900 border border-stone-200 dark:border-zinc-800 space-y-1 text-[11px]">
               <div className="font-mono-num font-bold">#{cancelReviewModal.order.id}</div>
@@ -1193,7 +1325,7 @@ export const AdminOrdersModule: React.FC<{
               </p>
             )}
 
-            <div className="space-y-1">
+            <div {...cancelVal.getFieldWrapperProps('cancelNote')} className="space-y-1">
               <label className="block font-bold">
                 {cancelReviewModal.action === 'reject'
                   ? t('سبب الرفض (مطلوب) *', 'Rejection Reason (required) *')
@@ -1201,7 +1333,6 @@ export const AdminOrdersModule: React.FC<{
               </label>
               <textarea
                 rows={3}
-                required={cancelReviewModal.action === 'reject'}
                 value={cancelAdminNote}
                 onChange={(e) => {
                   setCancelAdminNote(e.target.value);
@@ -1212,42 +1343,50 @@ export const AdminOrdersModule: React.FC<{
                     ? t('اكتب سبب رفض طلب الإلغاء بوضوح...', 'Write rejection reason clearly...')
                     : t('ملاحظة اختيارية للعميل...', 'Optional note...')
                 }
-                className="w-full px-3 py-2 rounded-lg border border-stone-200 dark:border-zinc-700 bg-stone-50 dark:bg-zinc-900"
+                {...cancelVal.getInputA11yProps('cancelNote')}
+                className={`w-full px-3 py-2 rounded-lg ${cancelVal.getControlClasses(
+                  'cancelNote',
+                  'border border-stone-200 dark:border-zinc-700 bg-stone-50 dark:bg-zinc-900'
+                )}`}
+              />
+              <FieldError
+                id={cancelVal.getErrorId('cancelNote')}
+                message={cancelVal.getError('cancelNote')}
               />
             </div>
 
             {cancelReviewError && (
-              <div className="p-2.5 rounded-lg bg-rose-50 dark:bg-rose-950/30 border border-rose-200 dark:border-rose-800 text-rose-700 dark:text-rose-300 font-bold">
+              <div
+                role="alert"
+                className="p-2.5 rounded-lg bg-rose-50 dark:bg-rose-950/30 border border-rose-200 dark:border-rose-800 text-rose-700 dark:text-rose-300 font-bold"
+              >
                 {cancelReviewError}
               </div>
             )}
 
-              <div className="flex justify-end gap-2">
-                <button
-                  type="button"
-                  disabled={submittingCancelReview}
-                  onClick={() => setCancelReviewModal(null)}
-                  className="min-h-[40px] px-4 py-1.5 rounded-lg border font-bold disabled:opacity-50"
-                >
-                  {t('تراجع', 'Cancel')}
-                </button>
-                <button
-                  type="submit"
-                  disabled={
-                    submittingCancelReview ||
-                    (cancelReviewModal.action === 'reject' && !cancelAdminNote.trim())
-                  }
-                  className={`min-h-[40px] px-4 py-1.5 rounded-lg text-white font-extrabold disabled:opacity-50 ${
-                    cancelReviewModal.action === 'approve' ? 'bg-emerald-700' : 'bg-rose-600'
-                  }`}
-                >
-                  {submittingCancelReview
-                    ? t('جارٍ التنفيذ...', 'Processing...')
-                    : cancelReviewModal.action === 'approve'
-                    ? t('الموافقة على الإلغاء', 'Approve Cancellation')
-                    : t('رفض الطلب', 'Reject Request')}
-                </button>
-              </div>
+            <div className="flex justify-end gap-2">
+              <button
+                type="button"
+                disabled={submittingCancelReview}
+                onClick={() => setCancelReviewModal(null)}
+                className="min-h-[44px] px-4 py-1.5 rounded-lg border font-bold disabled:opacity-50"
+              >
+                {t('تراجع', 'Cancel')}
+              </button>
+              <button
+                type="submit"
+                disabled={submittingCancelReview}
+                className={`min-h-[44px] px-4 py-1.5 rounded-lg text-white font-extrabold disabled:opacity-50 ${
+                  cancelReviewModal.action === 'approve' ? 'bg-emerald-700' : 'bg-rose-600'
+                }`}
+              >
+                {submittingCancelReview
+                  ? t('جارٍ التنفيذ...', 'Processing...')
+                  : cancelReviewModal.action === 'approve'
+                  ? t('الموافقة على الإلغاء', 'Approve Cancellation')
+                  : t('رفض الطلب', 'Reject Request')}
+              </button>
+            </div>
           </form>
         </div>
       )}
@@ -1256,6 +1395,8 @@ export const AdminOrdersModule: React.FC<{
       {editOrder && (
         <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-xs flex items-center justify-center p-3 sm:p-4 overflow-y-auto">
           <form
+            ref={editOrderModalRef}
+            noValidate
             onSubmit={handleConfirmAdminEdit}
             className="bg-white dark:bg-[#181B1E] rounded-2xl max-w-2xl w-full max-h-[92vh] overflow-y-auto p-5 sm:p-6 space-y-4 border border-stone-200 dark:border-zinc-800 shadow-2xl"
           >
@@ -1278,26 +1419,46 @@ export const AdminOrdersModule: React.FC<{
               </button>
             </div>
 
+            <ValidationSummaryBanner
+              errors={editOrderVal.errors}
+              onSelectField={editOrderVal.focusField}
+              mode="form"
+            />
+
             <div className="grid sm:grid-cols-2 gap-3">
-              <div className="space-y-1">
+              <div {...editOrderVal.getFieldWrapperProps('name')} className="space-y-1">
                 <label className="block font-bold">{t('اسم العميل / المستلم *', 'Customer Name *')}</label>
                 <input
-                  required
                   maxLength={120}
                   value={adminEditName}
                   onChange={(e) => setAdminEditName(e.target.value)}
-                  className="w-full min-h-[40px] px-3 py-1.5 rounded-lg border border-stone-200 dark:border-zinc-700 bg-stone-50 dark:bg-zinc-900"
+                  {...editOrderVal.getInputA11yProps('name')}
+                  className={`w-full min-h-[44px] px-3 py-1.5 rounded-lg ${editOrderVal.getControlClasses(
+                    'name',
+                    'border border-stone-200 dark:border-zinc-700 bg-stone-50 dark:bg-zinc-900'
+                  )}`}
+                />
+                <FieldError
+                  id={editOrderVal.getErrorId('name')}
+                  message={editOrderVal.getError('name')}
                 />
               </div>
-              <div className="space-y-1">
+              <div {...editOrderVal.getFieldWrapperProps('phone')} className="space-y-1">
                 <label className="block font-bold">{t('رقم الهاتف *', 'Phone *')}</label>
                 <input
-                  required
                   dir="ltr"
                   maxLength={32}
                   value={adminEditPhone}
                   onChange={(e) => setAdminEditPhone(e.target.value)}
-                  className="w-full min-h-[40px] px-3 py-1.5 rounded-lg border border-stone-200 dark:border-zinc-700 bg-stone-50 dark:bg-zinc-900 font-mono-num"
+                  {...editOrderVal.getInputA11yProps('phone')}
+                  className={`w-full min-h-[44px] px-3 py-1.5 rounded-lg font-mono-num ${editOrderVal.getControlClasses(
+                    'phone',
+                    'border border-stone-200 dark:border-zinc-700 bg-stone-50 dark:bg-zinc-900'
+                  )}`}
+                />
+                <FieldError
+                  id={editOrderVal.getErrorId('phone')}
+                  message={editOrderVal.getError('phone')}
                 />
               </div>
               <div className="space-y-1">
@@ -1310,7 +1471,7 @@ export const AdminOrdersModule: React.FC<{
                     const found = settings.deliveryFees.find((st) => st.id === nextId);
                     if (found) setAdminEditDelivery(found.feeSdg);
                   }}
-                  className="w-full min-h-[40px] px-3 py-1.5 rounded-lg border border-stone-200 dark:border-zinc-700 bg-stone-50 dark:bg-zinc-900"
+                  className="w-full min-h-[44px] px-3 py-1.5 rounded-lg border border-stone-200 dark:border-zinc-700 bg-stone-50 dark:bg-zinc-900"
                 >
                   {settings.deliveryFees.map((st) => (
                     <option key={st.id} value={st.id}>
@@ -1319,24 +1480,38 @@ export const AdminOrdersModule: React.FC<{
                   ))}
                 </select>
               </div>
-              <div className="space-y-1">
+              <div {...editOrderVal.getFieldWrapperProps('city')} className="space-y-1">
                 <label className="block font-bold">{t('المدينة *', 'City *')}</label>
                 <input
-                  required
                   maxLength={80}
                   value={adminEditCity}
                   onChange={(e) => setAdminEditCity(e.target.value)}
-                  className="w-full min-h-[40px] px-3 py-1.5 rounded-lg border border-stone-200 dark:border-zinc-700 bg-stone-50 dark:bg-zinc-900"
+                  {...editOrderVal.getInputA11yProps('city')}
+                  className={`w-full min-h-[44px] px-3 py-1.5 rounded-lg ${editOrderVal.getControlClasses(
+                    'city',
+                    'border border-stone-200 dark:border-zinc-700 bg-stone-50 dark:bg-zinc-900'
+                  )}`}
+                />
+                <FieldError
+                  id={editOrderVal.getErrorId('city')}
+                  message={editOrderVal.getError('city')}
                 />
               </div>
-              <div className="space-y-1">
+              <div {...editOrderVal.getFieldWrapperProps('area')} className="space-y-1">
                 <label className="block font-bold">{t('المنطقة *', 'Area *')}</label>
                 <input
-                  required
                   maxLength={120}
                   value={adminEditArea}
                   onChange={(e) => setAdminEditArea(e.target.value)}
-                  className="w-full min-h-[40px] px-3 py-1.5 rounded-lg border border-stone-200 dark:border-zinc-700 bg-stone-50 dark:bg-zinc-900"
+                  {...editOrderVal.getInputA11yProps('area')}
+                  className={`w-full min-h-[44px] px-3 py-1.5 rounded-lg ${editOrderVal.getControlClasses(
+                    'area',
+                    'border border-stone-200 dark:border-zinc-700 bg-stone-50 dark:bg-zinc-900'
+                  )}`}
+                />
+                <FieldError
+                  id={editOrderVal.getErrorId('area')}
+                  message={editOrderVal.getError('area')}
                 />
               </div>
               <div className="space-y-1">
@@ -1352,21 +1527,28 @@ export const AdminOrdersModule: React.FC<{
                       );
                     }
                   }}
-                  className="w-full min-h-[40px] px-3 py-1.5 rounded-lg border border-stone-200 dark:border-zinc-700 bg-stone-50 dark:bg-zinc-900"
+                  className="w-full min-h-[44px] px-3 py-1.5 rounded-lg border border-stone-200 dark:border-zinc-700 bg-stone-50 dark:bg-zinc-900"
                 >
                   <option value="cod">{t('الدفع عند الاستلام', 'Cash on Delivery')}</option>
                   <option value="bankak">{t('تحويل بنكك', 'Bankak Transfer')}</option>
                   <option value="split">{t('دفع مقسّم (بنكك + عند الاستلام)', 'Split (Bankak + COD)')}</option>
                 </select>
               </div>
-              <div className="space-y-1 sm:col-span-2">
+              <div {...editOrderVal.getFieldWrapperProps('details')} className="space-y-1 sm:col-span-2">
                 <label className="block font-bold">{t('العنوان التفصيلي *', 'Street Details *')}</label>
                 <input
-                  required
                   maxLength={400}
                   value={adminEditDetails}
                   onChange={(e) => setAdminEditDetails(e.target.value)}
-                  className="w-full min-h-[40px] px-3 py-1.5 rounded-lg border border-stone-200 dark:border-zinc-700 bg-stone-50 dark:bg-zinc-900"
+                  {...editOrderVal.getInputA11yProps('details')}
+                  className={`w-full min-h-[44px] px-3 py-1.5 rounded-lg ${editOrderVal.getControlClasses(
+                    'details',
+                    'border border-stone-200 dark:border-zinc-700 bg-stone-50 dark:bg-zinc-900'
+                  )}`}
+                />
+                <FieldError
+                  id={editOrderVal.getErrorId('details')}
+                  message={editOrderVal.getError('details')}
                 />
               </div>
             </div>
@@ -1412,7 +1594,14 @@ export const AdminOrdersModule: React.FC<{
             )}
 
             {/* Order Items Management */}
-            <div className="space-y-2.5 pt-2 border-t border-stone-100 dark:border-zinc-800">
+            <div
+              {...editOrderVal.getFieldWrapperProps('items')}
+              className={`space-y-2.5 pt-2 border-t border-stone-100 dark:border-zinc-800 rounded-xl ${
+                editOrderVal.hasError('items')
+                  ? 'p-3 border-2 border-[#DC2626] dark:border-rose-500 bg-[#FEF2F2] dark:bg-rose-950/30'
+                  : ''
+              }`}
+            >
               <div className="font-extrabold text-sm">{t('منتجات الطلب', 'Order Items')}</div>
               <div className="space-y-2">
                 {adminEditItems.map((it, idx) => (
@@ -1516,6 +1705,10 @@ export const AdminOrdersModule: React.FC<{
                   {t('إضافة', 'Add')}
                 </button>
               </div>
+              <FieldError
+                id={editOrderVal.getErrorId('items')}
+                message={editOrderVal.getError('items')}
+              />
             </div>
 
             {/* Pricing Overrides & Admin Note */}
@@ -1594,7 +1787,7 @@ export const AdminOrdersModule: React.FC<{
 };
 
 export const AdminCouponsModule: React.FC = () => {
-  const { t, coupons, upsertCoupon, deleteCoupon } = useStore();
+  const { locale, t, coupons, upsertCoupon, deleteCoupon } = useStore();
   const [confirmDeleteCode, setConfirmDeleteCode] = useState<string | null>(null);
   const [code, setCode] = useState('');
   const [type, setType] = useState<'percent' | 'fixed'>('percent');
@@ -1603,9 +1796,73 @@ export const AdminCouponsModule: React.FC = () => {
   const [limit, setLimit] = useState('100');
   const [expiry, setExpiry] = useState('2027-12-31');
 
+  const couponFormRef = useRef<HTMLFormElement | null>(null);
+  const couponVal = useFormValidation({ containerRef: couponFormRef, formId: 'admin-coupon' });
+
+  const buildCouponRules = useCallback((): FieldValidationRule[] => {
+    const numVal = Number(value);
+    const numMinSub = Number(minSub);
+    const numLimit = Number(limit);
+
+    let valueErr: string | null = null;
+    if (!value.trim() || !Number.isFinite(numVal) || numVal <= 0) {
+      valueErr = pickMsg(VALIDATION_MESSAGES.couponValueInvalid, locale);
+    } else if (type === 'percent' && numVal > 100) {
+      valueErr = pickMsg(VALIDATION_MESSAGES.couponPercentMax, locale);
+    }
+
+    return [
+      {
+        field: 'code',
+        label: t('كود الخصم', 'Coupon Code'),
+        error:
+          code.trim().length < 3
+            ? pickMsg(VALIDATION_MESSAGES.couponCodeRequired, locale)
+            : null,
+      },
+      {
+        field: 'value',
+        label: t('قيمة الخصم', 'Discount Value'),
+        error: valueErr,
+      },
+      {
+        field: 'minSub',
+        label: t('الحد الأدنى للطلب', 'Min Order'),
+        error:
+          minSub.trim() === '' || !Number.isFinite(numMinSub) || numMinSub < 0
+            ? pickMsg(VALIDATION_MESSAGES.couponMinSubInvalid, locale)
+            : null,
+      },
+      {
+        field: 'limit',
+        label: t('حد الاستخدام', 'Usage Limit'),
+        error:
+          !limit.trim() || !Number.isFinite(numLimit) || numLimit < 1
+            ? pickMsg(VALIDATION_MESSAGES.couponLimitInvalid, locale)
+            : null,
+      },
+      {
+        field: 'expiry',
+        label: t('تاريخ الانتهاء', 'Expiry Date'),
+        error: !expiry
+          ? pickMsg(VALIDATION_MESSAGES.couponExpiryRequired, locale)
+          : null,
+      },
+    ];
+  }, [code, type, value, minSub, limit, expiry, locale, t]);
+
+  useEffect(() => {
+    if (couponVal.submitted) {
+      couponVal.revalidate(buildCouponRules());
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [couponVal.submitted, buildCouponRules]);
+
   const handleAdd = (e: React.FormEvent) => {
     e.preventDefault();
-    if (!code.trim()) return;
+    if (!couponVal.validateAll(buildCouponRules())) {
+      return;
+    }
     upsertCoupon({
       code: code.trim().toUpperCase(),
       type,
@@ -1617,44 +1874,113 @@ export const AdminCouponsModule: React.FC = () => {
       expiryDate: expiry,
     });
     setCode('');
+    couponVal.reset();
   };
 
   return (
     <div className="grid lg:grid-cols-12 gap-6 items-start text-xs">
       <form
+        ref={couponFormRef}
+        noValidate
         onSubmit={handleAdd}
         className="lg:col-span-5 bg-white dark:bg-[#181B1E] border border-stone-200 dark:border-zinc-800 rounded-xl p-5 space-y-3"
       >
         <h2 className="text-base font-bold">{t('إنشاء كود خصم جديد', 'Create Coupon')}</h2>
-        <input
-          required
-          value={code}
-          onChange={(e) => setCode(e.target.value.toUpperCase())}
-          placeholder="VISION20"
-          className="w-full px-3 py-2 rounded-lg border bg-stone-50 dark:bg-zinc-900 font-mono-num"
+
+        <ValidationSummaryBanner
+          errors={couponVal.errors}
+          onSelectField={couponVal.focusField}
+          mode="form"
         />
+
+        <div {...couponVal.getFieldWrapperProps('code')}>
+          <label className="block text-[11px] font-bold mb-1">{t('كود الخصم *', 'Coupon Code *')}</label>
+          <input
+            value={code}
+            onChange={(e) => setCode(e.target.value.toUpperCase())}
+            placeholder="VISION20"
+            {...couponVal.getInputA11yProps('code')}
+            className={`w-full min-h-[44px] px-3 py-2 rounded-lg font-mono-num ${couponVal.getControlClasses(
+              'code',
+              'border border-stone-200 dark:border-zinc-700 bg-stone-50 dark:bg-zinc-900'
+            )}`}
+          />
+          <FieldError id={couponVal.getErrorId('code')} message={couponVal.getError('code')} />
+        </div>
+
         <div className="grid grid-cols-2 gap-2">
-          <select value={type} onChange={(e) => setType(e.target.value as 'percent' | 'fixed')} className="px-3 py-2 rounded-lg border bg-stone-50 dark:bg-zinc-900">
-            <option value="percent">{t('نسبة مئوية %', 'Percentage %')}</option>
-            <option value="fixed">{t('مبلغ ثابت (ج.س)', 'Fixed Amount (SDG)')}</option>
-          </select>
-          <input type="number" value={value} onChange={(e) => setValue(e.target.value)} placeholder={t('القيمة', 'Value')} className="px-3 py-2 rounded-lg border bg-stone-50 dark:bg-zinc-900 font-mono-num" />
+          <div>
+            <label className="block text-[11px] font-bold mb-1">{t('نوع الخصم', 'Type')}</label>
+            <select
+              value={type}
+              onChange={(e) => setType(e.target.value as 'percent' | 'fixed')}
+              className="w-full min-h-[44px] px-3 py-2 rounded-lg border border-stone-200 dark:border-zinc-700 bg-stone-50 dark:bg-zinc-900"
+            >
+              <option value="percent">{t('نسبة مئوية %', 'Percentage %')}</option>
+              <option value="fixed">{t('مبلغ ثابت (ج.س)', 'Fixed Amount (SDG)')}</option>
+            </select>
+          </div>
+          <div {...couponVal.getFieldWrapperProps('value')}>
+            <label className="block text-[11px] font-bold mb-1">{t('القيمة *', 'Value *')}</label>
+            <input
+              type="number"
+              value={value}
+              onChange={(e) => setValue(e.target.value)}
+              placeholder={t('القيمة', 'Value')}
+              {...couponVal.getInputA11yProps('value')}
+              className={`w-full min-h-[44px] px-3 py-2 rounded-lg font-mono-num ${couponVal.getControlClasses(
+                'value',
+                'border border-stone-200 dark:border-zinc-700 bg-stone-50 dark:bg-zinc-900'
+              )}`}
+            />
+            <FieldError id={couponVal.getErrorId('value')} message={couponVal.getError('value')} />
+          </div>
         </div>
         <div className="grid grid-cols-3 gap-2">
-          <div>
+          <div {...couponVal.getFieldWrapperProps('minSub')}>
             <label className="block text-[11px] mb-0.5">{t('الحد الأدنى (ج.س)', 'Min Order')}</label>
-            <input type="number" value={minSub} onChange={(e) => setMinSub(e.target.value)} className="w-full px-2 py-1.5 rounded border bg-stone-50 dark:bg-zinc-900 font-mono-num" />
+            <input
+              type="number"
+              value={minSub}
+              onChange={(e) => setMinSub(e.target.value)}
+              {...couponVal.getInputA11yProps('minSub')}
+              className={`w-full min-h-[44px] px-2 py-1.5 rounded font-mono-num ${couponVal.getControlClasses(
+                'minSub',
+                'border border-stone-200 dark:border-zinc-700 bg-stone-50 dark:bg-zinc-900'
+              )}`}
+            />
+            <FieldError id={couponVal.getErrorId('minSub')} message={couponVal.getError('minSub')} />
           </div>
-          <div>
+          <div {...couponVal.getFieldWrapperProps('limit')}>
             <label className="block text-[11px] mb-0.5">{t('حد الاستخدام', 'Usage Limit')}</label>
-            <input type="number" value={limit} onChange={(e) => setLimit(e.target.value)} className="w-full px-2 py-1.5 rounded border bg-stone-50 dark:bg-zinc-900 font-mono-num" />
+            <input
+              type="number"
+              value={limit}
+              onChange={(e) => setLimit(e.target.value)}
+              {...couponVal.getInputA11yProps('limit')}
+              className={`w-full min-h-[44px] px-2 py-1.5 rounded font-mono-num ${couponVal.getControlClasses(
+                'limit',
+                'border border-stone-200 dark:border-zinc-700 bg-stone-50 dark:bg-zinc-900'
+              )}`}
+            />
+            <FieldError id={couponVal.getErrorId('limit')} message={couponVal.getError('limit')} />
           </div>
-          <div>
+          <div {...couponVal.getFieldWrapperProps('expiry')}>
             <label className="block text-[11px] mb-0.5">{t('الانتهاء', 'Expiry')}</label>
-            <input type="date" value={expiry} onChange={(e) => setExpiry(e.target.value)} className="w-full px-2 py-1.5 rounded border bg-stone-50 dark:bg-zinc-900 font-mono-num" />
+            <input
+              type="date"
+              value={expiry}
+              onChange={(e) => setExpiry(e.target.value)}
+              {...couponVal.getInputA11yProps('expiry')}
+              className={`w-full min-h-[44px] px-2 py-1.5 rounded font-mono-num ${couponVal.getControlClasses(
+                'expiry',
+                'border border-stone-200 dark:border-zinc-700 bg-stone-50 dark:bg-zinc-900'
+              )}`}
+            />
+            <FieldError id={couponVal.getErrorId('expiry')} message={couponVal.getError('expiry')} />
           </div>
         </div>
-        <button type="submit" className="w-full py-2.5 rounded-xl bg-[#D9B24C] text-[#11223E] font-extrabold inline-flex items-center justify-center gap-1">
+        <button type="submit" className="w-full min-h-[44px] py-2.5 rounded-xl bg-[#D9B24C] text-[#11223E] font-extrabold inline-flex items-center justify-center gap-1">
           <Plus className="w-4 h-4" />
           {t('حفظ الكوبون', 'Save Coupon')}
         </button>
@@ -1724,7 +2050,7 @@ export const AdminCouponsModule: React.FC = () => {
 };
 
 export const AdminNotificationsModule: React.FC = () => {
-  const { locale, t, notifications, sendBroadcastNotification, showToast } = useStore();
+  const { locale, t, notifications, sendBroadcastNotification } = useStore();
   const [titleAr, setTitleAr] = useState('');
   const [titleEn, setTitleEn] = useState('');
   const [bodyAr, setBodyAr] = useState('');
@@ -1734,9 +2060,40 @@ export const AdminNotificationsModule: React.FC = () => {
   const [deepLinkType, setDeepLinkType] = useState<'order' | 'product' | 'category' | 'consult'>('category');
   const [deepLinkId, setDeepLinkId] = useState('frames');
 
+  const broadcastFormRef = useRef<HTMLFormElement | null>(null);
+  const broadcastVal = useFormValidation({ containerRef: broadcastFormRef, formId: 'admin-broadcast' });
+
+  const buildBroadcastRules = useCallback((): FieldValidationRule[] => {
+    return [
+      {
+        field: 'titleAr',
+        label: t('عنوان الإشعار (عربي)', 'Title (AR)'),
+        error: !titleAr.trim()
+          ? pickMsg(VALIDATION_MESSAGES.broadcastTitleRequired, locale)
+          : null,
+      },
+      {
+        field: 'bodyAr',
+        label: t('نص الإشعار (عربي)', 'Body (AR)'),
+        error: !bodyAr.trim()
+          ? pickMsg(VALIDATION_MESSAGES.broadcastBodyRequired, locale)
+          : null,
+      },
+    ];
+  }, [titleAr, bodyAr, locale, t]);
+
+  useEffect(() => {
+    if (broadcastVal.submitted) {
+      broadcastVal.revalidate(buildBroadcastRules());
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [broadcastVal.submitted, buildBroadcastRules]);
+
   const handleSend = (e: React.FormEvent) => {
     e.preventDefault();
-    if (!titleAr.trim() || !bodyAr.trim()) return;
+    if (!broadcastVal.validateAll(buildBroadcastRules())) {
+      return;
+    }
     sendBroadcastNotification({
       titleAr: titleAr.trim(),
       titleEn: titleEn.trim() || titleAr.trim(),
@@ -1752,11 +2109,14 @@ export const AdminNotificationsModule: React.FC = () => {
     setBodyAr('');
     setBodyEn('');
     setImageUrl('');
+    broadcastVal.reset();
   };
 
   return (
     <div className="grid lg:grid-cols-12 gap-6 items-start text-xs">
       <form
+        ref={broadcastFormRef}
+        noValidate
         onSubmit={handleSend}
         className="lg:col-span-5 bg-white dark:bg-[#181B1E] border border-stone-200 dark:border-zinc-800 rounded-xl p-5 space-y-3"
       >
@@ -1764,17 +2124,58 @@ export const AdminNotificationsModule: React.FC = () => {
           <Send className="w-4 h-4 text-[#D9B24C]" />
           {t('إرسال إشعار ترويجي للعملاء', 'Send Push Notification')}
         </h2>
-        <input required value={titleAr} onChange={(e) => setTitleAr(e.target.value)} placeholder={t('العنوان (عربي)*', 'Title (AR)*')} className="w-full min-h-[44px] px-3 py-2 rounded-lg border bg-stone-50 dark:bg-zinc-900" />
-        <input value={titleEn} onChange={(e) => setTitleEn(e.target.value)} placeholder={t('العنوان (إنجليزي)', 'Title (EN)')} className="w-full min-h-[44px] px-3 py-2 rounded-lg border bg-stone-50 dark:bg-zinc-900" />
-        <textarea required rows={3} value={bodyAr} onChange={(e) => setBodyAr(e.target.value)} placeholder={t('نص الإشعار (عربي)*', 'Body (AR)*')} className="w-full px-3 py-2 rounded-lg border bg-stone-50 dark:bg-zinc-900" />
-        <textarea rows={2} value={bodyEn} onChange={(e) => setBodyEn(e.target.value)} placeholder={t('نص الإشعار (إنجليزي)', 'Body (EN)')} className="w-full px-3 py-2 rounded-lg border bg-stone-50 dark:bg-zinc-900" />
+
+        <ValidationSummaryBanner
+          errors={broadcastVal.errors}
+          onSelectField={broadcastVal.focusField}
+          mode="form"
+        />
+
+        <div {...broadcastVal.getFieldWrapperProps('titleAr')}>
+          <input
+            value={titleAr}
+            onChange={(e) => setTitleAr(e.target.value)}
+            placeholder={t('العنوان (عربي)*', 'Title (AR)*')}
+            {...broadcastVal.getInputA11yProps('titleAr')}
+            className={`w-full min-h-[44px] px-3 py-2 rounded-lg ${broadcastVal.getControlClasses(
+              'titleAr',
+              'border border-stone-200 dark:border-zinc-700 bg-stone-50 dark:bg-zinc-900'
+            )}`}
+          />
+          <FieldError
+            id={broadcastVal.getErrorId('titleAr')}
+            message={broadcastVal.getError('titleAr')}
+          />
+        </div>
+
+        <input value={titleEn} onChange={(e) => setTitleEn(e.target.value)} placeholder={t('العنوان (إنجليزي)', 'Title (EN)')} className="w-full min-h-[44px] px-3 py-2 rounded-lg border border-stone-200 dark:border-zinc-700 bg-stone-50 dark:bg-zinc-900" />
+
+        <div {...broadcastVal.getFieldWrapperProps('bodyAr')}>
+          <textarea
+            rows={3}
+            value={bodyAr}
+            onChange={(e) => setBodyAr(e.target.value)}
+            placeholder={t('نص الإشعار (عربي)*', 'Body (AR)*')}
+            {...broadcastVal.getInputA11yProps('bodyAr')}
+            className={`w-full px-3 py-2 rounded-lg ${broadcastVal.getControlClasses(
+              'bodyAr',
+              'border border-stone-200 dark:border-zinc-700 bg-stone-50 dark:bg-zinc-900'
+            )}`}
+          />
+          <FieldError
+            id={broadcastVal.getErrorId('bodyAr')}
+            message={broadcastVal.getError('bodyAr')}
+          />
+        </div>
+
+        <textarea rows={2} value={bodyEn} onChange={(e) => setBodyEn(e.target.value)} placeholder={t('نص الإشعار (إنجليزي)', 'Body (EN)')} className="w-full px-3 py-2 rounded-lg border border-stone-200 dark:border-zinc-700 bg-stone-50 dark:bg-zinc-900" />
         <div className="flex flex-wrap items-center gap-2">
           <input
             dir="ltr"
             value={imageUrl}
             onChange={(e) => setImageUrl(e.target.value)}
             placeholder={t('رابط صورة الإشعار (اختياري)', 'Notification image URL (optional)')}
-            className="flex-1 min-h-[44px] px-3 py-2 rounded-lg border bg-stone-50 dark:bg-zinc-900"
+            className="flex-1 min-h-[44px] px-3 py-2 rounded-lg border border-stone-200 dark:border-zinc-700 bg-stone-50 dark:bg-zinc-900"
           />
           {imageUrl && (
             <button
@@ -1787,21 +2188,21 @@ export const AdminNotificationsModule: React.FC = () => {
           )}
         </div>
         <div className="grid grid-cols-3 gap-2">
-          <select value={segment} onChange={(e) => setSegment(e.target.value as typeof segment)} className="min-h-[44px] px-2 py-2 rounded-lg border bg-stone-50 dark:bg-zinc-900">
+          <select value={segment} onChange={(e) => setSegment(e.target.value as typeof segment)} className="min-h-[44px] px-2 py-2 rounded-lg border border-stone-200 dark:border-zinc-700 bg-stone-50 dark:bg-zinc-900">
             <option value="all">{t('كل المستخدمين', 'All Users')}</option>
             <option value="khartoum">{t('الخرطوم', 'Khartoum')}</option>
             <option value="states">{t('الولايات', 'States')}</option>
             <option value="vip">{t('عملاء VIP', 'VIP')}</option>
           </select>
-          <select value={deepLinkType} onChange={(e) => setDeepLinkType(e.target.value as typeof deepLinkType)} className="min-h-[44px] px-2 py-2 rounded-lg border bg-stone-50 dark:bg-zinc-900">
+          <select value={deepLinkType} onChange={(e) => setDeepLinkType(e.target.value as typeof deepLinkType)} className="min-h-[44px] px-2 py-2 rounded-lg border border-stone-200 dark:border-zinc-700 bg-stone-50 dark:bg-zinc-900">
             <option value="category">{t('تصنيف', 'Category')}</option>
             <option value="product">{t('منتج', 'Product')}</option>
             <option value="consult">{t('استشارة', 'Consult')}</option>
             <option value="order">{t('الطلبات', 'Orders')}</option>
           </select>
-          <input value={deepLinkId} onChange={(e) => setDeepLinkId(e.target.value)} placeholder="ID" className="min-h-[44px] px-2 py-2 rounded-lg border bg-stone-50 dark:bg-zinc-900 font-mono-num" />
+          <input value={deepLinkId} onChange={(e) => setDeepLinkId(e.target.value)} placeholder="ID" className="min-h-[44px] px-2 py-2 rounded-lg border border-stone-200 dark:border-zinc-700 bg-stone-50 dark:bg-zinc-900 font-mono-num" />
         </div>
-        <button type="submit" onClick={() => { if (!titleAr.trim() || !bodyAr.trim()) showToast(t('أدخل العنوان والنص', 'Enter title and body')); }} className="w-full min-h-[44px] py-2.5 rounded-xl bg-[#D9B24C] text-[#11223E] font-extrabold">
+        <button type="submit" className="w-full min-h-[44px] py-2.5 rounded-xl bg-[#D9B24C] text-[#11223E] font-extrabold">
           {t('إرسال الإشعار الآن', 'Send Broadcast')}
         </button>
       </form>
@@ -2035,19 +2436,45 @@ export const AdminCustomersReviewsModule: React.FC = () => {
 };
 
 export const AdminRolesModule: React.FC = () => {
-  const { t, user, directoryUsers, addOrUpdateAdminByEmail, removeAdminRole } = useStore();
+  const { locale, t, user, directoryUsers, addOrUpdateAdminByEmail, removeAdminRole } = useStore();
   const { requireSensitiveReauth } = useAdminSecurity();
   const [email, setEmail] = useState('');
   const [role, setRole] = useState<'admin' | 'staff'>('admin');
   const [submitting, setSubmitting] = useState(false);
   const [feedback, setFeedback] = useState<{ type: 'error' | 'success'; text: string } | null>(null);
 
+  const roleFormRef = useRef<HTMLFormElement | null>(null);
+  const roleVal = useFormValidation({ containerRef: roleFormRef, formId: 'admin-roles' });
   const adminsAndStaff = directoryUsers.filter((u) => u.role === 'admin' || u.role === 'staff');
+
+  const buildRoleRules = useCallback((): FieldValidationRule[] => {
+    const cleanEmail = email.trim();
+    return [
+      {
+        field: 'email',
+        label: t('البريد الإلكتروني', 'Email Address'),
+        error: !cleanEmail
+          ? pickMsg(VALIDATION_MESSAGES.emailRequired, locale)
+          : !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(cleanEmail)
+          ? pickMsg(VALIDATION_MESSAGES.emailInvalid, locale)
+          : null,
+      },
+    ];
+  }, [email, locale, t]);
+
+  useEffect(() => {
+    if (roleVal.submitted) {
+      roleVal.revalidate(buildRoleRules());
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [roleVal.submitted, buildRoleRules]);
 
   const handleSave = (e: React.FormEvent) => {
     e.preventDefault();
+    if (!roleVal.validateAll(buildRoleRules())) {
+      return;
+    }
     const cleanEmail = email.trim();
-    if (!cleanEmail) return;
     setFeedback(null);
 
     requireSensitiveReauth(
@@ -2071,6 +2498,7 @@ export const AdminRolesModule: React.FC = () => {
                 : t(`تم تعيين ${cleanEmail} كموظف للطلبات فقط`, `${cleanEmail} assigned as Staff (Orders only)`),
           });
           setEmail('');
+          roleVal.reset();
         } finally {
           setSubmitting(false);
         }
@@ -2095,6 +2523,8 @@ export const AdminRolesModule: React.FC = () => {
   return (
     <div className="grid lg:grid-cols-12 gap-6 items-start text-xs">
       <form
+        ref={roleFormRef}
+        noValidate
         onSubmit={handleSave}
         className="lg:col-span-5 bg-white dark:bg-[#181B1E] border border-stone-200 dark:border-zinc-800 rounded-xl p-5 space-y-3"
       >
@@ -2109,8 +2539,15 @@ export const AdminRolesModule: React.FC = () => {
           )}
         </p>
 
+        <ValidationSummaryBanner
+          errors={roleVal.errors}
+          onSelectField={roleVal.focusField}
+          mode="form"
+        />
+
         {feedback && (
           <div
+            role="alert"
             className={`p-3 rounded-xl font-bold border ${
               feedback.type === 'error'
                 ? 'bg-rose-50 dark:bg-rose-950/30 border-rose-200 dark:border-rose-900/50 text-rose-700 dark:text-rose-300'
@@ -2121,17 +2558,21 @@ export const AdminRolesModule: React.FC = () => {
           </div>
         )}
 
-        <div>
-          <label className="block font-bold mb-1">{t('البريد الإلكتروني', 'Email Address')}</label>
+        <div {...roleVal.getFieldWrapperProps('email')}>
+          <label className="block font-bold mb-1">{t('البريد الإلكتروني *', 'Email Address *')}</label>
           <input
-            required
             type="email"
             dir="ltr"
             value={email}
             onChange={(e) => setEmail(e.target.value)}
             placeholder="admin@visionplus.sd"
-            className="w-full min-h-[44px] px-3 py-2 rounded-lg border border-stone-200 dark:border-zinc-700 bg-stone-50 dark:bg-zinc-900 text-base"
+            {...roleVal.getInputA11yProps('email')}
+            className={`w-full min-h-[44px] px-3 py-2 rounded-lg text-base ${roleVal.getControlClasses(
+              'email',
+              'border border-stone-200 dark:border-zinc-700 bg-stone-50 dark:bg-zinc-900'
+            )}`}
           />
+          <FieldError id={roleVal.getErrorId('email')} message={roleVal.getError('email')} />
         </div>
 
         <div>

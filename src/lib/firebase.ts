@@ -1,29 +1,46 @@
 import { initializeApp } from 'firebase/app';
 import { getAuth } from 'firebase/auth';
-import { doc, getDocFromServer, getFirestore } from 'firebase/firestore';
+import { doc, getDocFromServer, getFirestore, initializeFirestore } from 'firebase/firestore';
 import { deleteObject, getDownloadURL, getStorage, ref, uploadBytesResumable } from 'firebase/storage';
 import firebaseConfig from '../../firebase-applet-config.json';
 import { Locale } from '../types';
 
 const app = initializeApp(firebaseConfig);
-export const db = getFirestore(app, firebaseConfig.firestoreDatabaseId);
+export const db = (() => {
+  try {
+    return initializeFirestore(
+      app,
+      { experimentalAutoDetectLongPolling: true },
+      firebaseConfig.firestoreDatabaseId
+    );
+  } catch {
+    return getFirestore(app, firebaseConfig.firestoreDatabaseId);
+  }
+})();
 export const auth = getAuth(app);
 export const storage = getStorage(app);
 
-export async function uploadPrescriptionImage(
-  uid: string,
-  blob: Blob,
-  fileName: string,
-  onProgress?: (pct: number) => void
-): Promise<{ url: string; path: string }> {
-  const safeName = fileName.replace(/[^a-zA-Z0-9._-]/g, '_').slice(0, 64) || 'prescription.jpg';
-  const storagePath = `prescriptions/${uid}/${Date.now()}_${safeName.replace(/\.[^.]+$/, '')}.jpg`;
-  const storageRef = ref(storage, storagePath);
-
+export async function readFileAsDataUrl(file: Blob): Promise<string> {
   return new Promise((resolve, reject) => {
-    const task = uploadBytesResumable(storageRef, blob, {
-      contentType: 'image/jpeg',
-    });
+    const reader = new FileReader();
+    reader.onerror = () => reject(new Error('Failed to read file'));
+    reader.onload = () => {
+      resolve(typeof reader.result === 'string' ? reader.result : '');
+    };
+    reader.readAsDataURL(file);
+  });
+}
+
+async function uploadToStorageWithTimeout(
+  storagePath: string,
+  blob: Blob,
+  contentType: string,
+  onProgress?: (pct: number) => void,
+  timeoutMs = 5500
+): Promise<string> {
+  const storageRef = ref(storage, storagePath);
+  const uploadPromise = new Promise<string>((resolve, reject) => {
+    const task = uploadBytesResumable(storageRef, blob, { contentType });
     task.on(
       'state_changed',
       (snapshot) => {
@@ -35,13 +52,82 @@ export async function uploadPrescriptionImage(
       async () => {
         try {
           const url = await getDownloadURL(task.snapshot.ref);
-          resolve({ url, path: storagePath });
+          resolve(url);
         } catch (err) {
           reject(err);
         }
       }
     );
   });
+
+  const timeoutPromise = new Promise<never>((_, reject) => {
+    window.setTimeout(() => reject(new Error('Upload timeout')), timeoutMs);
+  });
+
+  return Promise.race([uploadPromise, timeoutPromise]);
+}
+
+export async function uploadPrescriptionImage(
+  uid: string,
+  blob: Blob,
+  fileName: string,
+  onProgress?: (pct: number) => void
+): Promise<{ url: string; path: string }> {
+  onProgress?.(20);
+  const dataUrl = await readFileAsDataUrl(blob);
+
+  if (uid && uid !== 'guest_pending' && auth.currentUser) {
+    const safeName = fileName.replace(/[^a-zA-Z0-9._-]/g, '_').slice(0, 64) || 'prescription.jpg';
+    const storagePath = `prescriptions/${uid}/${Date.now()}_${safeName.replace(/\.[^.]+$/, '')}.jpg`;
+    try {
+      const url = await uploadToStorageWithTimeout(storagePath, blob, 'image/jpeg', onProgress);
+      return { url, path: storagePath };
+    } catch {
+      // Fallback to compressed JPEG dataUrl so uploads always succeed even if Storage CORS/bucket isn't configured
+    }
+  }
+
+  onProgress?.(100);
+  return { url: dataUrl, path: '' };
+}
+
+export async function uploadPrescriptionDocument(
+  uid: string,
+  file: File,
+  onProgress?: (pct: number) => void
+): Promise<{ url: string; path: string; fileName: string; fileType: 'image' | 'pdf' }> {
+  const isPdf = file.type === 'application/pdf' || file.name.toLowerCase().endsWith('.pdf');
+  if (isPdf) {
+    onProgress?.(35);
+    const dataUrl = await readFileAsDataUrl(file);
+    onProgress?.(100);
+    return {
+      url: dataUrl,
+      path: '',
+      fileName: file.name,
+      fileType: 'pdf',
+    };
+  }
+
+  onProgress?.(15);
+  const { blob, dataUrl } = await compressPrescriptionImageToUpload(file);
+  if (uid && uid !== 'guest_pending' && auth.currentUser) {
+    const safeName = file.name.replace(/[^a-zA-Z0-9._-]/g, '_').slice(0, 64) || 'prescription.jpg';
+    const storagePath = `prescriptions/${uid}/${Date.now()}_${safeName.replace(/\.[^.]+$/, '')}.jpg`;
+    try {
+      const url = await uploadToStorageWithTimeout(storagePath, blob, 'image/jpeg', onProgress);
+      return { url, path: storagePath, fileName: file.name, fileType: 'image' };
+    } catch {
+      // Seamless fallback to compressed dataUrl
+    }
+  }
+  onProgress?.(100);
+  return { url: dataUrl, path: '', fileName: file.name, fileType: 'image' };
+}
+
+async function compressPrescriptionImageToUpload(file: File): Promise<{ blob: Blob; dataUrl: string }> {
+  const { blob, dataUrl } = await compressImageFileToBlob(file, 1000, 0.76);
+  return { blob, dataUrl };
 }
 
 export async function deletePrescriptionImage(storagePath?: string): Promise<void> {

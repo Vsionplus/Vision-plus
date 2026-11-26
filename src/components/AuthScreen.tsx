@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
   Mail,
   Lock,
@@ -17,6 +17,10 @@ import {
   AlertCircle,
 } from 'lucide-react';
 import { useStore } from '../store/StoreContext';
+import { isValidSudanPhone } from '../utils/format';
+import { FieldValidationRule, useFormValidation } from '../hooks/useFormValidation';
+import { FieldError, ValidationSummaryBanner } from './FormValidationUI';
+import { VALIDATION_MESSAGES, pickMsg } from '../utils/validationMessages';
 
 interface AuthScreenProps {
   mode?: 'page' | 'modal';
@@ -24,6 +28,8 @@ interface AuthScreenProps {
   checkoutNotice?: boolean;
   onClose?: () => void;
 }
+
+const isValidEmailFormat = (value: string): boolean => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value.trim());
 
 export const AuthScreen: React.FC<AuthScreenProps> = ({
   mode = 'page',
@@ -59,15 +65,113 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({
   const [resetSuccessMsg, setResetSuccessMsg] = useState<string | null>(null);
   const [showSwitchToLoginHint, setShowSwitchToLoginHint] = useState(false);
 
+  const modalScrollRef = useRef<HTMLDivElement>(null);
+  const v = useFormValidation({ containerRef: modalScrollRef, formId: `auth-${view}` });
+
+  const buildRules = useCallback((): FieldValidationRule[] => {
+    const cleanEmail = email.trim();
+    const cleanPhone = phone.trim();
+
+    if (view === 'login') {
+      return [
+        {
+          field: 'email',
+          label: t('البريد الإلكتروني', 'Email Address'),
+          error: !cleanEmail
+            ? pickMsg(VALIDATION_MESSAGES.emailRequired, locale)
+            : !isValidEmailFormat(cleanEmail)
+            ? pickMsg(VALIDATION_MESSAGES.emailInvalid, locale)
+            : null,
+        },
+        {
+          field: 'password',
+          label: t('كلمة المرور', 'Password'),
+          error: !password ? pickMsg(VALIDATION_MESSAGES.passwordRequired, locale) : null,
+        },
+      ];
+    }
+
+    if (view === 'register') {
+      const hasTypedPhone = cleanPhone.length > 0 && cleanPhone !== '+249';
+      return [
+        {
+          field: 'name',
+          label: t('الاسم الكامل', 'Full Name'),
+          error: !name.trim() ? pickMsg(VALIDATION_MESSAGES.nameRequired, locale) : null,
+        },
+        {
+          field: 'email',
+          label: t('البريد الإلكتروني', 'Email Address'),
+          error: !cleanEmail
+            ? pickMsg(VALIDATION_MESSAGES.emailRequired, locale)
+            : !isValidEmailFormat(cleanEmail)
+            ? pickMsg(VALIDATION_MESSAGES.emailInvalid, locale)
+            : null,
+        },
+        {
+          field: 'phone',
+          label: t('رقم الهاتف', 'Phone'),
+          error:
+            hasTypedPhone && !isValidSudanPhone(cleanPhone)
+              ? pickMsg(VALIDATION_MESSAGES.phoneInvalidSudan, locale)
+              : null,
+        },
+        {
+          field: 'password',
+          label: t('كلمة المرور', 'Password'),
+          error: !password
+            ? pickMsg(VALIDATION_MESSAGES.passwordRequired, locale)
+            : password.length < 6
+            ? pickMsg(VALIDATION_MESSAGES.passwordMinLength, locale)
+            : null,
+        },
+        {
+          field: 'confirmPassword',
+          label: t('تأكيد كلمة المرور', 'Confirm Password'),
+          error: !confirmPassword
+            ? pickMsg(VALIDATION_MESSAGES.confirmPasswordRequired, locale)
+            : confirmPassword !== password
+            ? pickMsg(VALIDATION_MESSAGES.passwordsMismatch, locale)
+            : null,
+        },
+      ];
+    }
+
+    if (view === 'reset') {
+      return [
+        {
+          field: 'email',
+          label: t('البريد الإلكتروني', 'Email Address'),
+          error: !cleanEmail
+            ? pickMsg(VALIDATION_MESSAGES.emailRequired, locale)
+            : !isValidEmailFormat(cleanEmail)
+            ? pickMsg(VALIDATION_MESSAGES.emailInvalid, locale)
+            : null,
+        },
+      ];
+    }
+
+    return [];
+  }, [view, name, phone, email, password, confirmPassword, locale, t]);
+
   useEffect(() => {
     setView(initialView);
     setErrorMsg(null);
     setResetSuccessMsg(null);
     setShowSwitchToLoginHint(false);
+    v.reset();
     if (initialView === 'reset' && user.email) {
       setEmail((prev) => prev || user.email);
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [initialView, user.email]);
+
+  useEffect(() => {
+    if (v.submitted) {
+      v.revalidate(buildRules());
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [v.submitted, buildRules]);
 
   useEffect(() => {
     if (resetCooldown <= 0) return;
@@ -83,6 +187,7 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({
     setErrorMsg(null);
     setResetSuccessMsg(null);
     setShowSwitchToLoginHint(false);
+    v.reset();
     if (nextView === 'reset' && user.email) {
       setEmail((prev) => prev || user.email);
     }
@@ -93,11 +198,7 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({
     e.preventDefault();
     setErrorMsg(null);
     setShowSwitchToLoginHint(false);
-
-    if (!email.trim() || !password) {
-      setErrorMsg(t('يرجى إدخال البريد الإلكتروني وكلمة المرور.', 'Please enter email and password.'));
-      return;
-    }
+    if (!v.validateAll(buildRules())) return;
 
     setLoading(true);
     try {
@@ -113,23 +214,7 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({
     e.preventDefault();
     setErrorMsg(null);
     setShowSwitchToLoginHint(false);
-
-    if (!name.trim()) {
-      setErrorMsg(t('يرجى إدخال الاسم الكامل.', 'Please enter your full name.'));
-      return;
-    }
-    if (!email.trim() || !email.includes('@')) {
-      setErrorMsg(t('يرجى إدخال بريد إلكتروني صحيح.', 'Please enter a valid email address.'));
-      return;
-    }
-    if (password.length < 6) {
-      setErrorMsg(t('كلمة المرور يجب أن تكون 6 أحرف على الأقل.', 'Password must be at least 6 characters.'));
-      return;
-    }
-    if (password !== confirmPassword) {
-      setErrorMsg(t('كلمتا المرور غير متطابقتين.', 'Passwords do not match.'));
-      return;
-    }
+    if (!v.validateAll(buildRules())) return;
 
     setLoading(true);
     try {
@@ -171,13 +256,9 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({
     e.preventDefault();
     setErrorMsg(null);
     setResetSuccessMsg(null);
+    if (!v.validateAll(buildRules())) return;
 
     const targetEmail = email.trim();
-    if (!targetEmail || !targetEmail.includes('@')) {
-      setErrorMsg(t('يرجى إدخال بريد إلكتروني صحيح.', 'Please enter a valid email address.'));
-      return;
-    }
-
     setResetLoading(true);
     try {
       await sendPasswordReset(targetEmail);
@@ -206,7 +287,7 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({
           type="button"
           onClick={onClose}
           aria-label={t('إغلاق', 'Close')}
-          className="absolute top-4 end-4 min-w-[40px] min-h-[40px] flex items-center justify-center rounded-xl text-slate-400 hover:text-slate-700 dark:hover:text-white hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors"
+          className="absolute top-4 end-4 min-w-[44px] min-h-[44px] flex items-center justify-center rounded-xl text-slate-400 hover:text-slate-700 dark:hover:text-white hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors"
         >
           <X className="w-5 h-5" />
         </button>
@@ -272,7 +353,7 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({
             <button
               type="button"
               onClick={() => switchView('login')}
-              className="min-h-[40px] w-full px-3 rounded-lg bg-rose-600 hover:bg-rose-700 text-white font-bold text-xs transition-colors"
+              className="min-h-[44px] w-full px-3 rounded-lg bg-rose-600 hover:bg-rose-700 text-white font-bold text-xs transition-colors"
             >
               {t('الانتقال إلى تسجيل الدخول', 'Switch to Sign In')}
             </button>
@@ -336,7 +417,7 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({
             <button
               type="button"
               onClick={onClose}
-              className="w-full min-h-[42px] px-4 rounded-xl text-xs font-semibold text-slate-500 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors"
+              className="w-full min-h-[44px] px-4 rounded-xl text-xs font-semibold text-slate-500 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors"
             >
               {checkoutNotice
                 ? t('العودة إلى سلة المشتريات', 'Back to Cart')
@@ -355,27 +436,33 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({
 
       {/* Login Form */}
       {view === 'login' && (
-        <form onSubmit={handleLogin} className="space-y-4 text-sm">
-          <div>
+        <form noValidate onSubmit={handleLogin} className="space-y-4 text-sm">
+          <ValidationSummaryBanner errors={v.errors} onSelectField={v.focusField} />
+
+          <div {...v.getFieldWrapperProps('email')}>
             <label className="block text-xs font-bold mb-1.5">
               {t('البريد الإلكتروني', 'Email Address')}
             </label>
             <div className="relative">
               <Mail className="w-4 h-4 text-slate-400 absolute top-1/2 -translate-y-1/2 start-3.5" />
               <input
-                required
                 type="email"
                 dir="ltr"
                 autoComplete="email"
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
                 placeholder="name@example.com"
-                className="w-full min-h-[44px] ps-10 pe-3.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-[#0B111C] text-sm focus:outline-none focus:ring-2 focus:ring-[var(--vp-secondary)]"
+                {...v.getInputA11yProps('email')}
+                className={`w-full min-h-[44px] ps-10 pe-3.5 rounded-xl text-sm ${v.getControlClasses(
+                  'email',
+                  'border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-[#0B111C] focus:outline-none focus:ring-2 focus:ring-[var(--vp-secondary)]'
+                )}`}
               />
             </div>
+            <FieldError id={v.getErrorId('email')} message={v.getError('email')} />
           </div>
 
-          <div>
+          <div {...v.getFieldWrapperProps('password')}>
             <div className="flex items-center justify-between gap-2 mb-1.5">
               <label className="block text-xs font-bold">
                 {t('كلمة المرور', 'Password')}
@@ -383,7 +470,7 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({
               <button
                 type="button"
                 onClick={() => switchView('reset')}
-                className="text-xs font-bold text-[#B38B2D] dark:text-[#E2BD5B] hover:underline"
+                className="min-h-[36px] text-xs font-bold text-[#B38B2D] dark:text-[#E2BD5B] hover:underline"
               >
                 {t('نسيت كلمة المرور؟', 'Forgot password?')}
               </button>
@@ -391,14 +478,17 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({
             <div className="relative">
               <Lock className="w-4 h-4 text-slate-400 absolute top-1/2 -translate-y-1/2 start-3.5" />
               <input
-                required
                 type={showPassword ? 'text' : 'password'}
                 dir="ltr"
                 autoComplete="current-password"
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
                 placeholder="••••••••"
-                className="w-full min-h-[44px] ps-10 pe-11 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-[#0B111C] text-sm focus:outline-none focus:ring-2 focus:ring-[var(--vp-secondary)]"
+                {...v.getInputA11yProps('password')}
+                className={`w-full min-h-[44px] ps-10 pe-11 rounded-xl text-sm ${v.getControlClasses(
+                  'password',
+                  'border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-[#0B111C] focus:outline-none focus:ring-2 focus:ring-[var(--vp-secondary)]'
+                )}`}
               />
               <button
                 type="button"
@@ -409,6 +499,7 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({
                 {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
               </button>
             </div>
+            <FieldError id={v.getErrorId('password')} message={v.getError('password')} />
           </div>
 
           <button
@@ -425,7 +516,7 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({
             <button
               type="button"
               onClick={() => switchView('choice')}
-              className="min-h-[40px] px-1 inline-flex items-center gap-1.5 text-slate-500 hover:text-[#11223E] dark:hover:text-white font-semibold"
+              className="min-h-[44px] px-1 inline-flex items-center gap-1.5 text-slate-500 hover:text-[#11223E] dark:hover:text-white font-semibold"
             >
               <BackIcon className="w-4 h-4" />
               <span>{t('الرجوع', 'Back')}</span>
@@ -434,7 +525,7 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({
             <button
               type="button"
               onClick={() => switchView('register')}
-              className="min-h-[40px] px-1 font-bold text-[#B38B2D] dark:text-[#E2BD5B] hover:underline"
+              className="min-h-[44px] px-1 font-bold text-[#B38B2D] dark:text-[#E2BD5B] hover:underline"
             >
               {t('تسجيل حساب جديد', 'Create new account')}
             </button>
@@ -444,41 +535,51 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({
 
       {/* Register Form */}
       {view === 'register' && (
-        <form onSubmit={handleRegister} className="space-y-3.5 text-sm">
-          <div>
+        <form noValidate onSubmit={handleRegister} className="space-y-3.5 text-sm">
+          <ValidationSummaryBanner errors={v.errors} onSelectField={v.focusField} />
+
+          <div {...v.getFieldWrapperProps('name')}>
             <label className="block text-xs font-bold mb-1">{t('الاسم الكامل', 'Full Name')} *</label>
             <div className="relative">
               <User className="w-4 h-4 text-slate-400 absolute top-1/2 -translate-y-1/2 start-3.5" />
               <input
-                required
                 type="text"
                 autoComplete="name"
                 value={name}
                 onChange={(e) => setName(e.target.value)}
                 placeholder={t('الاسم الثلاثي', 'Full name')}
-                className="w-full min-h-[44px] ps-10 pe-3.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-[#0B111C] text-sm focus:outline-none focus:ring-2 focus:ring-[var(--vp-secondary)]"
+                {...v.getInputA11yProps('name')}
+                className={`w-full min-h-[44px] ps-10 pe-3.5 rounded-xl text-sm ${v.getControlClasses(
+                  'name',
+                  'border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-[#0B111C] focus:outline-none focus:ring-2 focus:ring-[var(--vp-secondary)]'
+                )}`}
               />
             </div>
+            <FieldError id={v.getErrorId('name')} message={v.getError('name')} />
           </div>
 
-          <div>
+          <div {...v.getFieldWrapperProps('email')}>
             <label className="block text-xs font-bold mb-1">{t('البريد الإلكتروني', 'Email Address')} *</label>
             <div className="relative">
               <Mail className="w-4 h-4 text-slate-400 absolute top-1/2 -translate-y-1/2 start-3.5" />
               <input
-                required
                 type="email"
                 dir="ltr"
                 autoComplete="email"
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
                 placeholder="name@example.com"
-                className="w-full min-h-[44px] ps-10 pe-3.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-[#0B111C] text-sm focus:outline-none focus:ring-2 focus:ring-[var(--vp-secondary)]"
+                {...v.getInputA11yProps('email')}
+                className={`w-full min-h-[44px] ps-10 pe-3.5 rounded-xl text-sm ${v.getControlClasses(
+                  'email',
+                  'border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-[#0B111C] focus:outline-none focus:ring-2 focus:ring-[var(--vp-secondary)]'
+                )}`}
               />
             </div>
+            <FieldError id={v.getErrorId('email')} message={v.getError('email')} />
           </div>
 
-          <div>
+          <div {...v.getFieldWrapperProps('phone')}>
             <label className="block text-xs font-bold mb-1">
               {t('رقم الهاتف للتواصل (اختياري)', 'Phone (optional)')}
             </label>
@@ -491,54 +592,65 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({
                 value={phone}
                 onChange={(e) => setPhone(e.target.value)}
                 placeholder="+249912345678"
-                className="w-full min-h-[44px] ps-10 pe-3.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-[#0B111C] text-sm font-mono-num focus:outline-none focus:ring-2 focus:ring-[var(--vp-secondary)]"
+                {...v.getInputA11yProps('phone')}
+                className={`w-full min-h-[44px] ps-10 pe-3.5 rounded-xl text-sm font-mono-num ${v.getControlClasses(
+                  'phone',
+                  'border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-[#0B111C] focus:outline-none focus:ring-2 focus:ring-[var(--vp-secondary)]'
+                )}`}
               />
             </div>
+            <FieldError id={v.getErrorId('phone')} message={v.getError('phone')} />
           </div>
 
           <div className="grid sm:grid-cols-2 gap-3">
-            <div>
+            <div {...v.getFieldWrapperProps('password')}>
               <label className="block text-xs font-bold mb-1">{t('كلمة المرور', 'Password')} *</label>
               <div className="relative">
                 <Lock className="w-4 h-4 text-slate-400 absolute top-1/2 -translate-y-1/2 start-3" />
                 <input
-                  required
                   type={showPassword ? 'text' : 'password'}
                   dir="ltr"
-                  minLength={6}
                   autoComplete="new-password"
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
                   placeholder="••••••"
-                  className="w-full min-h-[44px] ps-9 pe-9 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-[#0B111C] text-sm focus:outline-none focus:ring-2 focus:ring-[var(--vp-secondary)]"
+                  {...v.getInputA11yProps('password')}
+                  className={`w-full min-h-[44px] ps-9 pe-10 rounded-xl text-sm ${v.getControlClasses(
+                    'password',
+                    'border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-[#0B111C] focus:outline-none focus:ring-2 focus:ring-[var(--vp-secondary)]'
+                  )}`}
                 />
                 <button
                   type="button"
                   onClick={() => setShowPassword((s) => !s)}
                   aria-label={t('إظهار كلمة المرور', 'Show password')}
-                  className="absolute top-1/2 -translate-y-1/2 end-1 min-w-[36px] min-h-[36px] flex items-center justify-center text-slate-400"
+                  className="absolute top-1/2 -translate-y-1/2 end-1 min-w-[40px] min-h-[40px] flex items-center justify-center text-slate-400"
                 >
                   {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
                 </button>
               </div>
+              <FieldError id={v.getErrorId('password')} message={v.getError('password')} />
             </div>
 
-            <div>
+            <div {...v.getFieldWrapperProps('confirmPassword')}>
               <label className="block text-xs font-bold mb-1">{t('تأكيد كلمة المرور', 'Confirm Password')} *</label>
               <div className="relative">
                 <Lock className="w-4 h-4 text-slate-400 absolute top-1/2 -translate-y-1/2 start-3" />
                 <input
-                  required
                   type={showPassword ? 'text' : 'password'}
                   dir="ltr"
-                  minLength={6}
                   autoComplete="new-password"
                   value={confirmPassword}
                   onChange={(e) => setConfirmPassword(e.target.value)}
                   placeholder="••••••"
-                  className="w-full min-h-[44px] ps-9 pe-3 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-[#0B111C] text-sm focus:outline-none focus:ring-2 focus:ring-[var(--vp-secondary)]"
+                  {...v.getInputA11yProps('confirmPassword')}
+                  className={`w-full min-h-[44px] ps-9 pe-3 rounded-xl text-sm ${v.getControlClasses(
+                    'confirmPassword',
+                    'border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-[#0B111C] focus:outline-none focus:ring-2 focus:ring-[var(--vp-secondary)]'
+                  )}`}
                 />
               </div>
+              <FieldError id={v.getErrorId('confirmPassword')} message={v.getError('confirmPassword')} />
             </div>
           </div>
 
@@ -561,7 +673,7 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({
             <button
               type="button"
               onClick={() => switchView('choice')}
-              className="min-h-[40px] px-1 inline-flex items-center gap-1.5 text-slate-500 hover:text-[#11223E] dark:hover:text-white font-semibold"
+              className="min-h-[44px] px-1 inline-flex items-center gap-1.5 text-slate-500 hover:text-[#11223E] dark:hover:text-white font-semibold"
             >
               <BackIcon className="w-4 h-4" />
               <span>{t('الرجوع', 'Back')}</span>
@@ -570,7 +682,7 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({
             <button
               type="button"
               onClick={() => switchView('login')}
-              className="min-h-[40px] px-1 font-bold text-[#B38B2D] dark:text-[#E2BD5B] hover:underline"
+              className="min-h-[44px] px-1 font-bold text-[#B38B2D] dark:text-[#E2BD5B] hover:underline"
             >
               {t('لديك حساب؟ تسجيل الدخول', 'Already registered? Sign In')}
             </button>
@@ -580,24 +692,30 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({
 
       {/* Password Reset Form */}
       {view === 'reset' && (
-        <form onSubmit={handlePasswordReset} className="space-y-4 text-sm">
-          <div>
+        <form noValidate onSubmit={handlePasswordReset} className="space-y-4 text-sm">
+          <ValidationSummaryBanner errors={v.errors} onSelectField={v.focusField} />
+
+          <div {...v.getFieldWrapperProps('email')}>
             <label className="block text-xs font-bold mb-1.5">
               {t('البريد الإلكتروني المسجل', 'Registered Email Address')}
             </label>
             <div className="relative">
               <Mail className="w-4 h-4 text-slate-400 absolute top-1/2 -translate-y-1/2 start-3.5" />
               <input
-                required
                 type="email"
                 dir="ltr"
                 autoComplete="email"
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
                 placeholder="name@example.com"
-                className="w-full min-h-[44px] ps-10 pe-3.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-[#0B111C] text-sm focus:outline-none focus:ring-2 focus:ring-[var(--vp-secondary)]"
+                {...v.getInputA11yProps('email')}
+                className={`w-full min-h-[44px] ps-10 pe-3.5 rounded-xl text-sm ${v.getControlClasses(
+                  'email',
+                  'border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-[#0B111C] focus:outline-none focus:ring-2 focus:ring-[var(--vp-secondary)]'
+                )}`}
               />
             </div>
+            <FieldError id={v.getErrorId('email')} message={v.getError('email')} />
           </div>
 
           <button
@@ -620,7 +738,7 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({
             <button
               type="button"
               onClick={() => switchView('choice')}
-              className="min-h-[40px] px-1 inline-flex items-center gap-1.5 text-slate-500 hover:text-[#11223E] dark:hover:text-white font-semibold"
+              className="min-h-[44px] px-1 inline-flex items-center gap-1.5 text-slate-500 hover:text-[#11223E] dark:hover:text-white font-semibold"
             >
               <BackIcon className="w-4 h-4" />
               <span>{t('الرجوع', 'Back')}</span>
@@ -629,7 +747,7 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({
             <button
               type="button"
               onClick={() => switchView('login')}
-              className="min-h-[40px] px-1 font-bold text-[#B38B2D] dark:text-[#E2BD5B] hover:underline"
+              className="min-h-[44px] px-1 font-bold text-[#B38B2D] dark:text-[#E2BD5B] hover:underline"
             >
               {t('العودة لتسجيل الدخول', 'Back to Sign In')}
             </button>
@@ -642,6 +760,7 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({
   if (mode === 'modal') {
     return (
       <div
+        ref={modalScrollRef}
         role="dialog"
         aria-modal="true"
         className="fixed inset-0 z-[70] bg-black/55 backdrop-blur-xs overflow-y-auto p-4 flex items-center justify-center"

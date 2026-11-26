@@ -129,7 +129,7 @@ const AppRouter: React.FC = () => {
   }
 
   if ((!firebaseUser && !guestSession) || authScreenMode === 'entry') {
-    return <AuthScreen mode="page" />;
+    return <AuthScreen mode="page" initialView="choice" />;
   }
 
   if (
@@ -142,19 +142,16 @@ const AppRouter: React.FC = () => {
   }
 
   return (
-    <>
-      <NavigationShell>
-        {activeTab === 'home' && <HomeView />}
-        {activeTab === 'catalog' && <CatalogView />}
-        {activeTab === 'favorites' && <CatalogView favoritesOnly />}
-        {activeTab === 'cart' && <CartCheckoutView />}
-        {activeTab === 'orders' && <OrdersView />}
-        {activeTab === 'consult' && <ConsultView />}
-        {activeTab === 'profile' && <ProfileView />}
-        {activeTab === 'contact' && <ContactAboutView />}
-        <ProductDetailModal />
-      </NavigationShell>
-
+    <NavigationShell>
+      {activeTab === 'home' && <HomeView />}
+      {activeTab === 'catalog' && <CatalogView />}
+      {activeTab === 'favorites' && <CatalogView favoritesOnly />}
+      {activeTab === 'cart' && <CartCheckoutView />}
+      {activeTab === 'orders' && <OrdersView />}
+      {activeTab === 'consult' && <ConsultView />}
+      {activeTab === 'profile' && <ProfileView />}
+      {activeTab === 'contact' && <ContactAboutView />}
+      <ProductDetailModal />
       {authModal.open && (
         <AuthScreen
           mode="modal"
@@ -163,7 +160,7 @@ const AppRouter: React.FC = () => {
           onClose={closeAuthModal}
         />
       )}
-    </>
+    </NavigationShell>
   );
 };
 

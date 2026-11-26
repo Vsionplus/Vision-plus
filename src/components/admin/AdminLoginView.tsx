@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useState } from 'react';
 import { Eye, EyeOff, Lock, Mail, ShieldAlert, ArrowRight } from 'lucide-react';
 import { AdminLoginError, useStore } from '../../store/StoreContext';
 import {
@@ -8,6 +8,9 @@ import {
   getAdminAttemptStatusByEmail,
   getAdminAttemptStatusById,
 } from '../../utils/adminAuth';
+import { FieldValidationRule, useFormValidation } from '../../hooks/useFormValidation';
+import { FieldError, ValidationSummaryBanner } from '../FormValidationUI';
+import { VALIDATION_MESSAGES, pickMsg } from '../../utils/validationMessages';
 
 function formatCountdown(ms: number): string {
   const totalSeconds = Math.max(0, Math.ceil(ms / 1000));
@@ -46,6 +49,34 @@ export const AdminLoginView: React.FC = () => {
   const [remainingMs, setRemainingMs] = useState(0);
 
   const showDebugDetail = isDebugTraceEnabled();
+  const validation = useFormValidation({ formId: 'admin-login' });
+
+  const buildRules = useCallback((): FieldValidationRule[] => {
+    const cleanEmail = email.trim();
+    return [
+      {
+        field: 'email',
+        label: 'البريد الإلكتروني',
+        error: !cleanEmail
+          ? pickMsg(VALIDATION_MESSAGES.emailRequired, 'ar')
+          : !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(cleanEmail)
+          ? pickMsg(VALIDATION_MESSAGES.emailInvalid, 'ar')
+          : null,
+      },
+      {
+        field: 'password',
+        label: 'كلمة المرور',
+        error: !password ? pickMsg(VALIDATION_MESSAGES.passwordRequired, 'ar') : null,
+      },
+    ];
+  }, [email, password]);
+
+  useEffect(() => {
+    if (validation.submitted) {
+      validation.revalidate(buildRules());
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [validation.submitted, buildRules]);
 
   // Wait for auth & loaded profile before auto-transitioning already-authenticated admin/staff
   useEffect(() => {
@@ -126,16 +157,14 @@ export const AdminLoginView: React.FC = () => {
     e.preventDefault();
     if (loading || isLocked) return;
 
-    const cleanEmail = email.trim();
-    if (!cleanEmail || !password) {
-      setErrorMessage('يرجى إدخال البريد الإلكتروني وكلمة المرور');
-      setDebugDetail(null);
+    setErrorMessage(null);
+    setDebugDetail(null);
+    if (!validation.validateAll(buildRules())) {
       return;
     }
 
+    const cleanEmail = email.trim();
     setLoading(true);
-    setErrorMessage(null);
-    setDebugDetail(null);
     try {
       await loginAdminWithEmail(cleanEmail, password);
     } catch (err) {
@@ -223,8 +252,13 @@ export const AdminLoginView: React.FC = () => {
           </div>
         )}
 
-        <form onSubmit={handleSubmit} className="space-y-4 text-xs">
-          <div>
+        <form noValidate onSubmit={handleSubmit} className="space-y-4 text-xs">
+          <ValidationSummaryBanner
+            errors={validation.errors}
+            onSelectField={validation.focusField}
+          />
+
+          <div {...validation.getFieldWrapperProps('email')}>
             <label htmlFor="vp-admin-email" className="block font-bold mb-1.5">
               البريد الإلكتروني
             </label>
@@ -234,19 +268,26 @@ export const AdminLoginView: React.FC = () => {
                 id="vp-admin-email"
                 type="email"
                 dir="ltr"
-                required
                 autoComplete="email"
                 disabled={isLocked || loading}
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
                 onBlur={() => void handleEmailBlur()}
                 placeholder="admin@visionplus.sd"
-                className="w-full min-h-[44px] ps-9 pe-3 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-[#0D131F] text-base disabled:opacity-50"
+                {...validation.getInputA11yProps('email')}
+                className={`w-full min-h-[44px] ps-9 pe-3 rounded-xl text-base disabled:opacity-50 transition-colors ${validation.getControlClasses(
+                  'email',
+                  'border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-[#0D131F]'
+                )}`}
               />
             </div>
+            <FieldError
+              id={validation.getErrorId('email')}
+              message={validation.getError('email')}
+            />
           </div>
 
-          <div>
+          <div {...validation.getFieldWrapperProps('password')}>
             <label htmlFor="vp-admin-password" className="block font-bold mb-1.5">
               كلمة المرور
             </label>
@@ -256,13 +297,16 @@ export const AdminLoginView: React.FC = () => {
                 id="vp-admin-password"
                 type={showPassword ? 'text' : 'password'}
                 dir="ltr"
-                required
                 autoComplete="current-password"
                 disabled={isLocked || loading}
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
                 placeholder="••••••••"
-                className="w-full min-h-[44px] ps-9 pe-11 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-[#0D131F] text-base disabled:opacity-50"
+                {...validation.getInputA11yProps('password')}
+                className={`w-full min-h-[44px] ps-9 pe-11 rounded-xl text-base disabled:opacity-50 transition-colors ${validation.getControlClasses(
+                  'password',
+                  'border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-[#0D131F]'
+                )}`}
               />
               <button
                 type="button"
@@ -274,6 +318,10 @@ export const AdminLoginView: React.FC = () => {
                 {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
               </button>
             </div>
+            <FieldError
+              id={validation.getErrorId('password')}
+              message={validation.getError('password')}
+            />
           </div>
 
           <button

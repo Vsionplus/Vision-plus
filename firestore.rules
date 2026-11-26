@@ -445,6 +445,8 @@ service cloud.firestore {
           'isOutOfStock',
           'isDeleted',
           'requiresPrescriptionOption',
+          'showSizeOptions',
+          'sizeOptions',
           'rating',
           'reviews'
         ])
@@ -475,6 +477,8 @@ service cloud.firestore {
         && (!('isOnOffer' in data) || data.isOnOffer is bool)
         && (!('isOutOfStock' in data) || data.isOutOfStock is bool)
         && (!('requiresPrescriptionOption' in data) || data.requiresPrescriptionOption is bool)
+        && (!('showSizeOptions' in data) || data.showSizeOptions is bool)
+        && (!('sizeOptions' in data) || (data.sizeOptions is list && data.sizeOptions.size() <= 80 && (data.sizeOptions.size() == 0 || data.sizeOptions[0] is string)))
         && data.visible is bool
         && (!('isDeleted' in data) || data.isDeleted is bool);
     }
@@ -915,6 +919,8 @@ service cloud.firestore {
             'isOutOfStock',
             'isDeleted',
             'requiresPrescriptionOption',
+            'showSizeOptions',
+            'sizeOptions',
             'rating',
             'reviews'
           ]))

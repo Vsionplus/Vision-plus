@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useState } from 'react';
 import {
   MapPin,
   Phone,
@@ -17,13 +17,18 @@ import {
 import { useStore } from '../store/StoreContext';
 import { formatSdg, isValidSudanPhone, normalizeSudanPhone } from '../utils/format';
 import {
+  ADD_OPTIONS,
   AXIS_OPTIONS,
   CYL_OPTIONS,
   PD_SINGLE_OPTIONS,
   SPH_OPTIONS,
   isNonZeroCyl,
+  validateEyeglassesEye,
 } from '../utils/prescription';
 import { PWAInstallButton } from './PWAInstallButton';
+import { FieldValidationRule, useFormValidation } from '../hooks/useFormValidation';
+import { FieldError, ValidationSummaryBanner } from './FormValidationUI';
+import { VALIDATION_MESSAGES, pickMsg } from '../utils/validationMessages';
 
 export const ProfileView: React.FC = () => {
   const {
@@ -32,6 +37,7 @@ export const ProfileView: React.FC = () => {
     user,
     isGuest,
     isEmailVerified,
+    openAuthModal,
     openVerifyEmailScreen,
     settings,
     appearance,
@@ -70,31 +76,183 @@ export const ProfileView: React.FC = () => {
   const [odSph, setOdSph] = useState('-1.00');
   const [odCyl, setOdCyl] = useState('0.00');
   const [odAxis, setOdAxis] = useState('0');
+  const [odAdd, setOdAdd] = useState('');
   const [osSph, setOsSph] = useState('-1.00');
   const [osCyl, setOsCyl] = useState('0.00');
   const [osAxis, setOsAxis] = useState('0');
+  const [osAdd, setOsAdd] = useState('');
   const [pd, setPd] = useState('63');
+
+  const profileVal = useFormValidation({ formId: 'profile-info' });
+  const addrVal = useFormValidation({ formId: 'profile-address' });
+  const rxVal = useFormValidation({ formId: 'profile-rx' });
+
+  const buildProfileRules = useCallback((): FieldValidationRule[] => {
+    const cleanEmail = email.trim();
+    const emailPattern = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    return [
+      {
+        field: 'name',
+        label: t('الاسم', 'Name'),
+        error: !name.trim() ? pickMsg(VALIDATION_MESSAGES.nameRequired, locale) : null,
+      },
+      {
+        field: 'phone',
+        label: t('رقم الهاتف', 'Phone'),
+        error: !phone.trim()
+          ? pickMsg(VALIDATION_MESSAGES.phoneRequired, locale)
+          : !isValidSudanPhone(phone)
+          ? pickMsg(VALIDATION_MESSAGES.phoneInvalidSudan, locale)
+          : null,
+      },
+      {
+        field: 'email',
+        label: t('البريد الإلكتروني', 'Email'),
+        error:
+          cleanEmail && !emailPattern.test(cleanEmail)
+            ? pickMsg(VALIDATION_MESSAGES.emailInvalid, locale)
+            : null,
+      },
+    ];
+  }, [name, phone, email, locale, t]);
+
+  const buildAddressRules = useCallback((): FieldValidationRule[] => {
+    const cleanMap = addrMapUrl.trim();
+    const phoneToCheck = addrPhone.trim() || user.phone.trim();
+    return [
+      {
+        field: 'addrRecipient',
+        label: t('اسم المستلم', 'Recipient name'),
+        error: !addrRecipient.trim()
+          ? pickMsg(VALIDATION_MESSAGES.recipientNameRequired, locale)
+          : null,
+      },
+      {
+        field: 'addrLabel',
+        label: t('تسمية العنوان', 'Address label'),
+        error: !addrLabel.trim()
+          ? pickMsg(VALIDATION_MESSAGES.addressLabelRequired, locale)
+          : null,
+      },
+      {
+        field: 'addrPhone',
+        label: t('رقم هاتف التوصيل', 'Delivery phone'),
+        error: !phoneToCheck
+          ? pickMsg(VALIDATION_MESSAGES.phoneRequired, locale)
+          : !isValidSudanPhone(phoneToCheck)
+          ? pickMsg(VALIDATION_MESSAGES.phoneInvalidSudan, locale)
+          : null,
+      },
+      {
+        field: 'addrState',
+        label: t('الولاية', 'State'),
+        error: !addrState ? pickMsg(VALIDATION_MESSAGES.deliveryStateRequired, locale) : null,
+      },
+      {
+        field: 'addrCity',
+        label: t('المدينة', 'City'),
+        error: !addrCity.trim() ? pickMsg(VALIDATION_MESSAGES.cityRequired, locale) : null,
+      },
+      {
+        field: 'addrArea',
+        label: t('الحي / المنطقة', 'Area'),
+        error: !addrArea.trim() ? pickMsg(VALIDATION_MESSAGES.areaRequired, locale) : null,
+      },
+      {
+        field: 'addrDetails',
+        label: t('الشارع وأقرب معلم', 'Street details'),
+        error: !addrDetails.trim()
+          ? pickMsg(VALIDATION_MESSAGES.streetDetailsRequired, locale)
+          : null,
+      },
+      {
+        field: 'addrMapUrl',
+        label: t('رابط الخريطة', 'Map URL'),
+        error:
+          cleanMap && !/^https?:\/\//i.test(cleanMap)
+            ? pickMsg(VALIDATION_MESSAGES.mapUrlInvalid, locale)
+            : null,
+      },
+    ];
+  }, [
+    addrRecipient,
+    addrLabel,
+    addrPhone,
+    user.phone,
+    addrState,
+    addrCity,
+    addrArea,
+    addrDetails,
+    addrMapUrl,
+    locale,
+    t,
+  ]);
+
+  const buildRxRules = useCallback((): FieldValidationRule[] => {
+    return [
+      {
+        field: 'rxLabel',
+        label: t('اسم الوصفة', 'Rx Label'),
+        error: !rxLabel.trim() ? pickMsg(VALIDATION_MESSAGES.rxLabelRequired, locale) : null,
+      },
+      {
+        field: 'odEye',
+        label: t('العين اليمنى (OD)', 'Right Eye (OD)'),
+        error: validateEyeglassesEye(
+          {
+            sph: odSph,
+            cyl: odCyl,
+            axis: isNonZeroCyl(odCyl) ? odAxis : '0',
+            add: odAdd || undefined,
+          },
+          'العين اليمنى (OD)',
+          'Right Eye (OD)',
+          locale
+        ),
+      },
+      {
+        field: 'osEye',
+        label: t('العين اليسرى (OS)', 'Left Eye (OS)'),
+        error: validateEyeglassesEye(
+          {
+            sph: osSph,
+            cyl: osCyl,
+            axis: isNonZeroCyl(osCyl) ? osAxis : '0',
+            add: osAdd || undefined,
+          },
+          'العين اليسرى (OS)',
+          'Left Eye (OS)',
+          locale
+        ),
+      },
+    ];
+  }, [rxLabel, odSph, odCyl, odAxis, odAdd, osSph, osCyl, osAxis, osAdd, locale, t]);
+
+  useEffect(() => {
+    if (profileVal.submitted) profileVal.revalidate(buildProfileRules());
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [profileVal.submitted, buildProfileRules]);
+
+  useEffect(() => {
+    if (addrVal.submitted) addrVal.revalidate(buildAddressRules());
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [addrVal.submitted, buildAddressRules]);
+
+  useEffect(() => {
+    if (rxVal.submitted) rxVal.revalidate(buildRxRules());
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [rxVal.submitted, buildRxRules]);
 
   const handleSaveProfile = (e: React.FormEvent) => {
     e.preventDefault();
-    if (!isValidSudanPhone(phone)) {
-      showToast(t('يرجى إدخال رقم سوداني بصيغة +249 أو 09', 'Enter a valid Sudan phone number'));
-      return;
-    }
+    if (!profileVal.validateAll(buildProfileRules())) return;
     updateProfile(name.trim(), normalizeSudanPhone(phone), email.trim());
   };
 
   const handleAddAddress = (e: React.FormEvent) => {
     e.preventDefault();
-    if (!addrLabel.trim() || !addrCity.trim() || !addrArea.trim() || !addrDetails.trim()) {
-      showToast(t('يرجى إكمال جميع حقول العنوان المطلوبة', 'Please complete all required address fields'));
-      return;
-    }
+    if (!addrVal.validateAll(buildAddressRules())) return;
     const phoneToUse = addrPhone.trim() || user.phone;
-    if (!isValidSudanPhone(phoneToUse)) {
-      showToast(t('يرجى إدخال رقم سوداني صحيح للعنوان', 'Enter a valid Sudan phone number'));
-      return;
-    }
     saveAddress({
       label: addrLabel.trim(),
       recipientName: addrRecipient.trim() || user.name,
@@ -112,6 +270,7 @@ export const ProfileView: React.FC = () => {
     setAddrDetails('');
     setAddrMapUrl('');
     setAddrDefault(false);
+    addrVal.reset();
   };
 
   const handleAddRx = (e: React.FormEvent) => {
@@ -120,22 +279,37 @@ export const ProfileView: React.FC = () => {
       showToast(t('هذه الميزة متاحة للحسابات المسجلة فقط', 'Available for registered accounts'));
       return;
     }
-    if (!rxLabel.trim()) return;
+    if (!rxVal.validateAll(buildRxRules())) return;
     savePrescription({
       label: rxLabel.trim(),
       kind: 'eyeglasses',
-      rightEye: { sph: odSph, cyl: odCyl, axis: odAxis },
-      leftEye: { sph: osSph, cyl: osCyl, axis: osAxis },
+      rightEye: {
+        sph: odSph,
+        cyl: odCyl,
+        axis: isNonZeroCyl(odCyl) ? odAxis : '0',
+        add: odAdd || undefined,
+      },
+      leftEye: {
+        sph: osSph,
+        cyl: osCyl,
+        axis: isNonZeroCyl(osCyl) ? osAxis : '0',
+        add: osAdd || undefined,
+      },
       pd,
     });
     setRxLabel('');
+    setOdAdd('');
+    setOsAdd('');
+    rxVal.reset();
   };
 
   return (
-    <div className="max-w-3xl mx-auto px-4 sm:px-6 pt-6 space-y-6">
+    <div className="max-w-3xl mx-auto px-4 sm:px-6 pt-5 pb-8 space-y-6">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
-          <h1 className="text-2xl font-extrabold">{t('حسابي والوصفات', 'Profile & Prescriptions')}</h1>
+          <h1 className="text-2xl font-extrabold">
+            {t('حسابي والوصفات', 'Profile & Prescriptions')}
+          </h1>
           <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">
             {t('إدارة بياناتك وعناوينك وقياسات النظر المحفوظة', 'Manage your details, addresses, and saved prescriptions')}
           </p>
@@ -152,16 +326,22 @@ export const ProfileView: React.FC = () => {
         </div>
       </div>
 
-      {/* Verification / Guest Notice */}
       {isGuest ? (
-        <div className="bg-amber-50/70 dark:bg-amber-950/20 border border-amber-200/80 dark:border-amber-900/50 rounded-2xl p-4 space-y-1">
-          <h2 className="text-sm font-extrabold">{t('أنت تتصفح الآن كضيف', 'Browsing as Guest')}</h2>
-          <p className="text-xs text-slate-600 dark:text-slate-300 leading-relaxed">
-            {t(
-              'يمكنك التصفح والإضافة للسلة والمفضلة. عند إتمام الطلب سيُطلب منك تسجيل الدخول لحفظ عناوينك وقياساتك.',
-              'Browse and add items freely. Sign in during checkout to save addresses and prescriptions.'
-            )}
-          </p>
+        <div className="bg-white dark:bg-[#111927] border border-slate-200/80 dark:border-slate-800 rounded-2xl p-4 flex flex-wrap items-center justify-between gap-3 text-xs">
+          <div>
+            <div className="font-bold text-sm">{t('أنت تتصفح كضيف', 'Browsing as Guest')}</div>
+            <div className="text-slate-500 dark:text-slate-400 mt-0.5">
+              {t('سجّل دخولك أو أنشئ حساباً لحفظ عناوينك ووصفات النظر وطلباتك.', 'Sign in or create an account to save addresses, Rx, and orders.')}
+            </div>
+          </div>
+          <button
+            type="button"
+            onClick={() => openAuthModal('choice', false)}
+            style={{ backgroundColor: appearance.primaryColor }}
+            className="min-h-[40px] px-4 rounded-xl text-white text-xs font-extrabold shrink-0"
+          >
+            {t('تسجيل الدخول / حساب جديد', 'Sign In / Register')}
+          </button>
         </div>
       ) : (
         <div className="bg-white dark:bg-[#111927] border border-slate-200/80 dark:border-slate-800 rounded-2xl p-4 flex flex-wrap items-center justify-between gap-3 text-xs">
@@ -195,7 +375,7 @@ export const ProfileView: React.FC = () => {
         </div>
       )}
 
-      {/* Clean 3-Tab Switcher instead of 3 squeezed columns */}
+      {/* Clean 3-Tab Switcher */}
       <div className="flex items-center gap-2 border-b border-slate-200 dark:border-slate-800 pb-2 overflow-x-auto">
         {(
           [
@@ -225,8 +405,8 @@ export const ProfileView: React.FC = () => {
         })}
       </div>
 
-      {/* Tab 1: Personal Info */}
-      {sectionTab === 'account' && (
+          {/* Tab 1: Personal Info */}
+          {sectionTab === 'account' && (
         <div className="bg-white dark:bg-[#111927] border border-slate-200/80 dark:border-slate-800 rounded-2xl p-5 sm:p-6 space-y-4 text-xs">
           <h2 className="text-base font-bold">{t('البيانات الشخصية', 'Account Details')}</h2>
           {isGuest ? (
@@ -234,32 +414,61 @@ export const ProfileView: React.FC = () => {
               {t('إدارة البيانات الشخصية متاحة للحسابات المسجلة.', 'Available for registered accounts.')}
             </p>
           ) : (
-            <form onSubmit={handleSaveProfile} className="space-y-4">
-              <div>
-                <label className="block font-semibold mb-1.5">{t('الاسم', 'Name')}</label>
+            <form noValidate onSubmit={handleSaveProfile} className="space-y-4">
+              <ValidationSummaryBanner
+                errors={profileVal.errors}
+                onSelectField={profileVal.focusField}
+                mode="form"
+              />
+              <div {...profileVal.getFieldWrapperProps('name')}>
+                <label className="block font-semibold mb-1.5">{t('الاسم *', 'Name *')}</label>
                 <input
                   value={name}
                   onChange={(e) => setName(e.target.value)}
-                  className="w-full min-h-[44px] px-3 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-900 text-sm"
+                  {...profileVal.getInputA11yProps('name')}
+                  className={`w-full min-h-[44px] px-3 rounded-xl text-sm ${profileVal.getControlClasses(
+                    'name',
+                    'border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-900'
+                  )}`}
+                />
+                <FieldError
+                  id={profileVal.getErrorId('name')}
+                  message={profileVal.getError('name')}
                 />
               </div>
-              <div>
-                <label className="block font-semibold mb-1.5">{t('الهاتف (+249)', 'Phone (+249)')}</label>
+              <div {...profileVal.getFieldWrapperProps('phone')}>
+                <label className="block font-semibold mb-1.5">{t('الهاتف (+249) *', 'Phone (+249) *')}</label>
                 <input
                   dir="ltr"
                   value={phone}
                   onChange={(e) => setPhone(e.target.value)}
-                  className="w-full min-h-[44px] px-3 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-900 font-mono-num text-sm"
+                  {...profileVal.getInputA11yProps('phone')}
+                  className={`w-full min-h-[44px] px-3 rounded-xl font-mono-num text-sm ${profileVal.getControlClasses(
+                    'phone',
+                    'border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-900'
+                  )}`}
+                />
+                <FieldError
+                  id={profileVal.getErrorId('phone')}
+                  message={profileVal.getError('phone')}
                 />
               </div>
-              <div>
+              <div {...profileVal.getFieldWrapperProps('email')}>
                 <label className="block font-semibold mb-1.5">{t('البريد الإلكتروني', 'Email')}</label>
                 <input
                   dir="ltr"
                   type="email"
                   value={email}
                   onChange={(e) => setEmail(e.target.value)}
-                  className="w-full min-h-[44px] px-3 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-900 text-sm"
+                  {...profileVal.getInputA11yProps('email')}
+                  className={`w-full min-h-[44px] px-3 rounded-xl text-sm ${profileVal.getControlClasses(
+                    'email',
+                    'border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-900'
+                  )}`}
+                />
+                <FieldError
+                  id={profileVal.getErrorId('email')}
+                  message={profileVal.getError('email')}
                 />
               </div>
               <button
@@ -327,29 +536,156 @@ export const ProfileView: React.FC = () => {
                 </div>
               )}
 
-              <form onSubmit={handleAddAddress} className="space-y-3 pt-4 border-t border-slate-100 dark:border-slate-800">
+              <form noValidate onSubmit={handleAddAddress} className="space-y-3 pt-4 border-t border-slate-100 dark:border-slate-800">
                 <div className="font-bold text-sm">{t('إضافة عنوان جديد', 'Add New Address')}</div>
+                <ValidationSummaryBanner
+                  errors={addrVal.errors}
+                  onSelectField={addrVal.focusField}
+                  mode="form"
+                />
                 <div className="grid sm:grid-cols-2 gap-2.5">
-                  <input required value={addrRecipient} onChange={(e) => setAddrRecipient(e.target.value)} placeholder={t('اسم المستلم', 'Recipient')} className="min-h-[44px] px-3 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-900 text-sm" />
-                  <input required value={addrLabel} onChange={(e) => setAddrLabel(e.target.value)} placeholder={t('التسمية (المنزل / العمل)', 'Label')} className="min-h-[44px] px-3 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-900 text-sm" />
+                  <div {...addrVal.getFieldWrapperProps('addrRecipient')}>
+                    <input
+                      value={addrRecipient}
+                      onChange={(e) => setAddrRecipient(e.target.value)}
+                      placeholder={t('اسم المستلم *', 'Recipient *')}
+                      {...addrVal.getInputA11yProps('addrRecipient')}
+                      className={`w-full min-h-[44px] px-3 rounded-xl text-sm ${addrVal.getControlClasses(
+                        'addrRecipient',
+                        'border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-900'
+                      )}`}
+                    />
+                    <FieldError
+                      id={addrVal.getErrorId('addrRecipient')}
+                      message={addrVal.getError('addrRecipient')}
+                    />
+                  </div>
+                  <div {...addrVal.getFieldWrapperProps('addrLabel')}>
+                    <input
+                      value={addrLabel}
+                      onChange={(e) => setAddrLabel(e.target.value)}
+                      placeholder={t('التسمية (المنزل / العمل) *', 'Label *')}
+                      {...addrVal.getInputA11yProps('addrLabel')}
+                      className={`w-full min-h-[44px] px-3 rounded-xl text-sm ${addrVal.getControlClasses(
+                        'addrLabel',
+                        'border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-900'
+                      )}`}
+                    />
+                    <FieldError
+                      id={addrVal.getErrorId('addrLabel')}
+                      message={addrVal.getError('addrLabel')}
+                    />
+                  </div>
                 </div>
                 <div className="grid sm:grid-cols-2 gap-2.5">
-                  <input required dir="ltr" value={addrPhone} onChange={(e) => setAddrPhone(e.target.value)} placeholder="0912345678 / +249..." className="min-h-[44px] px-3 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-900 font-mono-num text-sm" />
-                  <select value={addrState} onChange={(e) => setAddrState(e.target.value)} className="min-h-[44px] px-3 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-900 text-sm">
-                    {settings.deliveryFees.map((s) => (
-                      <option key={s.id} value={s.id}>
-                        {locale === 'ar' ? s.nameAr : s.nameEn} ({formatSdg(s.feeSdg)})
-                      </option>
-                    ))}
-                  </select>
+                  <div {...addrVal.getFieldWrapperProps('addrPhone')}>
+                    <input
+                      dir="ltr"
+                      value={addrPhone}
+                      onChange={(e) => setAddrPhone(e.target.value)}
+                      placeholder="0912345678 / +249... *"
+                      {...addrVal.getInputA11yProps('addrPhone')}
+                      className={`w-full min-h-[44px] px-3 rounded-xl font-mono-num text-sm ${addrVal.getControlClasses(
+                        'addrPhone',
+                        'border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-900'
+                      )}`}
+                    />
+                    <FieldError
+                      id={addrVal.getErrorId('addrPhone')}
+                      message={addrVal.getError('addrPhone')}
+                    />
+                  </div>
+                  <div {...addrVal.getFieldWrapperProps('addrState')}>
+                    <select
+                      value={addrState}
+                      onChange={(e) => setAddrState(e.target.value)}
+                      {...addrVal.getInputA11yProps('addrState')}
+                      className={`w-full min-h-[44px] px-3 rounded-xl text-sm ${addrVal.getControlClasses(
+                        'addrState',
+                        'border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-900'
+                      )}`}
+                    >
+                      {settings.deliveryFees.map((s) => (
+                        <option key={s.id} value={s.id}>
+                          {locale === 'ar' ? s.nameAr : s.nameEn} ({formatSdg(s.feeSdg)})
+                        </option>
+                      ))}
+                    </select>
+                    <FieldError
+                      id={addrVal.getErrorId('addrState')}
+                      message={addrVal.getError('addrState')}
+                    />
+                  </div>
                 </div>
                 <div className="grid sm:grid-cols-2 gap-2.5">
-                  <input required value={addrCity} onChange={(e) => setAddrCity(e.target.value)} placeholder={t('المدينة', 'City')} className="min-h-[44px] px-3 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-900 text-sm" />
-                  <input required value={addrArea} onChange={(e) => setAddrArea(e.target.value)} placeholder={t('الحي', 'Area')} className="min-h-[44px] px-3 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-900 text-sm" />
+                  <div {...addrVal.getFieldWrapperProps('addrCity')}>
+                    <input
+                      value={addrCity}
+                      onChange={(e) => setAddrCity(e.target.value)}
+                      placeholder={t('المدينة *', 'City *')}
+                      {...addrVal.getInputA11yProps('addrCity')}
+                      className={`w-full min-h-[44px] px-3 rounded-xl text-sm ${addrVal.getControlClasses(
+                        'addrCity',
+                        'border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-900'
+                      )}`}
+                    />
+                    <FieldError
+                      id={addrVal.getErrorId('addrCity')}
+                      message={addrVal.getError('addrCity')}
+                    />
+                  </div>
+                  <div {...addrVal.getFieldWrapperProps('addrArea')}>
+                    <input
+                      value={addrArea}
+                      onChange={(e) => setAddrArea(e.target.value)}
+                      placeholder={t('الحي *', 'Area *')}
+                      {...addrVal.getInputA11yProps('addrArea')}
+                      className={`w-full min-h-[44px] px-3 rounded-xl text-sm ${addrVal.getControlClasses(
+                        'addrArea',
+                        'border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-900'
+                      )}`}
+                    />
+                    <FieldError
+                      id={addrVal.getErrorId('addrArea')}
+                      message={addrVal.getError('addrArea')}
+                    />
+                  </div>
                 </div>
-                <input required value={addrDetails} onChange={(e) => setAddrDetails(e.target.value)} placeholder={t('الشارع وأقرب معلم', 'Details / Landmark')} className="w-full min-h-[44px] px-3 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-900 text-sm" />
-                <input dir="ltr" type="url" value={addrMapUrl} onChange={(e) => setAddrMapUrl(e.target.value)} placeholder={t('رابط الخريطة (اختياري)', 'Map URL (optional)')} className="w-full min-h-[44px] px-3 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-900 text-sm" />
-                <label className="min-h-[40px] flex items-center gap-2 cursor-pointer font-semibold">
+                <div {...addrVal.getFieldWrapperProps('addrDetails')}>
+                  <input
+                    value={addrDetails}
+                    onChange={(e) => setAddrDetails(e.target.value)}
+                    placeholder={t('الشارع وأقرب معلم *', 'Details / Landmark *')}
+                    {...addrVal.getInputA11yProps('addrDetails')}
+                    className={`w-full min-h-[44px] px-3 rounded-xl text-sm ${addrVal.getControlClasses(
+                      'addrDetails',
+                      'border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-900'
+                    )}`}
+                  />
+                  <FieldError
+                    id={addrVal.getErrorId('addrDetails')}
+                    message={addrVal.getError('addrDetails')}
+                  />
+                </div>
+                <div {...addrVal.getFieldWrapperProps('addrMapUrl')}>
+                  <input
+                    dir="ltr"
+                    type="url"
+                    value={addrMapUrl}
+                    onChange={(e) => setAddrMapUrl(e.target.value)}
+                    placeholder={t('رابط الخريطة (اختياري)', 'Map URL (optional)')}
+                    {...addrVal.getInputA11yProps('addrMapUrl')}
+                    className={`w-full min-h-[44px] px-3 rounded-xl text-sm ${addrVal.getControlClasses(
+                      'addrMapUrl',
+                      'border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-900'
+                    )}`}
+                  />
+                  <FieldError
+                    id={addrVal.getErrorId('addrMapUrl')}
+                    message={addrVal.getError('addrMapUrl')}
+                  />
+                </div>
+                <label className="min-h-[44px] flex items-center gap-2 cursor-pointer font-semibold">
                   <input type="checkbox" checked={addrDefault} onChange={(e) => setAddrDefault(e.target.checked)} className="w-4 h-4 accent-[#D9B24C]" />
                   <span>{t('اجعله العنوان الافتراضي', 'Set as default')}</span>
                 </label>
@@ -385,9 +721,11 @@ export const ProfileView: React.FC = () => {
                         <div className="font-bold text-sm">{rx.label}</div>
                         <div className="font-mono-num text-[11px] text-[#B38B2D] dark:text-[#E2BD5B]">
                           OD: {rx.rightEye.sph} / {rx.rightEye.cyl} × {rx.rightEye.axis}°
+                          {rx.rightEye.add ? ` · ADD ${rx.rightEye.add}` : ''}
                         </div>
                         <div className="font-mono-num text-[11px] text-[#B38B2D] dark:text-[#E2BD5B]">
-                          OS: {rx.leftEye.sph} / {rx.leftEye.cyl} × {rx.leftEye.axis}° · PD {rx.pd}
+                          OS: {rx.leftEye.sph} / {rx.leftEye.cyl} × {rx.leftEye.axis}°
+                          {rx.leftEye.add ? ` · ADD ${rx.leftEye.add}` : ''} · PD {rx.pd}
                         </div>
                       </div>
                       <button
@@ -403,36 +741,102 @@ export const ProfileView: React.FC = () => {
                 </div>
               )}
 
-              <form onSubmit={handleAddRx} className="space-y-3 pt-4 border-t border-slate-100 dark:border-slate-800">
+              <form noValidate onSubmit={handleAddRx} className="space-y-3 pt-4 border-t border-slate-100 dark:border-slate-800">
                 <div className="font-bold text-sm">{t('حفظ وصفة جديدة', 'Save New Rx')}</div>
-                <input required value={rxLabel} onChange={(e) => setRxLabel(e.target.value)} placeholder={t('اسم الوصفة (مثلاً: كشف 2026)', 'Rx Label')} className="w-full min-h-[44px] px-3 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-900 text-sm" />
-                <div className="grid grid-cols-4 gap-2 items-center font-mono-num">
-                  <span className="font-bold">OD</span>
-                  <select value={odSph} onChange={(e) => setOdSph(e.target.value)} className="min-h-[42px] p-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-900 text-sm">
-                    {SPH_OPTIONS.map((o) => <option key={o} value={o}>{o}</option>)}
-                  </select>
-                  <select value={odCyl} onChange={(e) => setOdCyl(e.target.value)} className="min-h-[42px] p-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-900 text-sm">
-                    {CYL_OPTIONS.map((o) => <option key={o} value={o}>{o}</option>)}
-                  </select>
-                  <select disabled={!isNonZeroCyl(odCyl)} value={odAxis} onChange={(e) => setOdAxis(e.target.value)} className="min-h-[42px] p-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-900 text-sm disabled:opacity-45">
-                    {AXIS_OPTIONS.map((o) => <option key={o} value={o}>{o}°</option>)}
-                  </select>
+                <ValidationSummaryBanner
+                  errors={rxVal.errors}
+                  onSelectField={rxVal.focusField}
+                  mode="form"
+                />
+                <div {...rxVal.getFieldWrapperProps('rxLabel')}>
+                  <input
+                    value={rxLabel}
+                    onChange={(e) => setRxLabel(e.target.value)}
+                    placeholder={t('اسم الوصفة (مثلاً: كشف 2026) *', 'Rx Label *')}
+                    {...rxVal.getInputA11yProps('rxLabel')}
+                    className={`w-full min-h-[44px] px-3 rounded-xl text-sm ${rxVal.getControlClasses(
+                      'rxLabel',
+                      'border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-900'
+                    )}`}
+                  />
+                  <FieldError
+                    id={rxVal.getErrorId('rxLabel')}
+                    message={rxVal.getError('rxLabel')}
+                  />
                 </div>
-                <div className="grid grid-cols-4 gap-2 items-center font-mono-num">
-                  <span className="font-bold">OS</span>
-                  <select value={osSph} onChange={(e) => setOsSph(e.target.value)} className="min-h-[42px] p-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-900 text-sm">
-                    {SPH_OPTIONS.map((o) => <option key={o} value={o}>{o}</option>)}
-                  </select>
-                  <select value={osCyl} onChange={(e) => setOsCyl(e.target.value)} className="min-h-[42px] p-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-900 text-sm">
-                    {CYL_OPTIONS.map((o) => <option key={o} value={o}>{o}</option>)}
-                  </select>
-                  <select disabled={!isNonZeroCyl(osCyl)} value={osAxis} onChange={(e) => setOsAxis(e.target.value)} className="min-h-[42px] p-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-900 text-sm disabled:opacity-45">
-                    {AXIS_OPTIONS.map((o) => <option key={o} value={o}>{o}°</option>)}
-                  </select>
+                <div
+                  {...rxVal.getFieldWrapperProps('odEye')}
+                  className={rxVal.getControlClasses('odEye', 'space-y-1.5', 'p-2.5 rounded-xl space-y-1.5')}
+                >
+                  <div className="grid grid-cols-5 gap-1.5 items-center font-mono-num">
+                    <span className="font-bold">OD</span>
+                    <select value={odSph} onChange={(e) => setOdSph(e.target.value)} className="min-h-[44px] p-1.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-900 text-xs sm:text-sm">
+                      {SPH_OPTIONS.map((o) => <option key={o} value={o}>{o}</option>)}
+                    </select>
+                    <select value={odCyl} onChange={(e) => setOdCyl(e.target.value)} className="min-h-[44px] p-1.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-900 text-xs sm:text-sm">
+                      {CYL_OPTIONS.map((o) => <option key={o} value={o}>{o}</option>)}
+                    </select>
+                    <select
+                      disabled={!isNonZeroCyl(odCyl)}
+                      value={odAxis}
+                      aria-invalid={rxVal.hasError('odEye') && isNonZeroCyl(odCyl) ? true : undefined}
+                      onChange={(e) => setOdAxis(e.target.value)}
+                      className={`min-h-[44px] p-1.5 rounded-xl font-mono-num text-xs sm:text-sm disabled:opacity-45 ${
+                        rxVal.hasError('odEye') && isNonZeroCyl(odCyl)
+                          ? 'border-2 border-[#DC2626] bg-[#FEF2F2] dark:bg-rose-950/30'
+                          : 'border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-900'
+                      }`}
+                    >
+                      {AXIS_OPTIONS.map((o) => <option key={o} value={o}>{o}°</option>)}
+                    </select>
+                    <select value={odAdd} onChange={(e) => setOdAdd(e.target.value)} aria-label="OD ADD" className="min-h-[44px] p-1.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-900 text-xs sm:text-sm">
+                      <option value="">ADD</option>
+                      {ADD_OPTIONS.map((o) => <option key={o} value={o}>{o}</option>)}
+                    </select>
+                  </div>
+                  <FieldError
+                    id={rxVal.getErrorId('odEye')}
+                    message={rxVal.getError('odEye')}
+                  />
+                </div>
+                <div
+                  {...rxVal.getFieldWrapperProps('osEye')}
+                  className={rxVal.getControlClasses('osEye', 'space-y-1.5', 'p-2.5 rounded-xl space-y-1.5')}
+                >
+                  <div className="grid grid-cols-5 gap-1.5 items-center font-mono-num">
+                    <span className="font-bold">OS</span>
+                    <select value={osSph} onChange={(e) => setOsSph(e.target.value)} className="min-h-[44px] p-1.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-900 text-xs sm:text-sm">
+                      {SPH_OPTIONS.map((o) => <option key={o} value={o}>{o}</option>)}
+                    </select>
+                    <select value={osCyl} onChange={(e) => setOsCyl(e.target.value)} className="min-h-[44px] p-1.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-900 text-xs sm:text-sm">
+                      {CYL_OPTIONS.map((o) => <option key={o} value={o}>{o}</option>)}
+                    </select>
+                    <select
+                      disabled={!isNonZeroCyl(osCyl)}
+                      value={osAxis}
+                      aria-invalid={rxVal.hasError('osEye') && isNonZeroCyl(osCyl) ? true : undefined}
+                      onChange={(e) => setOsAxis(e.target.value)}
+                      className={`min-h-[44px] p-1.5 rounded-xl font-mono-num text-xs sm:text-sm disabled:opacity-45 ${
+                        rxVal.hasError('osEye') && isNonZeroCyl(osCyl)
+                          ? 'border-2 border-[#DC2626] bg-[#FEF2F2] dark:bg-rose-950/30'
+                          : 'border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-900'
+                      }`}
+                    >
+                      {AXIS_OPTIONS.map((o) => <option key={o} value={o}>{o}°</option>)}
+                    </select>
+                    <select value={osAdd} onChange={(e) => setOsAdd(e.target.value)} aria-label="OS ADD" className="min-h-[44px] p-1.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-900 text-xs sm:text-sm">
+                      <option value="">ADD</option>
+                      {ADD_OPTIONS.map((o) => <option key={o} value={o}>{o}</option>)}
+                    </select>
+                  </div>
+                  <FieldError
+                    id={rxVal.getErrorId('osEye')}
+                    message={rxVal.getError('osEye')}
+                  />
                 </div>
                 <div className="flex items-center gap-3">
                   <span className="font-bold">PD (mm)</span>
-                  <select value={pd} onChange={(e) => setPd(e.target.value)} className="flex-1 min-h-[42px] p-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-900 font-mono-num text-sm">
+                  <select value={pd} onChange={(e) => setPd(e.target.value)} className="flex-1 min-h-[44px] p-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-900 font-mono-num text-sm">
                     {PD_SINGLE_OPTIONS.map((o) => <option key={o} value={o}>{o} mm</option>)}
                   </select>
                 </div>

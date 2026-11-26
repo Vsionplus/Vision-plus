@@ -86,13 +86,120 @@ export const MIRROR_COLOR_OPTIONS: {
   { id: 'green', labelAr: 'أخضر', labelEn: 'Green', swatchHex: '#10B981' },
 ];
 
+export const DEFAULT_READING_SIZE_OPTIONS: string[] = [
+  '+1.00',
+  '+1.25',
+  '+1.50',
+  '+1.75',
+  '+2.00',
+  '+2.25',
+  '+2.50',
+  '+2.75',
+  '+3.00',
+  '+3.50',
+  '+4.00',
+];
+
+export const DEFAULT_CL_CLEAR_SIZE_OPTIONS: string[] = [
+  '-0.50',
+  '-0.75',
+  '-1.00',
+  '-1.25',
+  '-1.50',
+  '-1.75',
+  '-2.00',
+  '-2.25',
+  '-2.50',
+  '-2.75',
+  '-3.00',
+  '-3.50',
+  '-4.00',
+  '-4.50',
+  '-5.00',
+  '-6.00',
+];
+
+export const DEFAULT_CL_COLORED_SIZE_OPTIONS: string[] = [
+  '0.00 (تجميلي)',
+  '-0.50',
+  '-1.00',
+  '-1.50',
+  '-2.00',
+  '-2.50',
+  '-3.00',
+  '-3.50',
+  '-4.00',
+];
+
 export function isContactLensProduct(product?: Product | null, categories?: Category[]): boolean {
   if (!product) return false;
   if (product.categoryId === 'contact_lenses' || Boolean(product.contactLensSpecs)) return true;
   const cat = categories?.find((c) => c.id === product.categoryId);
   if (!cat) return false;
   const en = cat.nameEn.toLowerCase();
-  return en.includes('contact lens') && !en.includes('solution');
+  const ar = cat.nameAr;
+  if (en.includes('solution') || ar.includes('محاليل') || ar.includes('محلول')) return false;
+  return (en.includes('contact lens') || ar.includes('عدسات لاصقة'));
+}
+
+export function isColoredContactLensProduct(product?: Product | null, categories?: Category[]): boolean {
+  if (!product || !isContactLensProduct(product, categories)) return false;
+  if (product.contactLensSpecs?.type === 'colored') return true;
+  if (product.subcategoryId === 'sub_cl_colored') return true;
+  const hay = `${product.titleAr} ${product.titleEn} ${(product.tags || []).join(' ')}`.toLowerCase();
+  return hay.includes('ملون') || hay.includes('colored') || hay.includes('تجميل');
+}
+
+export function isReadingGlassesProduct(product?: Product | null, categories?: Category[]): boolean {
+  if (!product) return false;
+  if (product.categoryId === 'reading_glasses') return true;
+  const cat = categories?.find((c) => c.id === product.categoryId);
+  if (!cat) return false;
+  const en = cat.nameEn.toLowerCase();
+  const ar = cat.nameAr;
+  return en.includes('reading') || ar.includes('قراءة');
+}
+
+export function getEffectiveProductSizeOptions(
+  product?: Product | null,
+  categories?: Category[]
+): string[] {
+  if (!product) return [];
+  if (product.showSizeOptions === false) return [];
+
+  const customSizes = Array.isArray(product.sizeOptions)
+    ? product.sizeOptions.map((s) => String(s).trim()).filter(Boolean)
+    : [];
+
+  const isContact = isContactLensProduct(product, categories);
+  const isReading = isReadingGlassesProduct(product, categories);
+
+  if (product.showSizeOptions === true) {
+    if (customSizes.length > 0) return customSizes;
+    if (isContact) {
+      if (product.contactLensSpecs?.sphOptions && product.contactLensSpecs.sphOptions.length > 0) {
+        return product.contactLensSpecs.sphOptions;
+      }
+      return isColoredContactLensProduct(product, categories)
+        ? DEFAULT_CL_COLORED_SIZE_OPTIONS
+        : DEFAULT_CL_CLEAR_SIZE_OPTIONS;
+    }
+    if (isReading) return DEFAULT_READING_SIZE_OPTIONS;
+    return [];
+  }
+
+  // Automatic display for clear/colored contact lenses and ready-made reading glasses
+  if (customSizes.length > 0) return customSizes;
+  if (isContact) {
+    if (product.contactLensSpecs?.sphOptions && product.contactLensSpecs.sphOptions.length > 0) {
+      return product.contactLensSpecs.sphOptions;
+    }
+    return isColoredContactLensProduct(product, categories)
+      ? DEFAULT_CL_COLORED_SIZE_OPTIONS
+      : DEFAULT_CL_CLEAR_SIZE_OPTIONS;
+  }
+  if (isReading) return DEFAULT_READING_SIZE_OPTIONS;
+  return [];
 }
 
 export function isPrescriptionEligibleProduct(
@@ -363,33 +470,22 @@ export function validateContactEye(
   locale: Locale
 ): string | null {
   if (!eye) return null;
-  const err = validateEyeglassesEye(
-    { sph: eye.sph, cyl: eye.cyl, axis: eye.axis },
+  return validateEyeglassesEye(
+    { sph: eye.sph, cyl: eye.cyl, axis: eye.axis, add: eye.add },
     eyeLabelAr,
     eyeLabelEn,
     locale
   );
-  if (err) return err;
-  const t = (ar: string, en: string) => (locale === 'ar' ? ar : en);
-  if (eye.bc) {
-    const bcN = Number(eye.bc);
-    if (!Number.isFinite(bcN) || bcN < 7.5 || bcN > 9.8) {
-      return t(`${eyeLabelAr}: قيمة BC غير صالحة`, `${eyeLabelEn}: Invalid BC value`);
-    }
-  }
-  if (eye.dia) {
-    const diaN = Number(eye.dia);
-    if (!Number.isFinite(diaN) || diaN < 12.5 || diaN > 15.5) {
-      return t(`${eyeLabelAr}: قيمة DIA غير صالحة`, `${eyeLabelEn}: Invalid DIA value`);
-    }
-  }
-  if (eye.boxes < 0 || eye.boxes > 24) {
-    return t(`${eyeLabelAr}: عدد العلب غير صالح`, `${eyeLabelEn}: Invalid boxes count`);
-  }
-  return null;
 }
 
-export async function compressPrescriptionImage(file: File, maxWidth = 1200): Promise<Blob> {
+export function isPdfPrescriptionUrl(url?: string | null, fileType?: 'image' | 'pdf'): boolean {
+  if (fileType === 'pdf') return true;
+  if (!url) return false;
+  const lower = url.toLowerCase();
+  return lower.startsWith('data:application/pdf') || /\.pdf(\?|$)/i.test(lower);
+}
+
+export async function compressPrescriptionImage(file: File, maxWidth = 1000): Promise<Blob> {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
     reader.onerror = () => reject(new Error('Failed to read image file'));
@@ -418,7 +514,7 @@ export async function compressPrescriptionImage(file: File, maxWidth = 1200): Pr
             else resolve(file);
           },
           'image/jpeg',
-          0.84
+          0.78
         );
       };
       img.src = dataUrl;

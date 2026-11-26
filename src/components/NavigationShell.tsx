@@ -18,6 +18,8 @@ import {
   Wrench,
   RefreshCw,
   LogOut,
+  ArrowLeft,
+  ArrowRight,
 } from 'lucide-react';
 import { hasLegacyBrandString, useStore } from '../store/StoreContext';
 import { formatShortDate } from '../utils/format';
@@ -32,11 +34,13 @@ export const NavigationShell: React.FC<{ children: React.ReactNode }> = ({ child
     setTheme,
     activeTab,
     setActiveTab,
+    goBack,
     openCatalog,
     authReady,
     firebaseUser,
     guestSession,
     user,
+    orders,
     logout,
     settings,
     appearance,
@@ -60,7 +64,7 @@ export const NavigationShell: React.FC<{ children: React.ReactNode }> = ({ child
   const [cartBounce, setCartBounce] = useState(false);
   const prevCartCountRef = useRef(cartCount);
   const { needRefresh, reloadApp, dismissUpdate } = usePWAUpdate();
-  const isSignedInSession = authReady && (Boolean(firebaseUser) || guestSession);
+  const hasSessionForSignOut = authReady && (Boolean(firebaseUser) || guestSession);
 
   useEffect(() => {
     if (cartCount > prevCartCountRef.current) {
@@ -201,15 +205,15 @@ export const NavigationShell: React.FC<{ children: React.ReactNode }> = ({ child
             </div>
           </div>
 
-          {/* Slim Utility Row (keeps Favorites, Profile & Rx, Language, Dark Mode, and single Sign Out) */}
+          {/* Slim Utility Row (keeps My Orders, Favorites, Profile & Rx, Language, Dark Mode, and single Sign Out) */}
           <div className="border-t border-slate-100 dark:border-slate-800/70">
-            <div className="max-w-7xl mx-auto px-3 sm:px-6 py-1 flex items-center justify-between gap-2 overflow-x-auto text-xs text-slate-600 dark:text-slate-300">
+            <div className="max-w-7xl mx-auto px-3 sm:px-6 py-1 flex flex-wrap sm:flex-nowrap items-center justify-between gap-1.5 sm:gap-2 text-xs text-slate-600 dark:text-slate-300">
               <div className="flex items-center shrink-0">
                 {!authReady ? (
                   <span className="inline-flex items-center px-2 py-1 text-slate-400">
                     <span className="w-3.5 h-3.5 rounded-full border-2 border-slate-300 border-t-[#D9B24C] animate-spin" />
                   </span>
-                ) : isSignedInSession ? (
+                ) : hasSessionForSignOut ? (
                   <button
                     type="button"
                     onClick={() => setConfirmLogoutOpen(true)}
@@ -221,7 +225,25 @@ export const NavigationShell: React.FC<{ children: React.ReactNode }> = ({ child
                 ) : null}
               </div>
 
-              <div className="flex items-center gap-1 sm:gap-2 shrink-0">
+              <div className="flex flex-wrap sm:flex-nowrap items-center gap-1 sm:gap-2">
+                <button
+                  type="button"
+                  onClick={() => setActiveTab('orders')}
+                  className={`min-h-[34px] px-2.5 py-1 rounded-lg inline-flex items-center gap-1.5 whitespace-nowrap transition-colors font-bold ${
+                    activeTab === 'orders'
+                      ? 'bg-[#11223E] text-white dark:bg-[#D9B24C] dark:text-[#11223E]'
+                      : 'bg-[#D9B24C]/15 text-[#11223E] dark:text-[#E2BD5B] hover:bg-[#D9B24C]/25'
+                  }`}
+                >
+                  <Package className="w-3.5 h-3.5" />
+                  <span>{t('طلباتي', 'My Orders')}</span>
+                  {orders.length > 0 && (
+                    <span className="font-mono-num tabular-nums text-[11px] opacity-90">
+                      ({orders.length})
+                    </span>
+                  )}
+                </button>
+
                 <button
                   type="button"
                   onClick={() => setActiveTab('favorites')}
@@ -342,7 +364,44 @@ export const NavigationShell: React.FC<{ children: React.ReactNode }> = ({ child
               </p>
             </div>
           ) : (
-            children
+            <>
+              {activeTab !== 'home' && (
+                <div className="max-w-7xl mx-auto px-4 sm:px-6 pt-3 -mb-2 flex items-center gap-2.5 text-xs">
+                  <button
+                    type="button"
+                    onClick={goBack}
+                    aria-label={t('رجوع', 'Back')}
+                    className="min-h-[40px] px-3 py-1.5 rounded-xl bg-white dark:bg-[#111927] border border-slate-200 dark:border-slate-800 hover:border-[#D9B24C] text-[#11223E] dark:text-slate-100 font-extrabold inline-flex items-center gap-1.5 shadow-2xs transition-colors"
+                  >
+                    {locale === 'ar' ? (
+                      <ArrowRight className="w-4 h-4 text-[#B38B2D]" />
+                    ) : (
+                      <ArrowLeft className="w-4 h-4 text-[#B38B2D]" />
+                    )}
+                    <span>{t('رجوع', 'Back')}</span>
+                  </button>
+                  <span aria-hidden="true" className="text-slate-300 dark:text-slate-700">
+                    ·
+                  </span>
+                  <span className="font-bold text-slate-500 dark:text-slate-400 truncate">
+                    {activeTab === 'catalog'
+                      ? t('المتجر', 'Catalog')
+                      : activeTab === 'favorites'
+                      ? t('المفضلة', 'Favorites')
+                      : activeTab === 'cart'
+                      ? t('سلة التسوق', 'Cart & Checkout')
+                      : activeTab === 'orders'
+                      ? t('طلباتي', 'My Orders')
+                      : activeTab === 'consult'
+                      ? t('أخصائي البصريات', 'Optician')
+                      : activeTab === 'profile'
+                      ? t('حسابي والوصفات', 'Profile & Rx')
+                      : t('من نحن والسياسات', 'About & Policies')}
+                  </span>
+                </div>
+              )}
+              {children}
+            </>
           )}
         </main>
 
